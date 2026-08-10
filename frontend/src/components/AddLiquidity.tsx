@@ -4,11 +4,22 @@ import { useReserves } from "@/hooks/useReserves";
 import { useState } from "react";
 import { parseUnits, formatUnits } from "viem";
 import { tokensInfo } from "@/constants/addresses";
+import {mockWrappedBTCAbi, poolAbi} from '@/constants/abi';
+import { addresses } from "@/constants/addresses";
+import {useWriteContract, useConnection, usePublicClient} from 'wagmi';
+import { useQueryClient } from "@tanstack/react-query";
 
 const AddLiquidity = () => {
   const [typedAmount, setTypedAmount] = useState("");
   const [anchor, setAnchor] = useState<number | null>(null);
+  const [step, setStep] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [tolerance, setTolerance] = useState("");
+
+  const userAddress = useConnection().address;
+  const { mutateAsync } = useWriteContract();
+  const publicClient = usePublicClient();
+  const queryClient = useQueryClient();
 
   const { data } = useReserves();
   if (!data) return <p>Chargement...</p>;
@@ -21,6 +32,37 @@ const AddLiquidity = () => {
       return parseUnits(typedAmount, 8);
     }
     return parseUnits(typedAmount, 8) * reserve / reserves[anchor]});
+
+  const handleAdd = async () => {
+    if (!userAddress || anchor===null || computed===null || !publicClient) return;
+    setError(null);
+    try {
+      for (let i = 0; i < 3 ; i++) {
+        setStep(i);
+        const token = tokensInfo.find((t) => Number(t.index) === i);
+        const amount = computed[i];
+        if (!token || !amount) throw new Error("Montant invalide");
+        const hash = await mutateAsync({
+          address: token.address,
+          abi: mockWrappedBTCAbi,
+          functionName: "approve",
+          args: [addresses[31337].pool, amount]
+        })
+        await publicClient.waitForTransactionReceipt({hash})
+      }
+      setStep(3);
+      const hash = await mutateAsync({
+        address: addresses[31337].pool,
+        abi: poolAbi,
+        functionName: "addLiquidity",
+        args: [BigInt(anchor), parseUnits(typedAmount, 8), 0n]
+      })
+      await publicClient.waitForTransactionReceipt({hash});
+      queryClient.invalidateQueries();
+    } catch (e) {
+        setError(e instanceof Error ? e.message : String(e))
+    } finally {setStep(null)};
+  }
 
   return (
     <div className="border rounded p-4 flex flex-col">
@@ -49,14 +91,17 @@ const AddLiquidity = () => {
 
       <label htmlFor="tolerance">Tolérance au slippage en % :</label>
       <input
-        className="px-2 border rounded ml-1"
+        className="px-2 border rounded"
         type="text" id="tolerance"
         value={tolerance}
         onChange={(e) => setTolerance(e.target.value)}/>
       <button
-      className='border rounded px-4 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 mt-2'>
-        AddLiquidity
+      className='border rounded px-4 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 mt-2'
+      onClick={handleAdd}
+      disabled={step !== null || !userAddress}>
+        {step !== null ? `Dépôt en cours : (${step+1}/4)` : "AddLiquidity"}
       </button>
+      {error && <p>{error}</p>}
     </div>
   )
 }
