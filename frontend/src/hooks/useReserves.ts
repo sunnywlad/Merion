@@ -10,7 +10,7 @@ export function useReserves() {
         abi: poolAbi,
         functionName: 'reserves',
         args: [token.index]
-      }}),
+      } as const}),
       {
         address: addresses[31337].pool,
         abi: poolAbi,
