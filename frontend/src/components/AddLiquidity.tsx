@@ -129,6 +129,8 @@ const AddLiquidity = () => {
       })
       await publicClient.waitForTransactionReceipt({hash});
       queryClient.invalidateQueries();
+      setTypedAmount("");
+      setAnchor(null);
     } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
     } finally {setStep(null)};
