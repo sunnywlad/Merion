@@ -21,6 +21,14 @@ jobs:
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
       - run: npx hardhat test --coverage --gas-stats --gas-stats-json gas-stats.json
+      # Controle de non-regression du cout en gaz. Uniquement sur les PR :
+      # l'egalite est stricte, l'imposer a chaque push forcerait a rafraichir
+      # la reference en cours de developpement. Le profil doit etre le meme
+      # qu'a la generation, sinon les chiffres ne veulent rien dire (voir
+      # backend/GAS.md).
+      - name: Controle de non-regression du gaz
+        if: github.event_name == 'pull_request'
+        run: npx hardhat test solidity contracts/Pool.gas.t.sol --snapshot-check --build-profile production
       - name: Publier le rapport de gaz dans le resume du run
         if: always()
         run: |
