@@ -24,8 +24,11 @@
 # Hardhat coverage reports
 /coverage
 
-# Gas snapshot files
-/.gas-snapshot
+# Le rapport de gaz brut est regenere a chaque execution : jetable.
+/gas-stats.json
+
+# `.gas-snapshot` N'EST PAS ignore, volontairement : c'est la reference de cout
+# versionnee, rafraichie a la main a chaque jalon (voir GAS.md).
 
 # Snapshot cheatcodes output
 /snapshots

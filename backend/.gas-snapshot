@@ -1,0 +1,8 @@
+PoolGasBench#test_gas_AddLiquidity_EmptyPool() (gas: 227042)
+PoolGasBench#test_gas_AddLiquidity_ImbalancedPool() (gas: 283903)
+PoolGasBench#test_gas_AddLiquidity_SeededPool() (gas: 261849)
+PoolGasBench#test_gas_RemoveLiquidity_Full() (gas: 240512)
+PoolGasBench#test_gas_RemoveLiquidity_Partial() (gas: 260546)
+PoolGasBench#test_gas_SetFee() (gas: 24289)
+PoolGasBench#test_gas_Swap_BalancedPool() (gas: 253352)
+PoolGasBench#test_gas_Swap_ImbalancedPool() (gas: 273516)
