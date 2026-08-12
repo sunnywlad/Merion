@@ -13,6 +13,7 @@
 import { network } from "hardhat";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { ContractFunctionRevertedError } from "viem";
 
 const { viem, networkHelpers } = await network.create();
 
@@ -25,12 +26,21 @@ const DEAD_ADDRESS = "0x000000000000000000000000000000000000dEaD" as const;
 const MINIMUM_LIQUIDITY = 1000n;
 const UINT72_MAX = 2n ** 72n - 1n;
 const DEFAULT_FEE_NUM = 5n; // reprend la valeur du Pool.t.sol d'origine
+const ZERO_FEE_NUM = 0n;
+
+// Codes de panic Solidity utilises dans cette suite (Panic(uint256)).
+const PANIC_ARITHMETIC_OVERFLOW = 17n; // 0x11
+const PANIC_ARRAY_OUT_OF_BOUNDS = 50n; // 0x32
 
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
 
-async function deployTokensAndPoolFixture() {
+// Coeur commun a toutes les fixtures : deploie les 3 ERC-20 puis le pool avec
+// le `feeNum` donne. Pas utilisable tel quel avec loadFixture (qui exige des
+// fonctions nommees et sans argument pour son cache) : les deux fixtures
+// ci-dessous sont de simples enveloppes nommees qui le figent a une valeur.
+async function deployTokensAndPool(feeNum: bigint) {
   const [deployer, depositor, other] = await viem.getWalletClients();
 
   const wbtc = await viem.deployContract("MockWrappedBTC", ["Wrapped BTC", "wBTC"]);
@@ -40,11 +50,19 @@ async function deployTokensAndPoolFixture() {
 
   const pool = await viem.deployContract("Pool", [
     [wbtc.address, cbbtc.address, lbtc.address],
-    DEFAULT_FEE_NUM,
+    feeNum,
     deployer.account.address,
   ]);
 
   return { deployer, depositor, other, wbtc, cbbtc, lbtc, tokens, pool };
+}
+
+async function deployTokensAndPoolFixture() {
+  return deployTokensAndPool(DEFAULT_FEE_NUM);
+}
+
+async function deployZeroFeeTokensAndPoolFixture() {
+  return deployTokensAndPool(ZERO_FEE_NUM);
 }
 
 type PoolFixture = Awaited<ReturnType<typeof deployTokensAndPoolFixture>>;
@@ -83,15 +101,49 @@ async function readBalances(
   ];
 }
 
-// Rejette avec le panic Solidity `panicCodeHex` (ex. "0x11"), et seulement
-// celui-la : on verifie le message d'erreur plutot qu'une simple absence de
-// succes, pour ne pas confondre un panic avec une erreur nommee.
-async function assertPanic(promise: Promise<unknown>, panicCodeHex: string) {
-  await assert.rejects(promise, (error: unknown) => {
-    const message = error instanceof Error ? error.message : String(error);
-    assert.match(message, new RegExp(panicCodeHex));
-    return true;
-  });
+// Rejette avec le panic Solidity `expectedCode` (17n = 0x11, 50n = 0x32), et
+// verifie que c'est bien celui-la.
+//
+// Route retenue, et pourquoi : un panic Solidity est une erreur ABI standard,
+// Panic(uint256). viem la decode et la range dans un
+// `ContractFunctionRevertedError` (son champ `.data` porte `errorName` et
+// `args` deja decodes), quelque part dans la chaine `cause` de l'erreur levee
+// par `write`. On remonte donc cette chaine jusqu'a le trouver, puis on
+// verifie le nom ABI et l'argument numerique.
+//
+// Ecarte volontairement : chercher "0x11" par expression reguliere dans le
+// message d'erreur, comme le suggerait une premiere version de ce helper.
+// Ce motif hexadecimal peut apparaitre n'importe ou ailleurs dans le meme
+// message (une adresse, un hash, un autre montant) : un test ainsi ecrit
+// peut passer pour la mauvaise raison, en ne verifiant rien de la structure
+// reelle de l'erreur.
+//
+// Verifie a l'execution (probe manuelle) : `pool.write.addLiquidity` sur un
+// panic 0x11 leve une `ContractFunctionExecutionError` dont `.cause` est un
+// `ContractFunctionRevertedError` avec `data = { errorName: "Panic", args:
+// [17n] }`.
+async function assertPanic(promise: Promise<unknown>, expectedCode: bigint) {
+  try {
+    await promise;
+  } catch (error) {
+    let current: unknown = error;
+    while (current !== undefined && current !== null) {
+      if (current instanceof ContractFunctionRevertedError) {
+        assert.deepEqual(
+          { errorName: current.data?.errorName, code: current.data?.args?.[0] },
+          { errorName: "Panic", code: expectedCode },
+          `attendu un revert Panic(${expectedCode}), obtenu ${current.data?.errorName}(${current.data?.args})`,
+        );
+        return;
+      }
+      current = (current as { cause?: unknown }).cause;
+    }
+    assert.fail(
+      `aucun ContractFunctionRevertedError trouve dans la chaine d'erreurs ; erreur recue : ${String(error)}`,
+    );
+    return;
+  }
+  assert.fail(`la fonction aurait du revert avec Panic(${expectedCode}), mais n'a pas revert`);
 }
 
 const SEED_AMOUNT = 100n * 10n ** 8n; // pool amorce a 100 (8 decimales) sur chaque reserve
@@ -117,19 +169,13 @@ async function deploySeededPoolFixture() {
 // polluerait les assertions de ratio/proportionnalite. Le comportement des
 // frais est deja couvert par les tests de swap (hors perimetre de ce
 // fichier) ; cette fixture isole la seule arithmetique d'addLiquidity.
+//
+// Compose deployZeroFeeTokensAndPoolFixture plutot que de redeployer les 3
+// ERC-20 et le pool en double : seul l'amorcage + le swap sont propres a
+// cette fixture.
 async function deployImbalancedPoolFixture() {
-  const [deployer, depositor, other] = await viem.getWalletClients();
-
-  const wbtc = await viem.deployContract("MockWrappedBTC", ["Wrapped BTC", "wBTC"]);
-  const cbbtc = await viem.deployContract("MockWrappedBTC", ["Coinbase BTC", "cbBTC"]);
-  const lbtc = await viem.deployContract("MockWrappedBTC", ["Lombard BTC", "lBTC"]);
-  const tokens = [wbtc, cbbtc, lbtc] as const;
-
-  const pool = await viem.deployContract("Pool", [
-    [wbtc.address, cbbtc.address, lbtc.address],
-    0n,
-    deployer.account.address,
-  ]);
+  const base = await deployZeroFeeTokensAndPoolFixture();
+  const { depositor, tokens, pool } = base;
 
   const seedAmount = 1000n * 10n ** 8n; // reserves de depart : [1000e8, 1000e8, 1000e8]
   await mintAndApprove(tokens, pool, depositor, seedAmount * 10n);
@@ -146,7 +192,36 @@ async function deployImbalancedPoolFixture() {
   const swapAmount = 250n * 10n ** 8n;
   await pool.write.swap([0n, swapAmount, 2n, 0n], { account: depositor.account });
 
-  return { deployer, depositor, other, wbtc, cbbtc, lbtc, tokens, pool, seedAmount };
+  return { ...base, seedAmount };
+}
+
+// Verifie que deposer, ancre sur `anchor`, ne modifie pas la composition du
+// pool desequilibre (le rapport entre les trois reserves). Factorisee ici
+// pour etre appelee depuis trois `it` distincts, un par ancre : ce sont trois
+// scenarios independants (un depot ancre sur token0 est une transaction
+// differente d'un depot ancre sur token1), donc trois tests, chacun avec sa
+// propre assertion.
+async function assertCompositionPreservedWhenAnchoredOn(anchor: bigint) {
+  const { pool, tokens, other } = await networkHelpers.loadFixture(deployImbalancedPoolFixture);
+  const reservesBefore = await readReserves(pool);
+  const depositAmount = reservesBefore[Number(anchor)] / 10n; // 10% de la reserve ancre
+
+  await mintAndApprove(tokens, pool, other, depositAmount * 2n);
+  await pool.write.addLiquidity([anchor, depositAmount, 0n], { account: other.account });
+
+  const reservesAfter = await readReserves(pool);
+  // On ne recalcule pas la formule interne (Pool.sol:90) : le depot choisi
+  // vaut exactement 10% de la reserve ancre, et par construction (les 3
+  // reserves de la fixture se divisent proprement par 10) chaque reserve doit
+  // alors croitre de 10%, quelle que soit l'ancre. C'est cette croissance
+  // uniforme, indépendante de l'ancre, qui est la propriete testee.
+  const expectedReservesAfter = reservesBefore.map((r) => r + r / 10n) as [bigint, bigint, bigint];
+
+  assert.deepEqual(
+    reservesAfter,
+    expectedReservesAfter,
+    `composition modifiee par un depot ancre sur l'indice ${anchor} : avant=[${reservesBefore}], apres=[${reservesAfter}], attendu=[${expectedReservesAfter}]`,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -188,12 +263,17 @@ describe("Pool.addLiquidity", async function () {
         it.todo("une approbation insuffisante sur un seul des trois tokens revert (ERC-20)");
       });
       describe("C) Cas limites", function () {
-        it.todo("_amount == 0 ne mint aucune part, aucun revert");
+        it.todo("_amount == 0 ne mint aucune part");
+        it.todo("_amount == 0 laisse les reserves inchangees");
+        it.todo("_amount == 0 laisse les soldes du deposant inchanges");
+        it.todo("_amount == 0 emet quand meme AddedLiquidity, avec trois montants nuls");
         it.todo("_anchorIndex hors bornes (99) sur un pool amorce echoue par panic 0x32");
       });
       describe("D) Pool desequilibre", function () {
         describe("1) Composition et parts, independamment de la formule interne", function () {
-          it.todo("un depot ne modifie la composition du pool pour aucun choix d'ancre");
+          it.todo("un depot ancre sur token0 ne modifie pas la composition du pool");
+          it.todo("un depot ancre sur token1 ne modifie pas la composition du pool");
+          it.todo("un depot ancre sur token2 ne modifie pas la composition du pool");
           it.todo("ancre sur l'actif abondant, un apport de 10% du pool mint 10% du totalSupply precedent");
           it.todo("ancre sur l'actif rare, un apport de 10% du pool mint 10% du totalSupply precedent");
         });
@@ -201,6 +281,9 @@ describe("Pool.addLiquidity", async function () {
           it.todo("a _amount identique, ancrer sur l'actif abondant mint 24 000 000 000 parts");
           it.todo("a _amount identique, ancrer sur l'actif rare mint 37 500 000 000 parts");
           it.todo("a _amount identique, l'ancre rare preleve plus sur le troisieme token que l'ancre abondante");
+        });
+        describe("3) Evenement avec des montants distincts", function () {
+          it.todo("l'evenement AddedLiquidity est emis avec des amountsIn distincts sur un pool desequilibre");
         });
       });
     });
@@ -219,7 +302,12 @@ describe("Pool.addLiquidity", async function () {
         await pool.write.addLiquidity([0n, SEED_AMOUNT, 0n], { account: depositor.account });
 
         const mintedShares = await pool.read.balanceOf([depositor.account.address]);
-        assert.equal(mintedShares, 3n * SEED_AMOUNT - MINIMUM_LIQUIDITY);
+        const expectedShares = 3n * SEED_AMOUNT - MINIMUM_LIQUIDITY;
+        assert.equal(
+          mintedShares,
+          expectedShares,
+          `mintedShares=${mintedShares}, attendu 3 * ${SEED_AMOUNT} - ${MINIMUM_LIQUIDITY} = ${expectedShares}`,
+        );
       });
 
       it("les trois reserves valent _amount", async function () {
@@ -229,7 +317,11 @@ describe("Pool.addLiquidity", async function () {
         await pool.write.addLiquidity([0n, SEED_AMOUNT, 0n], { account: depositor.account });
 
         const reserves = await readReserves(pool);
-        assert.deepEqual(reserves, [SEED_AMOUNT, SEED_AMOUNT, SEED_AMOUNT]);
+        assert.deepEqual(
+          reserves,
+          [SEED_AMOUNT, SEED_AMOUNT, SEED_AMOUNT],
+          `reserves=[${reserves}], attendu 3x ${SEED_AMOUNT}`,
+        );
       });
 
       it("MINIMUM_LIQUIDITY est detenu par l'adresse morte", async function () {
@@ -239,7 +331,11 @@ describe("Pool.addLiquidity", async function () {
         await pool.write.addLiquidity([0n, SEED_AMOUNT, 0n], { account: depositor.account });
 
         const deadBalance = await pool.read.balanceOf([DEAD_ADDRESS]);
-        assert.equal(deadBalance, MINIMUM_LIQUIDITY);
+        assert.equal(
+          deadBalance,
+          MINIMUM_LIQUIDITY,
+          `solde LP de l'adresse morte=${deadBalance}, attendu ${MINIMUM_LIQUIDITY}`,
+        );
       });
 
       it("totalSupply() inclut les parts brulees vers l'adresse morte", async function () {
@@ -249,7 +345,12 @@ describe("Pool.addLiquidity", async function () {
         await pool.write.addLiquidity([0n, SEED_AMOUNT, 0n], { account: depositor.account });
 
         const totalSupply = await pool.read.totalSupply();
-        assert.equal(totalSupply, 3n * SEED_AMOUNT);
+        const expectedSupply = 3n * SEED_AMOUNT;
+        assert.equal(
+          totalSupply,
+          expectedSupply,
+          `totalSupply=${totalSupply}, attendu 3 * ${SEED_AMOUNT} = ${expectedSupply} (parts du deposant + MINIMUM_LIQUIDITY brulee)`,
+        );
       });
 
       it("le solde du pool en chacun des trois tokens augmente de _amount", async function () {
@@ -259,7 +360,11 @@ describe("Pool.addLiquidity", async function () {
         await pool.write.addLiquidity([0n, SEED_AMOUNT, 0n], { account: depositor.account });
 
         const poolBalances = await readBalances(tokens, pool.address);
-        assert.deepEqual(poolBalances, [SEED_AMOUNT, SEED_AMOUNT, SEED_AMOUNT]);
+        assert.deepEqual(
+          poolBalances,
+          [SEED_AMOUNT, SEED_AMOUNT, SEED_AMOUNT],
+          `soldes du pool=[${poolBalances}], attendu 3x ${SEED_AMOUNT}`,
+        );
       });
 
       it("le solde du deposant en chacun des trois tokens diminue de _amount", async function () {
@@ -271,7 +376,11 @@ describe("Pool.addLiquidity", async function () {
 
         const balancesAfter = await readBalances(tokens, depositor.account.address);
         const spent = balancesBefore.map((before, i) => before - balancesAfter[i]);
-        assert.deepEqual(spent, [SEED_AMOUNT, SEED_AMOUNT, SEED_AMOUNT]);
+        assert.deepEqual(
+          spent,
+          [SEED_AMOUNT, SEED_AMOUNT, SEED_AMOUNT],
+          `depense=[${spent}] (avant - apres), attendu 3x ${SEED_AMOUNT}`,
+        );
       });
 
       it("l'evenement AddedLiquidity est emis avec les bons arguments", async function () {
@@ -300,7 +409,7 @@ describe("Pool.addLiquidity", async function () {
 
         await assertPanic(
           pool.write.addLiquidity([0n, tooSmallAmount, 0n], { account: depositor.account }),
-          "0x11",
+          PANIC_ARITHMETIC_OVERFLOW,
         );
       });
 
@@ -351,6 +460,7 @@ describe("Pool.addLiquidity", async function () {
         // Ne doit pas revert : on attend juste que la promesse se resolve.
         await assert.doesNotReject(
           pool.write.addLiquidity([0n, SEED_AMOUNT, mintedShares], { account: depositor.account }),
+          "un _minShares egal aux parts mintees ne devrait pas revert",
         );
       });
 
@@ -363,6 +473,7 @@ describe("Pool.addLiquidity", async function () {
 
         await assert.doesNotReject(
           pool.write.addLiquidity([99n, SEED_AMOUNT, 0n], { account: depositor.account }),
+          "_anchorIndex ne doit jamais etre lu quand supply == 0",
         );
       });
     });
@@ -386,7 +497,11 @@ describe("Pool.addLiquidity", async function () {
         const mintedShares = await pool.read.balanceOf([depositor.account.address]);
         const expectedTotalShares =
           (3n * SEED_AMOUNT - MINIMUM_LIQUIDITY) + (supplyBefore * ADD_AMOUNT) / reservesBefore[0];
-        assert.equal(mintedShares, expectedTotalShares);
+        assert.equal(
+          mintedShares,
+          expectedTotalShares,
+          `solde LP du deposant=${mintedShares}, attendu ${expectedTotalShares} (supplyAvant=${supplyBefore}, reserveAncre=${reservesBefore[0]})`,
+        );
       });
 
       it("chaque reserve croit de _amount * reserves[i] / reserves[anchor]", async function () {
@@ -400,10 +515,19 @@ describe("Pool.addLiquidity", async function () {
         const expectedGrowth = reservesBefore.map(
           (r) => (ADD_AMOUNT * r) / reservesBefore[0],
         ) as [bigint, bigint, bigint];
-        assert.deepEqual(growth, expectedGrowth);
+        assert.deepEqual(
+          growth,
+          expectedGrowth,
+          `croissance des reserves=[${growth}], attendu=[${expectedGrowth}] (reservesAvant=[${reservesBefore}])`,
+        );
       });
 
       it("sur un pool equilibre, le resultat est identique quel que soit _anchorIndex", async function () {
+        // Claim intrinsequement comparatif : "identique quel que soit
+        // l'ancre" n'a de sens qu'avec au moins deux valeurs a comparer, donc
+        // pas decomposable en 3 tests independants sans perdre la propriete
+        // testee. On garde un seul it, mais l'unique assertion porte un
+        // message qui liste les 3 resultats pour le diagnostic.
         const mintedSharesByAnchor: bigint[] = [];
 
         for (const anchor of [0n, 1n, 2n]) {
@@ -413,7 +537,11 @@ describe("Pool.addLiquidity", async function () {
           mintedSharesByAnchor.push(mintedTotal);
         }
 
-        assert.equal(new Set(mintedSharesByAnchor).size, 1);
+        assert.equal(
+          new Set(mintedSharesByAnchor).size,
+          1,
+          `mintedShares devrait etre identique pour les 3 ancres sur un pool equilibre : anchor0=${mintedSharesByAnchor[0]}, anchor1=${mintedSharesByAnchor[1]}, anchor2=${mintedSharesByAnchor[2]}`,
+        );
       });
 
       it("un second deposant obtient des parts proportionnelles au premier", async function () {
@@ -426,7 +554,11 @@ describe("Pool.addLiquidity", async function () {
 
         const otherShares = await pool.read.balanceOf([other.account.address]);
         const expectedShares = (supplyBefore * ADD_AMOUNT) / reservesBefore[0];
-        assert.equal(otherShares, expectedShares);
+        assert.equal(
+          otherShares,
+          expectedShares,
+          `parts du second deposant=${otherShares}, attendu ${expectedShares} (supplyAvant=${supplyBefore})`,
+        );
       });
     });
 
@@ -452,16 +584,57 @@ describe("Pool.addLiquidity", async function () {
     });
 
     describe("C) Cas limites", function () {
-      it("_amount == 0 ne mint aucune part, aucun revert", async function () {
+      it("_amount == 0 ne mint aucune part", async function () {
         const { pool, depositor } = await networkHelpers.loadFixture(deploySeededPoolFixture);
-        const supplyBefore = await pool.read.totalSupply();
+        const sharesBefore = await pool.read.balanceOf([depositor.account.address]);
 
-        await assert.doesNotReject(
-          pool.write.addLiquidity([0n, 0n, 0n], { account: depositor.account }),
+        await pool.write.addLiquidity([0n, 0n, 0n], { account: depositor.account });
+
+        const sharesAfter = await pool.read.balanceOf([depositor.account.address]);
+        assert.equal(
+          sharesAfter,
+          sharesBefore,
+          `les parts du deposant ne devraient pas varier : avant=${sharesBefore}, apres=${sharesAfter}`,
         );
+      });
 
-        const supplyAfter = await pool.read.totalSupply();
-        assert.equal(supplyAfter, supplyBefore);
+      it("_amount == 0 laisse les reserves inchangees", async function () {
+        const { pool, depositor } = await networkHelpers.loadFixture(deploySeededPoolFixture);
+        const reservesBefore = await readReserves(pool);
+
+        await pool.write.addLiquidity([0n, 0n, 0n], { account: depositor.account });
+
+        const reservesAfter = await readReserves(pool);
+        assert.deepEqual(
+          reservesAfter,
+          reservesBefore,
+          `les reserves ne devraient pas varier : avant=[${reservesBefore}], apres=[${reservesAfter}]`,
+        );
+      });
+
+      it("_amount == 0 laisse les soldes du deposant inchanges", async function () {
+        const { pool, tokens, depositor } = await networkHelpers.loadFixture(deploySeededPoolFixture);
+        const balancesBefore = await readBalances(tokens, depositor.account.address);
+
+        await pool.write.addLiquidity([0n, 0n, 0n], { account: depositor.account });
+
+        const balancesAfter = await readBalances(tokens, depositor.account.address);
+        assert.deepEqual(
+          balancesAfter,
+          balancesBefore,
+          `les soldes du deposant ne devraient pas varier : avant=[${balancesBefore}], apres=[${balancesAfter}]`,
+        );
+      });
+
+      it("_amount == 0 emet quand meme AddedLiquidity, avec trois montants nuls", async function () {
+        const { pool, depositor } = await networkHelpers.loadFixture(deploySeededPoolFixture);
+
+        await viem.assertions.emitWithArgs(
+          pool.write.addLiquidity([0n, 0n, 0n], { account: depositor.account }),
+          pool,
+          "AddedLiquidity",
+          [depositor.account.address, [0n, 0n, 0n], 0n],
+        );
       });
 
       it("_anchorIndex hors bornes (99) sur un pool amorce echoue par panic 0x32", async function () {
@@ -472,39 +645,23 @@ describe("Pool.addLiquidity", async function () {
 
         await assertPanic(
           pool.write.addLiquidity([99n, SEED_AMOUNT, 0n], { account: depositor.account }),
-          "0x32",
+          PANIC_ARRAY_OUT_OF_BOUNDS,
         );
       });
     });
 
     describe("D) Pool desequilibre", function () {
       describe("1) Composition et parts, independamment de la formule interne", function () {
-        it("un depot ne modifie la composition du pool pour aucun choix d'ancre", async function () {
-          // Propriete d'AMM : apres un depot proportionnel, le rapport entre
-          // deux reserves quelconques doit rester ce qu'il etait avant. On ne
-          // recalcule pas la formule du contrat (Pool.sol:90) : on verifie
-          // l'egalite croisee reservesApres[i] * reservesAvant[j] ==
-          // reservesApres[j] * reservesAvant[i], qui ne depend que de ce que
-          // doit etre un AMM.
-          const ratiosPreserved: boolean[] = [];
+        it("un depot ancre sur token0 ne modifie pas la composition du pool", async function () {
+          await assertCompositionPreservedWhenAnchoredOn(0n);
+        });
 
-          for (const anchor of [0n, 1n, 2n]) {
-            const { pool, tokens, other } = await networkHelpers.loadFixture(deployImbalancedPoolFixture);
-            const reservesBefore = await readReserves(pool);
-            const depositAmount = reservesBefore[Number(anchor)] / 10n; // 10% de la reserve ancre
+        it("un depot ancre sur token1 ne modifie pas la composition du pool", async function () {
+          await assertCompositionPreservedWhenAnchoredOn(1n);
+        });
 
-            await mintAndApprove(tokens, pool, other, depositAmount * 2n);
-            await pool.write.addLiquidity([anchor, depositAmount, 0n], { account: other.account });
-
-            const reservesAfter = await readReserves(pool);
-            const pairs: [number, number][] = [[0, 1], [1, 2], [0, 2]];
-            const preserved = pairs.every(
-              ([i, j]) => reservesAfter[i] * reservesBefore[j] === reservesAfter[j] * reservesBefore[i],
-            );
-            ratiosPreserved.push(preserved);
-          }
-
-          assert.deepEqual(ratiosPreserved, [true, true, true]);
+        it("un depot ancre sur token2 ne modifie pas la composition du pool", async function () {
+          await assertCompositionPreservedWhenAnchoredOn(2n);
         });
 
         it("ancre sur l'actif abondant, un apport de 10% du pool mint 10% du totalSupply precedent", async function () {
@@ -517,7 +674,12 @@ describe("Pool.addLiquidity", async function () {
           await pool.write.addLiquidity([0n, depositAmount, 0n], { account: other.account });
 
           const mintedShares = await pool.read.balanceOf([other.account.address]);
-          assert.equal(mintedShares, supplyBefore / 10n);
+          const expectedShares = supplyBefore / 10n;
+          assert.equal(
+            mintedShares,
+            expectedShares,
+            `parts mintees=${mintedShares}, attendu 10% de supplyAvant (${supplyBefore}) = ${expectedShares}`,
+          );
         });
 
         it("ancre sur l'actif rare, un apport de 10% du pool mint 10% du totalSupply precedent", async function () {
@@ -530,7 +692,12 @@ describe("Pool.addLiquidity", async function () {
           await pool.write.addLiquidity([2n, depositAmount, 0n], { account: other.account });
 
           const mintedShares = await pool.read.balanceOf([other.account.address]);
-          assert.equal(mintedShares, supplyBefore / 10n);
+          const expectedShares = supplyBefore / 10n;
+          assert.equal(
+            mintedShares,
+            expectedShares,
+            `parts mintees=${mintedShares}, attendu 10% de supplyAvant (${supplyBefore}) = ${expectedShares}`,
+          );
         });
       });
 
@@ -549,7 +716,12 @@ describe("Pool.addLiquidity", async function () {
           await pool.write.addLiquidity([0n, amount, 0n], { account: other.account });
 
           const mintedShares = await pool.read.balanceOf([other.account.address]);
-          assert.equal(mintedShares, 24_000_000_000n);
+          const expectedShares = 24_000_000_000n;
+          assert.equal(
+            mintedShares,
+            expectedShares,
+            `parts mintees=${mintedShares}, attendu ${expectedShares} (calcul a la main en commentaire)`,
+          );
         });
 
         it("a _amount identique, ancrer sur l'actif rare mint 37 500 000 000 parts", async function () {
@@ -569,7 +741,12 @@ describe("Pool.addLiquidity", async function () {
           await pool.write.addLiquidity([2n, amount, 0n], { account: other.account });
 
           const mintedShares = await pool.read.balanceOf([other.account.address]);
-          assert.equal(mintedShares, 37_500_000_000n);
+          const expectedShares = 37_500_000_000n;
+          assert.equal(
+            mintedShares,
+            expectedShares,
+            `parts mintees=${mintedShares}, attendu ${expectedShares} (calcul a la main en commentaire)`,
+          );
         });
 
         it("a _amount identique, l'ancre rare preleve plus sur le troisieme token que l'ancre abondante", async function () {
@@ -596,7 +773,31 @@ describe("Pool.addLiquidity", async function () {
           const token1AfterRare = await rare.tokens[1].read.balanceOf([rare.other.account.address]);
           const pulledRare = token1BeforeRare - token1AfterRare;
 
-          assert.equal(pulledRare > pulledAbundant, true);
+          assert.ok(
+            pulledRare > pulledAbundant,
+            `ancre rare devrait prelever plus sur token1 : rare=${pulledRare}, abondante=${pulledAbundant}`,
+          );
+        });
+      });
+
+      describe("3) Evenement avec des montants distincts", function () {
+        it("l'evenement AddedLiquidity est emis avec des amountsIn distincts sur un pool desequilibre", async function () {
+          // Memes valeurs que le test de parts hardcodees ci-dessus : ancre =
+          // token0 (abondant), amount = 100e8, reserves avant = [1250e8,
+          // 1000e8, 800e8], mintedShares = 24 000 000 000.
+          // amounts[0] = amount                                = 10 000 000 000
+          // amounts[1] = amount * reserves[1] / reserves[0]    =  8 000 000 000
+          // amounts[2] = amount * reserves[2] / reserves[0]    =  6 400 000 000
+          const { pool, tokens, other } = await networkHelpers.loadFixture(deployImbalancedPoolFixture);
+          const amount = 100n * 10n ** 8n;
+          await mintAndApprove(tokens, pool, other, amount);
+
+          await viem.assertions.emitWithArgs(
+            pool.write.addLiquidity([0n, amount, 0n], { account: other.account }),
+            pool,
+            "AddedLiquidity",
+            [other.account.address, [10_000_000_000n, 8_000_000_000n, 6_400_000_000n], 24_000_000_000n],
+          );
         });
       });
     });

@@ -48,21 +48,59 @@ Pool.addLiquidity
     D) Pool desequilibre
       1) Composition et parts, independamment de la formule interne
       2) Consequence observable du choix de l'ancre (calcul a la main)
+      3) Evenement avec des montants distincts
 ```
 
 La section `II.D` merite un mot. Elle ne recalcule pas la formule interne du
 contrat (`_amount * reserves[i] / reserves[_anchorIndex]`, `Pool.sol:90`) en
 JavaScript pour la comparer au resultat on-chain : un test qui reimplemente la
 ligne qu'il teste ne prouve rien, il verifie que le code fait ce que le code
-fait. La sous-section `1)` verifie a la place deux proprietes qui se deduisent
+fait. La sous-section `1)` verifie a la place des proprietes qui se deduisent
 de ce que doit etre un AMM, independamment de l'implementation : un depot ne
 change pas la composition du pool (le rapport entre deux reserves est
-identique avant et apres, verifie par egalite croisee pour eviter tout biais
-d'arrondi), et les parts emises sont proportionnelles a la fraction du pool
-apportee. La sous-section `2)` documente, avec des montants poses en dur et un
+identique avant et apres, verifie en comparant directement les reserves
+attendues — chaque reserve doit croitre de la meme fraction que le depot
+represente sur son ancre — a celles lues on-chain), et les parts emises sont
+proportionnelles a la fraction du pool apportee. Cette propriete de
+composition est testee une fois par ancre (trois `it` distincts, une fonction
+d'aide nommee factorise le scenario) : chaque ancre est une transaction
+differente, donc un comportement a verifier separement, une seule assertion
+par test. La sous-section `2)` documente, avec des montants poses en dur et un
 calcul a la main en commentaire, la consequence observable du choix de
 l'ancre : a montant nominal identique, ancrer sur l'actif rare mint plus de
-parts et preleve plus sur les autres tokens qu'ancrer sur l'actif abondant.
+parts et preleve plus sur les autres tokens qu'ancrer sur l'actif abondant. La
+sous-section `3)` verifie que l'evenement `AddedLiquidity` porte bien trois
+`amountsIn` distincts sur un pool desequilibre (la verification sur pool vide,
+en `I.A`, ne peut montrer que trois montants triviaux et egaux).
+
+Un seul test fait exception a la regle "une assertion par `it`" au sens strict
+du decompte de lignes `assert` : "sur un pool equilibre, le resultat est
+identique quel que soit `_anchorIndex`" (`II.A`) execute trois depots (un par
+ancre) et conclut par une unique assertion sur leur egalite. La claim testee
+("identique quel que soit l'ancre") est intrinsequement comparative et ne se
+decompose pas en trois tests independants sans perdre ce qu'elle affirme : un
+`it` isole par ancre prouverait une valeur, jamais une egalite entre plusieurs
+valeurs. C'est different du cas de composition ci-dessus, ou chaque ancre est
+une transaction et un comportement distincts.
+
+### Panics Solidity : comment ils sont attrapes
+
+Deux cas de la suite attendent un panic Solidity (`Panic(uint256)`, code
+`0x11` pour un depassement arithmetique, `0x32` pour un acces hors bornes
+d'un tableau). Un panic est une erreur ABI comme une autre : viem la decode
+et expose son `errorName` (`"Panic"`) et son argument (le code numerique,
+en `bigint`) sur un `ContractFunctionRevertedError`, quelque part dans la
+chaine `cause` de l'erreur levee par l'appel `write`. Le helper `assertPanic`
+remonte cette chaine jusqu'a le trouver, puis compare `errorName` et `args[0]`
+au code attendu.
+
+Route explicitement ecartee : chercher le code hexadecimal (`"0x11"`) par
+expression reguliere dans le message d'erreur. Ce motif peut apparaitre
+n'importe ou ailleurs dans le meme message (une adresse, un hash, un autre
+montant hexadecimal) — un test ainsi ecrit peut passer pour la mauvaise
+raison, sans avoir verifie la structure reelle de l'erreur. Verifier
+`errorName` et l'argument decode sur l'erreur ABI, plutot que le texte du
+message, est ce qui rend le test fiable.
 
 ## Cas limites couverts, par fonction
 
