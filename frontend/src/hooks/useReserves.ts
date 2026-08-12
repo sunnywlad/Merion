@@ -3,7 +3,7 @@ import {addresses, tokensInfo} from '@/constants/addresses';
 import {poolAbi} from '@/constants/abi';
 
 export function useReserves() {
-  return useReadContracts({
+  const { data, isLoading, error, queryKey } = useReadContracts({
     contracts: [...tokensInfo.map((token) => {
       return {
         address: addresses[31337].pool,
@@ -19,4 +19,11 @@ export function useReserves() {
       }
     ] as const,
   })
+  return {
+    reserves: data?.slice(0, 3),
+    supply: data?.[3],
+    isLoading,
+    error,
+    queryKey
+  }
 }

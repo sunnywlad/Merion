@@ -86,13 +86,13 @@ const AddLiquidity = () => {
   const publicClient = usePublicClient();
   const queryClient = useQueryClient();
 
-  const { data } = useReserves();
-  const supply = data?.[3].result;
+  const { reserves: reserveEntries, supply: supplyEntry } = useReserves();
+  const supply = supplyEntry?.status === 'success' ? supplyEntry.result : undefined;
   const { data: minLiq } = useMinimumLiquidity(supply === 0n);
-  if (!data) return <p>Chargement...</p>;
+  if (!reserveEntries) return <p>Chargement...</p>;
 
   // A failed read leaves `result` undefined: dropping those entries lets the length speak.
-  const reserves = data.slice(0, 3).map((r) => r.result).filter((r) => r !== undefined);
+  const reserves = reserveEntries.map((r) => r.result).filter((r) => r !== undefined);
   if (supply === undefined || reserves.length !== 3) return <p>Lecture des réserves indisponible</p>;
   // On an empty pool the tolerance is ignored, so a stale invalid value must not block the deposit.
   const {quote, reason} = getQuote({
