@@ -7,7 +7,7 @@ on:
     branches: [master]
 
 jobs:
-  test:
+  backend:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -20,4 +20,38 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
-      - run: npx hardhat test
+      - run: npx hardhat test --coverage --gas-stats --gas-stats-json gas-stats.json
+      - name: Publier le rapport de gaz dans le resume du run
+        if: always()
+        run: |
+          if [ -f gas-stats.json ]; then
+            {
+              echo "## Rapport de gaz"
+              echo
+              jq -r '
+                .contracts
+                | to_entries[]
+                | select((.value.functions // {}) != {})
+                | "### \(.key)\n\n| Fonction | Min | Moyenne | Mediane | Max | Appels |\n|---|---|---|---|---|---|\n"
+                  + ((.value.functions | to_entries
+                      | map("| \(.key) | \(.value.min) | \(.value.avg) | \(.value.median) | \(.value.max) | \(.value.count) |")
+                      | join("\n")))
+              ' gas-stats.json
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run build
