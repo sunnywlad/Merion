@@ -65,5 +65,11 @@ jobs:
       # (LayoutProps, PageProps...) auxquels le code source se refere. En local
       # ils existent deja grace a `next dev` ; sur un runner vierge, un `tsc`
       # lance en premier echoue sur des types qui n'ont pas encore ete ecrits.
+      # NEXT_PUBLIC_PROJECT_ID est lu au niveau module par src/config/index.ts,
+      # et `next build` prerend `/` : sans cette valeur, la construction echoue.
+      # Variable de depot et non secret : un NEXT_PUBLIC_* part dans le bundle
+      # navigateur, il est public par construction. Voir frontend/.env.example.
       - run: npm run build
+        env:
+          NEXT_PUBLIC_PROJECT_ID: ${{ vars.NEXT_PUBLIC_PROJECT_ID }}
       - run: npx tsc --noEmit
