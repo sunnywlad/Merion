@@ -3,11 +3,12 @@
 import { useReserves } from "@/hooks/useReserves";
 import { useLpBalance } from "@/hooks/useLpBalance";
 import { useState } from "react";
-import { parseUnits, formatUnits } from "viem";
+import { formatUnits } from "viem";
 import { addresses, tokensInfo } from "@/constants/addresses";
 import {poolAbi} from '@/constants/abi';
 import {useWriteContract, useConnection, usePublicClient} from 'wagmi';
 import { useQueryClient } from "@tanstack/react-query";
+import { parseAmount } from "@/lib/parseAmount";
 
 type Quote = {
   expected: [bigint, bigint, bigint];
@@ -35,11 +36,14 @@ const getQuote = ({
   supply: bigint,
   maxShares: bigint | undefined}): QuoteResult => {
 
+    const amount = parseAmount(typedAmount);
+    const tolerance = parseAmount(toleranceInput === "" ? "0.5" : toleranceInput, 2);
+
     // The tolerance is judged first: it is a field of its own, it must speak even on an empty form.
-    if (toleranceInput !== "" && (Number.isNaN(Number(toleranceInput)) || Number(toleranceInput) < 0)) {
+    if (tolerance === null || tolerance < 0) {
       return {quote: null, reason: "Tolérance invalide"};
     }
-    if (Number(toleranceInput) > 100) {
+    if (tolerance > 10000n) {
       return {quote: null, reason: "La tolérance ne peut pas dépasser 100 %"};
     }
 
@@ -48,14 +52,12 @@ const getQuote = ({
 
     if (maxShares === undefined) return {quote: null, reason: null}
 
-    if (Number.isNaN(Number(typedAmount)) || Number(typedAmount) < 0) {
+    if (amount===null || amount < 0) {
       return {quote: null, reason: "Montant invalide"};
     }
 
     if (supply === 0n) return { quote: null, reason: "Le pool est vide"}
 
-    const amount = parseUnits(typedAmount, 8);
-    const tolerance = parseUnits(toleranceInput === "" ? "0.5" : toleranceInput, 2);
 
     const reservesA = [...reserves, supply] as const;
     const anchorReserve = reservesA[anchor];
@@ -122,22 +124,26 @@ const RemoveLiquidity = () => {
       queryClient.invalidateQueries();
       setTypedAmount("");
       setAnchor(null);
+      setTolerance("");
     } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
     } finally {setIsPending(false)};
   }
 
   const expectedNShares = quote ? ([...quote.expected, quote.shares] as const) : null;
+  const displayAmount = (j: number) => {
+    if (anchor === j) return typedAmount;
+    else if (expectedNShares) return formatUnits(expectedNShares[j], 8);
+    else return "";
+  }
+  const minDisplay = quote ? quote?.minExpected.map((amount) => formatUnits(amount, 8)) : null
 
   return (
     <div className="border rounded p-4 flex flex-col">
       <div className="flex flex-col my-2">
 
       {tokensInfo.map((token) => {
-        const i = Number(token.index) as 0 | 1 | 2 | 3;
-        let displayed = "";
-        if (anchor === i) {displayed = typedAmount}
-        else if (expectedNShares) {displayed = formatUnits(expectedNShares[i], 8)}
+        const i = Number(token.index) as 0 | 1 | 2;
 
         return(
           <div key={token.name} className="flex items-center gap-2 my-1">
@@ -145,7 +151,7 @@ const RemoveLiquidity = () => {
             <input
               className="px-2 border rounded ml-1 disabled:opacity-50 disabled:cursor-not-allowed"
               type="text" id={token.name}
-              value={displayed}
+              value={displayAmount(i)}
               disabled={isPending}
               onChange={(e) => {
                 setTypedAmount(e.target.value);
@@ -155,15 +161,24 @@ const RemoveLiquidity = () => {
       )}
       </div>
 
-      <label htmlFor="tolerance">
-        Tolérance au slippage en % :
-      </label>
+      <label htmlFor="lpShares">Nombre de LP shares à brûler :</label>
+      <input
+        className="px-2 border rounded disabled:opacity-50 disabled:cursor-not-allowed"
+        type="text" id="lpShares"
+        value = {displayAmount(3)}
+        disabled={isPending}
+        onChange={(e) => {
+          setTypedAmount(e.target.value);
+          setAnchor(3)}} />
+
+      <label htmlFor="tolerance">Tolérance au slippage en % :</label>
       <input
         className="px-2 border rounded disabled:opacity-50 disabled:cursor-not-allowed"
         type="text" id="tolerance"
         value={tolerance}
         disabled={isPending}
         onChange={(e) => setTolerance(e.target.value)}/>
+
       <button
       className='border rounded px-4 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 mt-2'
       onClick={handleRem}
@@ -172,7 +187,11 @@ const RemoveLiquidity = () => {
       </button>
       {reason && <p>{reason}</p>}
       {error && <p>{error}</p>}
-      {quote && <p>Parts LP brûlées : {formatUnits(quote.shares, 8)}</p>}
+      {minDisplay &&
+        <div>
+          <p>Nombre minimal de tokens reçus : {minDisplay[0]} wBTC, {minDisplay[1]} cbBTC, {minDisplay[2]} LBTC</p>
+        </div>
+      }
     </div>
   )
 }
