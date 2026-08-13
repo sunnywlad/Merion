@@ -1,7 +1,7 @@
 import { buildModule } from "@nomicfoundation/hardhat-ignition/modules";
-import WBTCModule from "./wbtc";
-import CBBTCModule from "./cbbtc";
-import LBTCModule from "./lbtc";
+import WBTCModule from "./wbtc.js";
+import CBBTCModule from "./cbbtc.js";
+import LBTCModule from "./lbtc.js";
 
 
 export default buildModule("PoolModule", (m) => {
