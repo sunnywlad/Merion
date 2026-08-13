@@ -34,7 +34,7 @@ contract Pool is ERC20, Ownable {
   event RemovedLiquidity(address indexed provider, uint256[3] amountsOut, uint256 burnedShares);
   event Swapped(address indexed swapper, uint256 indexed indexIn, uint256 amountIn, uint256 indexed indexOut, uint256 amountOut);
 
-  constructor(address[3] memory _tokens, uint256 _feeNum, address _feeSetter) ERC20("DowntownLP", "DLP") Ownable(_feeSetter) {
+  constructor(address[3] memory _tokens, uint256 _feeNum, address _feeSetter) ERC20("MerionLP", "MRNLP") Ownable(_feeSetter) {
     require(_feeNum <= MAX_FEE_NUM, FeeTooHigh());
     feeNum = _feeNum;
     lastFeeUpdate = block.timestamp;
