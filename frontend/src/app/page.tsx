@@ -3,6 +3,7 @@ import Reserves from '@/components/Reserves';
 import Balances from '@/components/Balances';
 import Faucet from '@/components/Faucet';
 import AddLiquidity from '@/components/AddLiquidity';
+import RemoveLiquidity from '@/components/RemoveLiquidity';
 
 export default function Home() {
   return (
@@ -15,6 +16,7 @@ export default function Home() {
             <Balances />
           </Connection>
           <AddLiquidity />
+          <RemoveLiquidity />
         </div>
         <Faucet />
 

@@ -3,12 +3,13 @@
 import { useReserves } from "@/hooks/useReserves";
 import { useMinimumLiquidity } from "@/hooks/useMinimumLiquidity";
 import { useState } from "react";
-import { parseUnits, formatUnits } from "viem";
+import { formatUnits } from "viem";
 import { tokensInfo } from "@/constants/addresses";
 import {mockWrappedBTCAbi, poolAbi} from '@/constants/abi';
 import { addresses } from "@/constants/addresses";
 import {useWriteContract, useConnection, usePublicClient} from 'wagmi';
 import { useQueryClient } from "@tanstack/react-query";
+import { parseAmount } from "@/lib/parseAmount";
 
 type Quote = {
   computed: [bigint, bigint, bigint];
@@ -36,24 +37,25 @@ const getQuote = ({
   supply: bigint,
   minLiq: bigint | undefined}): QuoteResult => {
 
+  const amount = parseAmount(typedAmount);
+  const tolerance = parseAmount(toleranceInput === "" ? "0.5" : toleranceInput, 2);
+
   // The tolerance is judged first: it is a field of its own, it must speak even on an empty form.
-  if (toleranceInput !== "" && (Number.isNaN(Number(toleranceInput)) || Number(toleranceInput) < 0)) {
+  if (tolerance === null || tolerance < 0) {
     return {quote: null, reason: "Tolérance invalide"};
   }
-  if (Number(toleranceInput) > 100) {
+  if (tolerance > 10000n) {
     return {quote: null, reason: "La tolérance ne peut pas dépasser 100 %"};
   }
 
   // Unfinished form: nothing to say.
   if (anchor === null || !typedAmount) return {quote: null, reason: null};
 
-  if (Number.isNaN(Number(typedAmount)) || Number(typedAmount) < 0) {
+  if (amount === null || amount < 0) {
     return {quote: null, reason: "Montant invalide"};
   }
-
-  const amount = parseUnits(typedAmount, 8);
-  const tolerance = parseUnits(toleranceInput === "" ? "0.5" : toleranceInput, 2);
-
+  if (amount === 0n) return { quote: null, reason: "Montant trop faible"}
+  
   if (supply === 0n) {
     if (minLiq === undefined) return {quote: null, reason: null};
     const expected = 3n * amount - minLiq;
@@ -86,13 +88,13 @@ const AddLiquidity = () => {
   const publicClient = usePublicClient();
   const queryClient = useQueryClient();
 
-  const { data } = useReserves();
-  const supply = data?.[3].result;
+  const { reserves: reserveEntries, supply: supplyEntry } = useReserves();
+  const supply = supplyEntry?.status === 'success' ? supplyEntry.result : undefined;
   const { data: minLiq } = useMinimumLiquidity(supply === 0n);
-  if (!data) return <p>Chargement...</p>;
+  if (!reserveEntries) return <p>Chargement...</p>;
 
   // A failed read leaves `result` undefined: dropping those entries lets the length speak.
-  const reserves = data.slice(0, 3).map((r) => r.result).filter((r) => r !== undefined);
+  const reserves = reserveEntries.map((r) => r.result).filter((r) => r !== undefined);
   if (supply === undefined || reserves.length !== 3) return <p>Lecture des réserves indisponible</p>;
   // On an empty pool the tolerance is ignored, so a stale invalid value must not block the deposit.
   const {quote, reason} = getQuote({
@@ -129,6 +131,9 @@ const AddLiquidity = () => {
       })
       await publicClient.waitForTransactionReceipt({hash});
       queryClient.invalidateQueries();
+      setTypedAmount("");
+      setAnchor(null);
+      setTolerance("");
     } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
     } finally {setStep(null)};
@@ -183,8 +188,12 @@ const AddLiquidity = () => {
       </button>
       {reason && <p>{reason}</p>}
       {error && <p>{error}</p>}
-      {quote && <p>Nombre minimal de LP Shares reçues : {formatUnits(quote.minExpected, 8)}</p>}
-      {quote && <p>Nombre théorique de LP Shares reçues : {formatUnits(quote.expected, 8)}</p>}
+      {quote &&
+        <div>
+          <p>Nombre minimal de LP Shares reçues : {formatUnits(quote.minExpected, 8)}</p>
+          <p>Nombre théorique de LP Shares reçues : {formatUnits(quote.expected, 8)}</p>
+        </div>
+      }
     </div>
   )
 }
