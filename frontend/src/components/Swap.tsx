@@ -1,0 +1,248 @@
+'use client';
+
+import { useReserves } from "@/hooks/useReserves";
+import { useFeeNum } from "@/hooks/useFeeNum";
+import { useConstants } from "@/hooks/useConstants";
+import { useUserBalances } from "@/hooks/useUserBalances";
+import { useState } from "react";
+import { formatUnits } from "viem";
+import { addresses, tokensInfo } from "@/constants/addresses";
+import {mockWrappedBTCAbi, poolAbi} from '@/constants/abi';
+import {useWriteContract, useConnection, usePublicClient} from 'wagmi';
+import { useQueryClient } from "@tanstack/react-query";
+import { parseAmount } from "@/lib/parseAmount";
+import Panel from '@/components/Panel';
+
+type Quote = {
+  tokenIn: { index: 0 | 1 | 2, amount: bigint },
+  tokenOut: { index: 0 | 1 | 2, amount: bigint, minAmount: bigint };
+};
+
+// A null quote means no transaction can be built yet. `reason` is filled only when the user
+// did something wrong: an unfinished form stays silent.
+type QuoteResult =
+  | {quote: Quote, reason: null}
+  | {quote: null, reason: string | null};
+
+const getQuote = ({
+  userAsk: {side, typedAmount, indexIn, indexOut, toleranceInput},
+  poolState: {reserves, feeNum, feeDen}
+  }: {
+    userAsk: {side: 'in' | 'out' | null,
+      typedAmount: string,
+      indexIn: 0 | 1 | 2,
+      indexOut: 0 | 1 | 2,
+      toleranceInput: string},
+    poolState: {reserves: readonly bigint[],
+      feeNum: bigint,
+      feeDen: bigint}
+  }): QuoteResult => {
+
+    const tolerance = parseAmount(toleranceInput === "" ? "0.5" : toleranceInput, 2);
+    // The tolerance is judged first: it is a field of its own, it must speak even on an empty form.
+    if (tolerance === null || tolerance < 0) {
+      return {quote: null, reason: "Tolérance invalide"};
+    }
+    if (tolerance > 10000n) {
+      return {quote: null, reason: "La tolérance ne peut pas dépasser 100 %"};
+    }
+
+    // Unfinished form: nothing to say.
+    if (!side || !typedAmount) return {quote: null, reason: null};
+
+    const amount = parseAmount(typedAmount);
+    if (amount===null || amount < 0) {
+      return {quote: null, reason: "Montant invalide"};
+    }
+    if (!reserves[indexIn] || reserves[indexOut] === 0n) return {quote: null, reason: "Réserve vide"};
+
+    let amountIn;
+    let amountOut;
+
+    if (side === 'in') {
+      amountIn = amount;
+      const amountAfterFee =  amountIn * (feeDen - feeNum) / feeDen;
+      amountOut = amountAfterFee * reserves[indexOut] / (amountAfterFee + reserves[indexIn]);
+    } else {
+      amountOut = amount;
+      if (amountOut >= reserves[indexOut]) return {quote: null, reason: `Réserve insuffisante pour cette opération, max : ${formatUnits(reserves[indexOut] - 1n, 8)}`};
+      const num = feeDen * amountOut * reserves[indexIn];
+      const den = (feeDen - feeNum) * (reserves[indexOut] - amountOut);
+      amountIn = (num + den - 1n) / den;
+    }
+
+    const tokenIn = {index : indexIn, amount: amountIn};
+    const tokenOut = {index: indexOut, amount: amountOut, minAmount: amountOut * (10000n - tolerance) / 10000n}
+
+    return {quote: {tokenIn, tokenOut}, reason: null};
+}
+
+const Swap = () => {
+  const [typedAmount, setTypedAmount] = useState("");
+  const [side, setSide] = useState<'in' | 'out' | null>(null);
+  const [indexIn, setIndexIn] = useState<0 | 1 | 2>(0);
+  const [indexOut, setIndexOut] = useState<0 | 1 | 2>(1);
+  const [error, setError] = useState<string | null>(null);
+  const [tolerance, setTolerance] = useState("");
+  const [isPending, setIsPending] = useState(false);
+
+  const { mutateAsync } = useWriteContract();
+  const publicClient = usePublicClient();
+  const queryClient = useQueryClient();
+
+  const userAddress = useConnection().address;
+
+  const { data : balancesData } = useUserBalances();
+  const balanceInData = balancesData?.[indexIn];
+  const balanceIn = balanceInData?.result;
+
+  const {error: errorReserves, reserves: reserveEntries} = useReserves();
+  const {error: errorFeeNum, data: feeNum} = useFeeNum();
+  const {error: errorConstants, feeDen: feeDenData} = useConstants();
+  const feeDen = feeDenData?.result;
+  // Gestion des erreurs de lecture des hooks personnalisés
+  const errorReadMessages: string[] = [];
+  if (errorReserves) {console.error(errorReserves.message); errorReadMessages.push("Erreur de lecture des réserves du pool")};
+  if (errorFeeNum) {console.error(errorFeeNum.message); errorReadMessages.push("Erreur de lecture des fees (num)")};
+  if (errorConstants) {console.error(errorConstants.message); errorReadMessages.push("Erreur de lecture des constantes du pool")};
+  if (feeDenData?.error) {console.error(feeDenData?.error.message); errorReadMessages.push("Erreur de lecture des fees (den)")};
+
+  reserveEntries?.forEach((entry, index) => {
+    if (entry?.error) {
+      console.error(entry.error.message);
+      errorReadMessages.push(`Erreur de lecture de la réserve du token ${tokensInfo[index].name}`);
+    }
+  });
+
+  if (errorReadMessages.length > 0) {
+    return(
+    <Panel>
+      <ul>{errorReadMessages.map((message) => <li key={message}>{message}</li>)}</ul>
+    </Panel>)
+  }
+  if (!reserveEntries || feeNum===undefined || !feeDen) return <Panel><p>Chargement...</p></Panel>;
+
+  const reserves = reserveEntries.map((r) => r.result).filter((r) => r !== undefined);
+
+  // On an empty pool the tolerance is ignored, so a stale invalid value must not block the deposit.
+  const {quote, reason} = getQuote({
+  userAsk: {side, typedAmount, indexIn, indexOut, toleranceInput: tolerance},
+  poolState: {reserves, feeNum, feeDen}
+  });
+
+  const handleSwap = async () => {
+    if (!userAddress || side === null || !quote || !publicClient) return;
+    setError(null);
+    try {
+      setIsPending(true);
+      const hashApprove = await mutateAsync({
+        address: tokensInfo[indexIn].address,
+        abi: mockWrappedBTCAbi,
+        functionName: "approve",
+        args: [addresses[31337].pool, quote.tokenIn.amount]
+      })
+      await publicClient.waitForTransactionReceipt({hash: hashApprove});
+
+      const hashSwap = await mutateAsync({
+        address: addresses[31337].pool,
+        abi: poolAbi,
+        functionName: "swap",
+        args: [BigInt(quote.tokenIn.index), quote.tokenIn.amount, BigInt(quote.tokenOut.index), quote.tokenOut.minAmount]
+      })
+      await publicClient.waitForTransactionReceipt({hash: hashSwap});
+      queryClient.invalidateQueries();
+      setTypedAmount("");
+      setSide(null);
+      setTolerance("");
+    } catch (e) {
+        setError(e instanceof Error ? e.message : String(e))
+    } finally {setIsPending(false)};
+  }
+
+  const expected = quote ? {in: quote.tokenIn.amount, out: quote.tokenOut.amount} : null;
+  const displayAmount = (j: 'in' | 'out') => {
+    if (side === j) return typedAmount;
+    else if (expected) return formatUnits(expected[j], 8);
+    else return "";
+  }
+  const infos = quote ? {
+    minAmount : quote.tokenOut.minAmount,
+    balanceError: ((balanceIn || balanceIn === 0n) && quote.tokenIn.amount > balanceIn) ? "Solde insuffisant" : null,
+    zeroOut: quote.tokenOut.amount === 0n ? "Sortie du swap nulle" : null
+  } : null;
+
+  return (
+    <Panel>
+      <div className="flex flex-col my-2">
+
+        <div className="flex items-center gap-2 my-1">
+          <label htmlFor="amountIn" className="w-20 shrink-0">Entrée du swap :</label>
+          <select value={String(indexIn)} onChange={(e) => {setIndexIn(Number(e.target.value) as 0 | 1 | 2); setError(null)}}>
+            {tokensInfo.map((token) => (
+              <option key={token.name} value= {String(token.index)}>
+                {token.name}
+              </option>
+            ))}
+          </select>
+          <input
+            className="px-2 border rounded ml-1 disabled:opacity-50 disabled:cursor-not-allowed"
+            type="text" id="amountIn"
+            value={displayAmount('in')}
+            disabled={isPending}
+            onChange={(e) => {
+              setTypedAmount(e.target.value);
+              setSide('in');
+              setError(null)
+            }}/>
+        </div>
+        <div className="flex items-center gap-2 my-1">
+          <label htmlFor="amountOut" className="w-20 shrink-0">Sortie du swap :</label>
+          <select value={String(indexOut)} onChange={(e) => {setIndexOut(Number(e.target.value) as 0 | 1 | 2); setError(null)}}>
+            {tokensInfo.map((token) => (
+              <option key={token.name} value= {String(token.index)}>
+                {token.name}
+              </option>
+            ))}
+          </select>
+          <input
+            className="px-2 border rounded ml-1 disabled:opacity-50 disabled:cursor-not-allowed"
+            type="text" id="amountOut"
+            value={displayAmount('out')}
+            disabled={isPending}
+            onChange={(e) => {
+              setTypedAmount(e.target.value);
+              setSide('out');
+              setError(null)
+            }}/>
+        </div>
+
+      </div>
+
+      <label htmlFor="tolerance">Tolérance au slippage en % :</label>
+      <input
+        className="px-2 border rounded disabled:opacity-50 disabled:cursor-not-allowed"
+        type="text" id="tolerance"
+        value={tolerance}
+        disabled={isPending}
+        onChange={(e) => {setTolerance(e.target.value); setError(null)}}/>
+
+      <button
+      className='border rounded px-4 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 mt-2'
+      onClick={handleSwap}
+      disabled={isPending || !userAddress || !quote || Boolean(infos?.balanceError)}>
+        {isPending ? "Swap en cours" : "Swap"}
+      </button>
+
+      {balanceInData?.error && <p>Erreur de lecture de votre solde</p>}
+      {error && <p>{error}</p>}
+      {reason && <p>{reason}</p>}
+      {infos?.balanceError && <p>{infos.balanceError}</p>}
+      {infos?.zeroOut && <p>{infos.zeroOut}</p>}
+      {infos &&
+        <p>Nombre minimal de {tokensInfo.find((token) => token.index === BigInt(indexOut))?.name} reçus : {formatUnits(infos.minAmount, 8)}</p>
+      }
+  </Panel>
+  )
+}
+
+export default Swap
