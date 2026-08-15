@@ -8,76 +8,10 @@ import { addresses, tokensInfo } from "@/constants/addresses";
 import {poolAbi} from '@/constants/abi';
 import {useWriteContract, useConnection, usePublicClient} from 'wagmi';
 import { useQueryClient } from "@tanstack/react-query";
-import { parseAmount } from "@/lib/parseAmount";
-
-type Quote = {
-  expected: [bigint, bigint, bigint];
-  shares: bigint;
-  minExpected: [bigint, bigint, bigint];
-};
-
-// A null quote means no transaction can be built yet. `reason` is filled only when the user
-// did something wrong: an unfinished form stays silent.
-type QuoteResult =
-  | {quote: Quote, reason: null}
-  | {quote: null, reason: string | null};
-
-const getQuote = ({
-  anchor,
-  typedAmount,
-  toleranceInput,
-  reserves,
-  supply,
-  maxShares}:
-  {anchor: 0 | 1 | 2 | 3 | null,
-  typedAmount: string,
-  toleranceInput: string,
-  reserves: readonly bigint[],
-  supply: bigint,
-  maxShares: bigint | undefined}): QuoteResult => {
-
-    const amount = parseAmount(typedAmount);
-    const tolerance = parseAmount(toleranceInput === "" ? "0.5" : toleranceInput, 2);
-
-    // The tolerance is judged first: it is a field of its own, it must speak even on an empty form.
-    if (tolerance === null || tolerance < 0) {
-      return {quote: null, reason: "Tolérance invalide"};
-    }
-    if (tolerance > 10000n) {
-      return {quote: null, reason: "La tolérance ne peut pas dépasser 100 %"};
-    }
-
-    // Unfinished form: nothing to say.
-    if (anchor === null || !typedAmount) return {quote: null, reason: null};
-
-    if (maxShares === undefined) return {quote: null, reason: null}
-
-    if (amount===null || amount < 0) {
-      return {quote: null, reason: "Montant invalide"};
-    }
-
-    if (supply === 0n) return { quote: null, reason: "Le pool est vide"}
-
-
-    const reservesA = [...reserves, supply] as const;
-    const anchorReserve = reservesA[anchor];
-    const shares = amount * supply / anchorReserve;
-
-    if (shares === 0n) return { quote: null, reason: "Montant trop faible, rien à brûler"}
-    if (shares > maxShares) return { quote: null, reason: "Vous n'avez pas assez de LP Shares"};
-
-    const expected: [bigint, bigint, bigint] = [
-      shares * reserves[0] / supply,
-      shares * reserves[1] / supply,
-      shares * reserves[2] / supply
-    ];
-    const minExpected: [bigint, bigint, bigint] = [
-      expected[0] * (10000n - tolerance) / 10000n,
-      expected[1] * (10000n - tolerance) / 10000n,
-      expected[2] * (10000n - tolerance) / 10000n
-    ];
-    return {quote: {expected, shares, minExpected}, reason: null};
-}
+import { getQuote } from "@/lib/quoteRemoveLiquidity";
+import Panel from "@/components/Panel";
+import { collectReadErrors } from "@/lib/readErrors";
+import ReadErrors from "@/components/ReadErrors";
 
 const RemoveLiquidity = () => {
   const [typedAmount, setTypedAmount] = useState("");
@@ -91,15 +25,26 @@ const RemoveLiquidity = () => {
   const publicClient = usePublicClient();
   const queryClient = useQueryClient();
 
-  const { reserves: reserveEntries, supply: supplyEntry } = useReserves();
+  const { reserves: reserveEntries, supply: supplyEntry, error: errorReserves } = useReserves();
   const supply = supplyEntry?.status === 'success' ? supplyEntry.result : undefined;
-  const { data: maxShares } = useLpBalance();
-  if (!reserveEntries) return <p>Chargement...</p>;
+  const { data: maxShares, error: errorLpBalance } = useLpBalance();
 
-  // A failed read leaves `result` undefined: dropping those entries lets the length speak.
+  const failedReads = collectReadErrors([
+    {message: "Erreur de lecture des réserves du pool", error: errorReserves},
+    ...(reserveEntries ?? []).map((entry, i) => ({
+      message: `Erreur de lecture de la réserve du token ${tokensInfo[i].name}`,
+      error: entry?.error
+    })),
+    {message: "Erreur de lecture du total des parts LP", error: supplyEntry?.error},
+    {message: "Erreur de lecture de vos parts LP", error: errorLpBalance},
+  ]);
+  if (failedReads.length > 0) return <ReadErrors sources={failedReads} />;
+  if (!reserveEntries || supply === undefined) return <Panel><p>Chargement...</p></Panel>;
+  // `useLpBalance` is disabled without a wallet, so `maxShares` would stay undefined forever
+  // for a disconnected visitor: only wait on it once a wallet is actually connected.
+  if (userAddress && maxShares === undefined) return <Panel><p>Chargement...</p></Panel>;
+
   const reserves = reserveEntries.map((r) => r.result).filter((r) => r !== undefined);
-  if (supply === undefined || reserves.length !== 3) return <p>Lecture des réserves indisponible</p>;
-  // On an empty pool the tolerance is ignored, so a stale invalid value must not block the deposit.
   const {quote, reason} = getQuote({
     anchor,
     typedAmount,
@@ -139,7 +84,7 @@ const RemoveLiquidity = () => {
   const minDisplay = quote ? quote?.minExpected.map((amount) => formatUnits(amount, 8)) : null
 
   return (
-    <div className="border rounded p-4 flex flex-col">
+    <Panel>
       <div className="flex flex-col my-2">
 
       {tokensInfo.map((token) => {
@@ -147,37 +92,40 @@ const RemoveLiquidity = () => {
 
         return(
           <div key={token.name} className="flex items-center gap-2 my-1">
-            <label htmlFor={token.name} className="w-20 shrink-0">{token.name} : </label>
+            <label htmlFor={`rem-${token.name}`} className="w-20 shrink-0">{token.name} : </label>
             <input
-              className="px-2 border rounded ml-1 disabled:opacity-50 disabled:cursor-not-allowed"
-              type="text" id={token.name}
+              className="px-2 border rounded ml-1 flex-1 min-w-0 disabled:opacity-50 disabled:cursor-not-allowed"
+              type="text" id={`rem-${token.name}`}
               value={displayAmount(i)}
               disabled={isPending}
               onChange={(e) => {
                 setTypedAmount(e.target.value);
-                setAnchor(i)}}/>
+                setAnchor(i);
+                setError(null)}}/>
           </div>
         )}
       )}
       </div>
 
-      <label htmlFor="lpShares">Nombre de LP shares à brûler :</label>
+      <label htmlFor="rem-lpShares">Nombre de LP shares à brûler :</label>
       <input
         className="px-2 border rounded disabled:opacity-50 disabled:cursor-not-allowed"
-        type="text" id="lpShares"
+        type="text" id="rem-lpShares"
         value = {displayAmount(3)}
         disabled={isPending}
         onChange={(e) => {
           setTypedAmount(e.target.value);
-          setAnchor(3)}} />
+          setAnchor(3);
+          setError(null)}} />
 
-      <label htmlFor="tolerance">Tolérance au slippage en % :</label>
+      <label htmlFor="rem-tolerance">Tolérance au slippage en % :</label>
       <input
         className="px-2 border rounded disabled:opacity-50 disabled:cursor-not-allowed"
-        type="text" id="tolerance"
+        type="text" id="rem-tolerance"
+        placeholder="0.5"
         value={tolerance}
         disabled={isPending}
-        onChange={(e) => setTolerance(e.target.value)}/>
+        onChange={(e) => {setTolerance(e.target.value); setError(null)}}/>
 
       <button
       className='border rounded px-4 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 mt-2'
@@ -192,7 +140,7 @@ const RemoveLiquidity = () => {
           <p>Nombre minimal de tokens reçus : {minDisplay[0]} wBTC, {minDisplay[1]} cbBTC, {minDisplay[2]} LBTC</p>
         </div>
       }
-    </div>
+    </Panel>
   )
 }
 

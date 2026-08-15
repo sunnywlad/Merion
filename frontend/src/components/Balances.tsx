@@ -22,8 +22,9 @@ export default function Balances() {
     : undefined;
 
   return (
-    <div className='border rounded p-4'>
-      <ul>
+    <section className='min-w-0'>
+      <h2 className='text-sm font-semibold pb-2'>Votre position</h2>
+      <ul className='text-sm'>
         {tokensInfo.map((token, i) => {
           const entry = data?.[i];
           return (
@@ -55,6 +56,6 @@ export default function Balances() {
           suffix=" %"
         />
       </ul>
-    </div>
+    </section>
   )
 }
