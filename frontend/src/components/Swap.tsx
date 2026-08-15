@@ -11,6 +11,7 @@ import {mockWrappedBTCAbi, poolAbi} from '@/constants/abi';
 import {useWriteContract, useConnection, usePublicClient} from 'wagmi';
 import { useQueryClient } from "@tanstack/react-query";
 import { getQuote } from "@/lib/quoteSwap";
+import { shareBps } from "@/lib/quote";
 import Panel from '@/components/Panel';
 import { collectReadErrors } from "@/lib/readErrors";
 import ReadErrors from "@/components/ReadErrors";
@@ -93,8 +94,20 @@ const Swap = () => {
     else if (expected) return formatUnits(expected[j], 8);
     else return "";
   }
+  const nameOf = (index: number) => tokensInfo.find((token) => token.index === BigInt(index))?.name;
+
   const infos = quote ? {
     minAmount : quote.tokenOut.minAmount,
+    fee: quote.tokenIn.fee,
+    feeBps: quote.tokenIn.feeBps,
+    priceImpact: quote.tokenOut.priceImpact,
+    priceImpactBps: quote.tokenOut.priceImpactBps,
+    // The tolerance gap, distinct from the impact above: this one is what the user MAY still
+    // lose between signature and inclusion, not what the curve has already taken.
+    maxSlippage: quote.tokenOut.amount - quote.tokenOut.minAmount,
+    // Rounding aside, this comes back to the tolerance the user typed. Displaying it anyway keeps
+    // the three lines readable side by side, and makes the chosen figure visible where it bites.
+    maxSlippageBps: shareBps(quote.tokenOut.amount - quote.tokenOut.minAmount, quote.tokenOut.amount),
     balanceError: ((balanceIn || balanceIn === 0n) && quote.tokenIn.amount > balanceIn) ? "Solde insuffisant" : null,
     zeroOut: quote.tokenOut.amount === 0n ? "Sortie du swap nulle" : null
   } : null;
@@ -154,6 +167,7 @@ const Swap = () => {
       <input
         className="px-2 border rounded disabled:opacity-50 disabled:cursor-not-allowed"
         type="text" id="swap-tolerance"
+        placeholder="0.5"
         value={tolerance}
         disabled={isPending}
         onChange={(e) => {setTolerance(e.target.value); setError(null)}}/>
@@ -170,9 +184,12 @@ const Swap = () => {
       {reason && <p>{reason}</p>}
       {infos?.balanceError && <p>{infos.balanceError}</p>}
       {infos?.zeroOut && <p>{infos.zeroOut}</p>}
-      {infos &&
-        <p>Nombre minimal de {tokensInfo.find((token) => token.index === BigInt(indexOut))?.name} reçus : {formatUnits(infos.minAmount, 8)}</p>
-      }
+      {infos && <>
+        <p>Nombre minimal de {nameOf(indexOut)} reçus : {formatUnits(infos.minAmount, 8)}</p>
+        <p>Frais prélevés : {formatUnits(infos.fee, 8)} {nameOf(indexIn)} ({formatUnits(infos.feeBps, 2)} % de l&apos;entrée)</p>
+        <p>Perte due à l&apos;impact de prix : {formatUnits(infos.priceImpact, 8)} {nameOf(indexOut)} ({formatUnits(infos.priceImpactBps, 2)} % de moins qu&apos;au prix actuel du pool)</p>
+        <p>Perte maximale au slippage : {formatUnits(infos.maxSlippage, 8)} {nameOf(indexOut)} ({formatUnits(infos.maxSlippageBps, 2)} % de la sortie estimée)</p>
+      </>}
   </Panel>
   )
 }

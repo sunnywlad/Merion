@@ -1,10 +1,15 @@
 import { formatUnits } from "viem";
 import { parseAmount } from "@/lib/parseAmount";
-import { parseTolerance, type QuoteResult } from "@/lib/quote";
+import { parseTolerance, shareBps, type QuoteResult } from "@/lib/quote";
 
 export type Quote = {
-  tokenIn: { index: 0 | 1 | 2, amount: bigint },
-  tokenOut: { index: 0 | 1 | 2, amount: bigint, minAmount: bigint };
+  // `fee` is denominated in the INPUT token: the pool skims it off what you send, before the
+  // curve ever sees the amount.
+  // Percentages are carried as basis points, like the tolerance: `formatUnits(_, 2)` renders them.
+  tokenIn: { index: 0 | 1 | 2, amount: bigint, fee: bigint, feeBps: bigint },
+  // `priceImpact` is denominated in the OUTPUT token: what the curve costs you on top of the
+  // fee, measured against the spot ratio of the reserves.
+  tokenOut: { index: 0 | 1 | 2, amount: bigint, minAmount: bigint, priceImpact: bigint, priceImpactBps: bigint };
 };
 
 export const getQuote = ({
@@ -49,8 +54,32 @@ export const getQuote = ({
       amountIn = (num + den - 1n) / den;
     }
 
-    const tokenIn = {index : indexIn, amount: amountIn};
-    const tokenOut = {index: indexOut, amount: amountOut, minAmount: amountOut * (10000n - tolerance) / 10000n}
+    // Recomputed here rather than carried out of the branch above: the 'out' branch never held
+    // it, and this line reproduces the contract's own truncation on the input side.
+    const amountAfterFee = amountIn * (feeDen - feeNum) / feeDen;
+    const fee = amountIn - amountAfterFee;
+
+    // What the swap would yield if the pool traded at the spot ratio of its reserves, that is,
+    // if the trade were infinitely small. The real output is always lower, the curve sees the
+    // trade coming. `idealOut` is derived from the post-fee amount so the two figures do not
+    // count the same loss twice: fee and impact partition the gap exactly.
+    const idealOut = amountAfterFee * reserves[indexOut] / reserves[indexIn];
+    // Guarded rather than assumed: on the 'out' branch `amountIn` was rounded UP in the pool's
+    // favour, and a one-wei quote could invert the comparison. A negative loss is nonsense to
+    // display.
+    const priceImpact = idealOut > amountOut ? idealOut - amountOut : 0n;
+
+    // Each loss is measured against the quantity it is actually taken from: the fee against what
+    // you send, the impact against what you would have received without the curve. Referring both
+    // to the same base would flatter one of the two.
+    const tokenIn = {index : indexIn, amount: amountIn, fee, feeBps: shareBps(fee, amountIn)};
+    const tokenOut = {
+      index: indexOut,
+      amount: amountOut,
+      minAmount: amountOut * (10000n - tolerance) / 10000n,
+      priceImpact,
+      priceImpactBps: shareBps(priceImpact, idealOut)
+    }
 
     return {quote: {tokenIn, tokenOut}, reason: null};
 }

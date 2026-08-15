@@ -122,6 +122,7 @@ const RemoveLiquidity = () => {
       <input
         className="px-2 border rounded disabled:opacity-50 disabled:cursor-not-allowed"
         type="text" id="rem-tolerance"
+        placeholder="0.5"
         value={tolerance}
         disabled={isPending}
         onChange={(e) => {setTolerance(e.target.value); setError(null)}}/>

@@ -125,6 +125,9 @@ const AddLiquidity = () => {
       <input
         className="px-2 border rounded disabled:opacity-50 disabled:cursor-not-allowed"
         type="text" id="add-tolerance"
+        // Suppressed on an empty pool: the field is neutralised there, and announcing a default
+        // that will never be read would be a lie told in grey.
+        placeholder={isEmptyPool ? "" : "0.5"}
         value={isEmptyPool ? "" : tolerance}
         disabled={isEmptyPool || isPending}
         onChange={(e) => {setTolerance(e.target.value); setError(null)}}/>
