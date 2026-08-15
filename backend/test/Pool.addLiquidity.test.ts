@@ -261,12 +261,9 @@ describe("Pool.addLiquidity", async function () {
       });
       describe("B) Reverts", function () {
         it.todo("une approbation insuffisante sur un seul des trois tokens revert (ERC-20)");
+        it.todo("_amount == 0 : ZeroOutput, un depot qui ne mint aucune part est refuse");
       });
       describe("C) Cas limites", function () {
-        it.todo("_amount == 0 ne mint aucune part");
-        it.todo("_amount == 0 laisse les reserves inchangees");
-        it.todo("_amount == 0 laisse les soldes du deposant inchanges");
-        it.todo("_amount == 0 emet quand meme AddedLiquidity, avec trois montants nuls");
         it.todo("_anchorIndex hors bornes (99) sur un pool amorce echoue par panic 0x32");
       });
       describe("D) Pool desequilibre", function () {
@@ -581,62 +578,36 @@ describe("Pool.addLiquidity", async function () {
           "ERC20InsufficientAllowance",
         );
       });
+
+      it("_amount == 0 : ZeroOutput, un depot qui ne mint aucune part est refuse", async function () {
+        // Ce cas etait, jusqu'au 2026-08-15, une transaction sans effet : aucune
+        // part mintee, aucun transfert, mais un evenement AddedLiquidity emis
+        // quand meme, que le front lit comme source de donnees. Quatre `it` le
+        // documentaient ici, en "Cas limites". La garde `mintedShares > 0`
+        // (Pool.sol:89) les remplace par un unique revert, et le cas change de
+        // section : ce n'est plus une limite toleree, c'est un refus.
+        //
+        // Le raisonnement derriere la garde, a tenir a l'oral : le front sait
+        // refuser un montant nul, mais un protocole DeFi qui composerait avec
+        // ce pool ne le sait pas. Le contrat garde donc tout appelant, pas
+        // seulement l'utilisateur distrait.
+        //
+        // Elle vit dans la branche `supply != 0` seulement : sur la branche
+        // d'amorcage, mintedShares = 3 * _amount - MINIMUM_LIQUIDITY ne peut
+        // pas valoir zero (3 * _amount == 1000 n'a pas de solution entiere),
+        // un `require` y serait du code mort. Sur pool vide, _amount == 0
+        // sous-flow toujours en panic 0x11, teste en I.B.
+        const { pool, depositor } = await networkHelpers.loadFixture(deploySeededPoolFixture);
+
+        await viem.assertions.revertWithCustomError(
+          pool.write.addLiquidity([0n, 0n, 0n], { account: depositor.account }),
+          pool,
+          "ZeroOutput",
+        );
+      });
     });
 
     describe("C) Cas limites", function () {
-      it("_amount == 0 ne mint aucune part", async function () {
-        const { pool, depositor } = await networkHelpers.loadFixture(deploySeededPoolFixture);
-        const sharesBefore = await pool.read.balanceOf([depositor.account.address]);
-
-        await pool.write.addLiquidity([0n, 0n, 0n], { account: depositor.account });
-
-        const sharesAfter = await pool.read.balanceOf([depositor.account.address]);
-        assert.equal(
-          sharesAfter,
-          sharesBefore,
-          `les parts du deposant ne devraient pas varier : avant=${sharesBefore}, apres=${sharesAfter}`,
-        );
-      });
-
-      it("_amount == 0 laisse les reserves inchangees", async function () {
-        const { pool, depositor } = await networkHelpers.loadFixture(deploySeededPoolFixture);
-        const reservesBefore = await readReserves(pool);
-
-        await pool.write.addLiquidity([0n, 0n, 0n], { account: depositor.account });
-
-        const reservesAfter = await readReserves(pool);
-        assert.deepEqual(
-          reservesAfter,
-          reservesBefore,
-          `les reserves ne devraient pas varier : avant=[${reservesBefore}], apres=[${reservesAfter}]`,
-        );
-      });
-
-      it("_amount == 0 laisse les soldes du deposant inchanges", async function () {
-        const { pool, tokens, depositor } = await networkHelpers.loadFixture(deploySeededPoolFixture);
-        const balancesBefore = await readBalances(tokens, depositor.account.address);
-
-        await pool.write.addLiquidity([0n, 0n, 0n], { account: depositor.account });
-
-        const balancesAfter = await readBalances(tokens, depositor.account.address);
-        assert.deepEqual(
-          balancesAfter,
-          balancesBefore,
-          `les soldes du deposant ne devraient pas varier : avant=[${balancesBefore}], apres=[${balancesAfter}]`,
-        );
-      });
-
-      it("_amount == 0 emet quand meme AddedLiquidity, avec trois montants nuls", async function () {
-        const { pool, depositor } = await networkHelpers.loadFixture(deploySeededPoolFixture);
-
-        await viem.assertions.emitWithArgs(
-          pool.write.addLiquidity([0n, 0n, 0n], { account: depositor.account }),
-          pool,
-          "AddedLiquidity",
-          [depositor.account.address, [0n, 0n, 0n], 0n],
-        );
-      });
-
       it("_anchorIndex hors bornes (99) sur un pool amorce echoue par panic 0x32", async function () {
         const { pool, depositor } = await networkHelpers.loadFixture(deploySeededPoolFixture);
         // Sur la branche supply != 0, cachedReserves[_anchorIndex] est lu des

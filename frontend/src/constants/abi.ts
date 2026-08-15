@@ -122,6 +122,11 @@ export const poolAbi = [
       "type": "error"
     },
     {
+      "inputs": [],
+      "name": "InsufficientReserve",
+      "type": "error"
+    },
+    {
       "inputs": [
         {
           "internalType": "address",
@@ -146,6 +151,11 @@ export const poolAbi = [
     {
       "inputs": [],
       "name": "ReserveOverflow",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "ZeroOutput",
       "type": "error"
     },
     {
