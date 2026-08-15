@@ -8,21 +8,26 @@ import Swap from '@/components/Swap';
 
 export default function Home() {
   return (
-    <>
-      <div className='p-4'>
-        <p className='text-xl font-bold pb-2'>Welcome to Merion</p>
-        <div className='grid gap-4 pb-2 grid-cols-1 md:grid-cols-2 xl:grid-cols-3'>
-          <Reserves />
+    <div className='flex flex-col lg:flex-row lg:items-stretch'>
+      {/* Lecture seule : aucune action ne part d'ici, d'où l'absence de Panel. */}
+      <aside className='shrink-0 p-4 border-b lg:w-72 lg:border-b-0 lg:border-r'>
+        <Reserves />
+        <div className='mt-6 pt-6 border-t'>
           <Connection>
             <Balances />
           </Connection>
+        </div>
+      </aside>
+
+      <main className='min-w-0 flex-1 p-4'>
+        <p className='text-xl font-bold pb-2'>Welcome to Merion</p>
+        <div className='grid gap-4 grid-cols-1 xl:grid-cols-2'>
           <AddLiquidity />
           <RemoveLiquidity />
           <Swap />
+          <Faucet />
         </div>
-        <Faucet />
-
-      </div>
-    </>
+      </main>
+    </div>
   );
 }

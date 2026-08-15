@@ -8,8 +8,9 @@ export default function Reserves() {
   const { reserves, supply, isLoading, error } = useReserves();
 
   return (
-    <div className='border rounded p-4 min-w-0'>
-      <ul>
+    <section className='min-w-0'>
+      <h2 className='text-sm font-semibold pb-2'>Réserves du pool</h2>
+      <ul className='text-sm'>
         {tokensInfo.map((token, i) => {
           const entry = reserves?.[i];
           return (
@@ -30,6 +31,6 @@ export default function Reserves() {
           value={supply?.status === 'success' ? supply.result : undefined}
         />
       </ul>
-    </div>
+    </section>
   )
 }
