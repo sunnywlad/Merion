@@ -104,10 +104,10 @@ const AddLiquidity = () => {
 
         return(
           <div key={token.name} className="flex items-center gap-2 my-1">
-            <label htmlFor={token.name} className="w-20 shrink-0">{token.name} : </label>
+            <label htmlFor={`add-${token.name}`} className="w-20 shrink-0">{token.name} : </label>
             <input
-              className="px-2 border rounded ml-1 disabled:opacity-50 disabled:cursor-not-allowed"
-              type="text" id={token.name}
+              className="px-2 border rounded ml-1 flex-1 min-w-0 disabled:opacity-50 disabled:cursor-not-allowed"
+              type="text" id={`add-${token.name}`}
               value={displayed}
               disabled={isPending}
               onChange={(e) => {
@@ -119,12 +119,12 @@ const AddLiquidity = () => {
       )}
       </div>
 
-      <label htmlFor="tolerance" className={isEmptyPool ? "opacity-50" : undefined}>
+      <label htmlFor="add-tolerance" className={isEmptyPool ? "opacity-50" : undefined}>
         Tolérance au slippage en % :
       </label>
       <input
         className="px-2 border rounded disabled:opacity-50 disabled:cursor-not-allowed"
-        type="text" id="tolerance"
+        type="text" id="add-tolerance"
         value={isEmptyPool ? "" : tolerance}
         disabled={isEmptyPool || isPending}
         onChange={(e) => {setTolerance(e.target.value); setError(null)}}/>

@@ -5,7 +5,7 @@ import {tokensInfo} from '@/constants/addresses';
 
 const Faucet = () => {
   return(
-    <div className='flex gap-4'>
+    <div className='flex flex-wrap gap-4'>
       {tokensInfo.map((token) => {
         return <MintButton key={token.name} name={token.name} address={token.address} />
       })}

@@ -11,7 +11,7 @@ export default function Home() {
     <>
       <div className='p-4'>
         <p className='text-xl font-bold pb-2'>Welcome to Merion</p>
-        <div className='flex gap-4 pb-2'>
+        <div className='grid gap-4 pb-2 grid-cols-1 md:grid-cols-2 xl:grid-cols-3'>
           <Reserves />
           <Connection>
             <Balances />

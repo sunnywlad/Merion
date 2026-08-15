@@ -92,10 +92,10 @@ const RemoveLiquidity = () => {
 
         return(
           <div key={token.name} className="flex items-center gap-2 my-1">
-            <label htmlFor={token.name} className="w-20 shrink-0">{token.name} : </label>
+            <label htmlFor={`rem-${token.name}`} className="w-20 shrink-0">{token.name} : </label>
             <input
-              className="px-2 border rounded ml-1 disabled:opacity-50 disabled:cursor-not-allowed"
-              type="text" id={token.name}
+              className="px-2 border rounded ml-1 flex-1 min-w-0 disabled:opacity-50 disabled:cursor-not-allowed"
+              type="text" id={`rem-${token.name}`}
               value={displayAmount(i)}
               disabled={isPending}
               onChange={(e) => {
@@ -107,10 +107,10 @@ const RemoveLiquidity = () => {
       )}
       </div>
 
-      <label htmlFor="lpShares">Nombre de LP shares à brûler :</label>
+      <label htmlFor="rem-lpShares">Nombre de LP shares à brûler :</label>
       <input
         className="px-2 border rounded disabled:opacity-50 disabled:cursor-not-allowed"
-        type="text" id="lpShares"
+        type="text" id="rem-lpShares"
         value = {displayAmount(3)}
         disabled={isPending}
         onChange={(e) => {
@@ -118,10 +118,10 @@ const RemoveLiquidity = () => {
           setAnchor(3);
           setError(null)}} />
 
-      <label htmlFor="tolerance">Tolérance au slippage en % :</label>
+      <label htmlFor="rem-tolerance">Tolérance au slippage en % :</label>
       <input
         className="px-2 border rounded disabled:opacity-50 disabled:cursor-not-allowed"
-        type="text" id="tolerance"
+        type="text" id="rem-tolerance"
         value={tolerance}
         disabled={isPending}
         onChange={(e) => {setTolerance(e.target.value); setError(null)}}/>

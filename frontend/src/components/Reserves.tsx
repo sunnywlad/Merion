@@ -8,7 +8,7 @@ export default function Reserves() {
   const { reserves, supply, isLoading, error } = useReserves();
 
   return (
-    <div className='border rounded p-4'>
+    <div className='border rounded p-4 min-w-0'>
       <ul>
         {tokensInfo.map((token, i) => {
           const entry = reserves?.[i];

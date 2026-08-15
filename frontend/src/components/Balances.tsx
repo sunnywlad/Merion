@@ -22,7 +22,7 @@ export default function Balances() {
     : undefined;
 
   return (
-    <div className='border rounded p-4'>
+    <div className='border rounded p-4 min-w-0'>
       <ul>
         {tokensInfo.map((token, i) => {
           const entry = data?.[i];

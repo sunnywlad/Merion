@@ -103,53 +103,57 @@ const Swap = () => {
     <Panel>
       <div className="flex flex-col my-2">
 
-        <div className="flex items-center gap-2 my-1">
-          <label htmlFor="amountIn" className="w-20 shrink-0">Entrée du swap :</label>
-          <select value={String(indexIn)} onChange={(e) => {setIndexIn(Number(e.target.value) as 0 | 1 | 2); setError(null)}}>
-            {tokensInfo.map((token) => (
-              <option key={token.name} value= {String(token.index)}>
-                {token.name}
-              </option>
-            ))}
-          </select>
-          <input
-            className="px-2 border rounded ml-1 disabled:opacity-50 disabled:cursor-not-allowed"
-            type="text" id="amountIn"
-            value={displayAmount('in')}
-            disabled={isPending}
-            onChange={(e) => {
-              setTypedAmount(e.target.value);
-              setSide('in');
-              setError(null)
-            }}/>
+        <div className="flex flex-col gap-1 my-1">
+          <label htmlFor="swap-amountIn">Entrée du swap :</label>
+          <div className="flex items-center gap-2">
+            <select className="shrink-0" value={String(indexIn)} onChange={(e) => {setIndexIn(Number(e.target.value) as 0 | 1 | 2); setError(null)}}>
+              {tokensInfo.map((token) => (
+                <option key={token.name} value= {String(token.index)}>
+                  {token.name}
+                </option>
+              ))}
+            </select>
+            <input
+              className="px-2 border rounded flex-1 min-w-0 disabled:opacity-50 disabled:cursor-not-allowed"
+              type="text" id="swap-amountIn"
+              value={displayAmount('in')}
+              disabled={isPending}
+              onChange={(e) => {
+                setTypedAmount(e.target.value);
+                setSide('in');
+                setError(null)
+              }}/>
+          </div>
         </div>
-        <div className="flex items-center gap-2 my-1">
-          <label htmlFor="amountOut" className="w-20 shrink-0">Sortie du swap :</label>
-          <select value={String(indexOut)} onChange={(e) => {setIndexOut(Number(e.target.value) as 0 | 1 | 2); setError(null)}}>
-            {tokensInfo.map((token) => (
-              <option key={token.name} value= {String(token.index)}>
-                {token.name}
-              </option>
-            ))}
-          </select>
-          <input
-            className="px-2 border rounded ml-1 disabled:opacity-50 disabled:cursor-not-allowed"
-            type="text" id="amountOut"
-            value={displayAmount('out')}
-            disabled={isPending}
-            onChange={(e) => {
-              setTypedAmount(e.target.value);
-              setSide('out');
-              setError(null)
-            }}/>
+        <div className="flex flex-col gap-1 my-1">
+          <label htmlFor="swap-amountOut">Sortie du swap :</label>
+          <div className="flex items-center gap-2">
+            <select className="shrink-0" value={String(indexOut)} onChange={(e) => {setIndexOut(Number(e.target.value) as 0 | 1 | 2); setError(null)}}>
+              {tokensInfo.map((token) => (
+                <option key={token.name} value= {String(token.index)}>
+                  {token.name}
+                </option>
+              ))}
+            </select>
+            <input
+              className="px-2 border rounded flex-1 min-w-0 disabled:opacity-50 disabled:cursor-not-allowed"
+              type="text" id="swap-amountOut"
+              value={displayAmount('out')}
+              disabled={isPending}
+              onChange={(e) => {
+                setTypedAmount(e.target.value);
+                setSide('out');
+                setError(null)
+              }}/>
+          </div>
         </div>
 
       </div>
 
-      <label htmlFor="tolerance">Tolérance au slippage en % :</label>
+      <label htmlFor="swap-tolerance">Tolérance au slippage en % :</label>
       <input
         className="px-2 border rounded disabled:opacity-50 disabled:cursor-not-allowed"
-        type="text" id="tolerance"
+        type="text" id="swap-tolerance"
         value={tolerance}
         disabled={isPending}
         onChange={(e) => {setTolerance(e.target.value); setError(null)}}/>
