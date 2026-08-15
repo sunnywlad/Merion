@@ -9,72 +9,10 @@ import {mockWrappedBTCAbi, poolAbi} from '@/constants/abi';
 import { addresses } from "@/constants/addresses";
 import {useWriteContract, useConnection, usePublicClient} from 'wagmi';
 import { useQueryClient } from "@tanstack/react-query";
-import { parseAmount } from "@/lib/parseAmount";
-
-type Quote = {
-  computed: [bigint, bigint, bigint];
-  expected: bigint;
-  minExpected: bigint;
-};
-
-// A null quote means no transaction can be built yet. `reason` is filled only when the user
-// did something wrong: an unfinished form stays silent.
-type QuoteResult =
-  | {quote: Quote, reason: null}
-  | {quote: null, reason: string | null};
-
-const getQuote = ({
-  anchor,
-  typedAmount,
-  toleranceInput,
-  reserves,
-  supply,
-  minLiq}:
-  {anchor: 0 | 1 | 2 | null,
-  typedAmount: string,
-  toleranceInput: string,
-  reserves: readonly bigint[],
-  supply: bigint,
-  minLiq: bigint | undefined}): QuoteResult => {
-
-  const amount = parseAmount(typedAmount);
-  const tolerance = parseAmount(toleranceInput === "" ? "0.5" : toleranceInput, 2);
-
-  // The tolerance is judged first: it is a field of its own, it must speak even on an empty form.
-  if (tolerance === null || tolerance < 0) {
-    return {quote: null, reason: "Tolérance invalide"};
-  }
-  if (tolerance > 10000n) {
-    return {quote: null, reason: "La tolérance ne peut pas dépasser 100 %"};
-  }
-
-  // Unfinished form: nothing to say.
-  if (anchor === null || !typedAmount) return {quote: null, reason: null};
-
-  if (amount === null || amount < 0) {
-    return {quote: null, reason: "Montant invalide"};
-  }
-  if (amount === 0n) return { quote: null, reason: "Montant trop faible"}
-  
-  if (supply === 0n) {
-    if (minLiq === undefined) return {quote: null, reason: null};
-    const expected = 3n * amount - minLiq;
-    if (expected <= 0n) {
-      return {quote: null, reason: `Dépôt initial trop faible : plus de ${formatUnits(minLiq / 3n, 8)} par token`};
-    }
-    return {quote: {computed: [amount, amount, amount], expected, minExpected: expected}, reason: null};
-  }
-
-  const anchorReserve = reserves[anchor];
-  const computed: [bigint, bigint, bigint] = [
-    amount * reserves[0] / anchorReserve,
-    amount * reserves[1] / anchorReserve,
-    amount * reserves[2] / anchorReserve
-  ];
-  const expected = supply * amount / anchorReserve;
-  const minExpected = expected * (10000n - tolerance) / 10000n;
-  return {quote: {computed, expected, minExpected}, reason: null};
-}
+import { getQuote } from "@/lib/quoteAddLiquidity";
+import Panel from "@/components/Panel";
+import { collectReadErrors } from "@/lib/readErrors";
+import ReadErrors from "@/components/ReadErrors";
 
 const AddLiquidity = () => {
   const [typedAmount, setTypedAmount] = useState("");
@@ -88,14 +26,24 @@ const AddLiquidity = () => {
   const publicClient = usePublicClient();
   const queryClient = useQueryClient();
 
-  const { reserves: reserveEntries, supply: supplyEntry } = useReserves();
+  const { reserves: reserveEntries, supply: supplyEntry, error: errorReserves } = useReserves();
   const supply = supplyEntry?.status === 'success' ? supplyEntry.result : undefined;
-  const { data: minLiq } = useMinimumLiquidity(supply === 0n);
-  if (!reserveEntries) return <p>Chargement...</p>;
+  const { data: minLiq, error: errorMinLiq } = useMinimumLiquidity(supply === 0n);
 
-  // A failed read leaves `result` undefined: dropping those entries lets the length speak.
+  const failedReads = collectReadErrors([
+    {message: "Erreur de lecture des réserves du pool", error: errorReserves},
+    ...(reserveEntries ?? []).map((entry, i) => ({
+      message: `Erreur de lecture de la réserve du token ${tokensInfo[i].name}`,
+      error: entry?.error
+    })),
+    {message: "Erreur de lecture du total des parts LP", error: supplyEntry?.error},
+    {message: "Erreur de lecture de la liquidité minimale", error: errorMinLiq},
+  ]);
+  if (failedReads.length > 0) return <ReadErrors sources={failedReads} />;
+  if (!reserveEntries || supply === undefined) return <Panel><p>Chargement...</p></Panel>;
+  if (supply === 0n && minLiq === undefined) return <Panel><p>Chargement...</p></Panel>;
+
   const reserves = reserveEntries.map((r) => r.result).filter((r) => r !== undefined);
-  if (supply === undefined || reserves.length !== 3) return <p>Lecture des réserves indisponible</p>;
   // On an empty pool the tolerance is ignored, so a stale invalid value must not block the deposit.
   const {quote, reason} = getQuote({
     anchor,
@@ -145,7 +93,7 @@ const AddLiquidity = () => {
   const isPending = step !== null;
 
   return (
-    <div className="border rounded p-4 flex flex-col">
+    <Panel>
       <div className="flex flex-col my-2">
 
       {tokensInfo.map((token) => {
@@ -164,7 +112,8 @@ const AddLiquidity = () => {
               disabled={isPending}
               onChange={(e) => {
                 setTypedAmount(e.target.value);
-                setAnchor(i)}}/>
+                setAnchor(i);
+                setError(null)}}/>
           </div>
         )}
       )}
@@ -178,7 +127,7 @@ const AddLiquidity = () => {
         type="text" id="tolerance"
         value={isEmptyPool ? "" : tolerance}
         disabled={isEmptyPool || isPending}
-        onChange={(e) => setTolerance(e.target.value)}/>
+        onChange={(e) => {setTolerance(e.target.value); setError(null)}}/>
       {isEmptyPool && <p className="text-sm opacity-70">Pool vide : le montant de parts est déterminé, aucun glissement possible.</p>}
       <button
       className='border rounded px-4 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 mt-2'
@@ -194,7 +143,7 @@ const AddLiquidity = () => {
           <p>Nombre théorique de LP Shares reçues : {formatUnits(quote.expected, 8)}</p>
         </div>
       }
-    </div>
+    </Panel>
   )
 }
 

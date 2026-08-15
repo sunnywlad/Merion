@@ -10,72 +10,10 @@ import { addresses, tokensInfo } from "@/constants/addresses";
 import {mockWrappedBTCAbi, poolAbi} from '@/constants/abi';
 import {useWriteContract, useConnection, usePublicClient} from 'wagmi';
 import { useQueryClient } from "@tanstack/react-query";
-import { parseAmount } from "@/lib/parseAmount";
+import { getQuote } from "@/lib/quoteSwap";
 import Panel from '@/components/Panel';
-
-type Quote = {
-  tokenIn: { index: 0 | 1 | 2, amount: bigint },
-  tokenOut: { index: 0 | 1 | 2, amount: bigint, minAmount: bigint };
-};
-
-// A null quote means no transaction can be built yet. `reason` is filled only when the user
-// did something wrong: an unfinished form stays silent.
-type QuoteResult =
-  | {quote: Quote, reason: null}
-  | {quote: null, reason: string | null};
-
-const getQuote = ({
-  userAsk: {side, typedAmount, indexIn, indexOut, toleranceInput},
-  poolState: {reserves, feeNum, feeDen}
-  }: {
-    userAsk: {side: 'in' | 'out' | null,
-      typedAmount: string,
-      indexIn: 0 | 1 | 2,
-      indexOut: 0 | 1 | 2,
-      toleranceInput: string},
-    poolState: {reserves: readonly bigint[],
-      feeNum: bigint,
-      feeDen: bigint}
-  }): QuoteResult => {
-
-    const tolerance = parseAmount(toleranceInput === "" ? "0.5" : toleranceInput, 2);
-    // The tolerance is judged first: it is a field of its own, it must speak even on an empty form.
-    if (tolerance === null || tolerance < 0) {
-      return {quote: null, reason: "Tolérance invalide"};
-    }
-    if (tolerance > 10000n) {
-      return {quote: null, reason: "La tolérance ne peut pas dépasser 100 %"};
-    }
-
-    // Unfinished form: nothing to say.
-    if (!side || !typedAmount) return {quote: null, reason: null};
-
-    const amount = parseAmount(typedAmount);
-    if (amount===null || amount < 0) {
-      return {quote: null, reason: "Montant invalide"};
-    }
-    if (!reserves[indexIn] || reserves[indexOut] === 0n) return {quote: null, reason: "Réserve vide"};
-
-    let amountIn;
-    let amountOut;
-
-    if (side === 'in') {
-      amountIn = amount;
-      const amountAfterFee =  amountIn * (feeDen - feeNum) / feeDen;
-      amountOut = amountAfterFee * reserves[indexOut] / (amountAfterFee + reserves[indexIn]);
-    } else {
-      amountOut = amount;
-      if (amountOut >= reserves[indexOut]) return {quote: null, reason: `Réserve insuffisante pour cette opération, max : ${formatUnits(reserves[indexOut] - 1n, 8)}`};
-      const num = feeDen * amountOut * reserves[indexIn];
-      const den = (feeDen - feeNum) * (reserves[indexOut] - amountOut);
-      amountIn = (num + den - 1n) / den;
-    }
-
-    const tokenIn = {index : indexIn, amount: amountIn};
-    const tokenOut = {index: indexOut, amount: amountOut, minAmount: amountOut * (10000n - tolerance) / 10000n}
-
-    return {quote: {tokenIn, tokenOut}, reason: null};
-}
+import { collectReadErrors } from "@/lib/readErrors";
+import ReadErrors from "@/components/ReadErrors";
 
 const Swap = () => {
   const [typedAmount, setTypedAmount] = useState("");
@@ -100,31 +38,21 @@ const Swap = () => {
   const {error: errorFeeNum, data: feeNum} = useFeeNum();
   const {error: errorConstants, feeDen: feeDenData} = useConstants();
   const feeDen = feeDenData?.result;
-  // Gestion des erreurs de lecture des hooks personnalisés
-  const errorReadMessages: string[] = [];
-  if (errorReserves) {console.error(errorReserves.message); errorReadMessages.push("Erreur de lecture des réserves du pool")};
-  if (errorFeeNum) {console.error(errorFeeNum.message); errorReadMessages.push("Erreur de lecture des fees (num)")};
-  if (errorConstants) {console.error(errorConstants.message); errorReadMessages.push("Erreur de lecture des constantes du pool")};
-  if (feeDenData?.error) {console.error(feeDenData?.error.message); errorReadMessages.push("Erreur de lecture des fees (den)")};
-
-  reserveEntries?.forEach((entry, index) => {
-    if (entry?.error) {
-      console.error(entry.error.message);
-      errorReadMessages.push(`Erreur de lecture de la réserve du token ${tokensInfo[index].name}`);
-    }
-  });
-
-  if (errorReadMessages.length > 0) {
-    return(
-    <Panel>
-      <ul>{errorReadMessages.map((message) => <li key={message}>{message}</li>)}</ul>
-    </Panel>)
-  }
+  const failedReads = collectReadErrors([
+    {message: "Erreur de lecture des réserves du pool", error: errorReserves},
+    ...(reserveEntries ?? []).map((entry, i) => ({
+      message: `Erreur de lecture de la réserve du token ${tokensInfo[i].name}`,
+      error: entry?.error
+    })),
+    {message: "Erreur de lecture des fees (num)", error: errorFeeNum},
+    {message: "Erreur de lecture des constantes du pool", error: errorConstants},
+    {message: "Erreur de lecture des fees (den)", error: feeDenData?.error},
+  ]);
+  if (failedReads.length > 0) return <ReadErrors sources={failedReads} />;
   if (!reserveEntries || feeNum===undefined || !feeDen) return <Panel><p>Chargement...</p></Panel>;
 
   const reserves = reserveEntries.map((r) => r.result).filter((r) => r !== undefined);
 
-  // On an empty pool the tolerance is ignored, so a stale invalid value must not block the deposit.
   const {quote, reason} = getQuote({
   userAsk: {side, typedAmount, indexIn, indexOut, toleranceInput: tolerance},
   poolState: {reserves, feeNum, feeDen}
