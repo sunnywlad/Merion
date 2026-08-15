@@ -416,8 +416,11 @@ message, est ce qui rend le test fiable.
 
 ## A venir (couche Solidity)
 
-Deux points sont volontairement renvoyes a la couche fuzz + invariants,
-inatteignables ou peu pertinents en scenario scripte :
+Trois TESTS sont volontairement renvoyes a la couche fuzz + invariants,
+inatteignables ou peu pertinents en scenario scripte. Il s'agit bien de tests
+manquants, jamais de code de contrat manquant : les gardes citees ci-dessous
+sont ecrites, compilees et deployees, c'est leur EXERCICE depuis TypeScript qui
+est impossible.
 
 - **`mintedShares` qui tombe a 0 par arrondi entier.** Sur un pool fortement
   desequilibre par l'accumulation de frais sur le tres long terme, la
@@ -430,7 +433,8 @@ inatteignables ou peu pertinents en scenario scripte :
   `reserves[_anchorIndex]` depasse `totalSupply()` : un fuzzer qui enchaine
   des sequences est le bon outil pour l'atteindre, pas un scenario ecrit a la
   main.
-- **La garde `InsufficientReserve` de `swap`.** Elle n'est atteignable que sur
+- **Le test de la garde `InsufficientReserve` de `swap`** (la garde, elle, est
+  en place dans `Pool.sol:128`). Elle n'est atteignable que sur
   un etat que l'ABI ne permet plus de construire (reserve d'entree nulle,
   reserve de sortie garnie). Un test Solidity peut forger cet etat par
   `vm.store` sur le slot des reserves, et c'est le seul endroit ou cette
