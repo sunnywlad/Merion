@@ -1,26 +1,14 @@
 'use client';
 
-import {useReadContracts, useConnection} from 'wagmi';
+import { useUserBalances } from '@/hooks/useUserBalances';
 import { useLpBalance } from '@/hooks/useLpBalance';
 import { useReserves } from '@/hooks/useReserves';
 import {tokensInfo} from '@/constants/addresses';
-import {mockWrappedBTCAbi} from '@/constants/abi';
 import AmountLine from '@/components/AmountLine';
 
 export default function Balances() {
-  const userAddress = useConnection().address;
 
-  const { data, isLoading, error } = useReadContracts({
-    contracts: tokensInfo.map((token) => {
-      return {
-        address: token.address,
-        abi: mockWrappedBTCAbi,
-        functionName: 'balanceOf',
-        args: [userAddress!]
-      } as const;
-    }),
-    query: { enabled: Boolean(userAddress) }
-  })
+  const { data, isLoading, error } = useUserBalances();
 
   const { data: dataLp, isLoading: isLoadingLp, error: errorLp } = useLpBalance();
   const { supply: supplyEntry, isLoading: isLoadingR, error: errorR } = useReserves();
