@@ -28,6 +28,8 @@ contract Pool is ERC20, Ownable {
   error FeeUpdateTooSoon();
   error BadSlippage();
   error ReserveOverflow();
+  error InsufficientReserve();
+  error ZeroOutput();
 
   event FeeSet(uint256 oldFee, uint256 newFee);
   event AddedLiquidity(address indexed provider, uint256[3] amountsIn, uint256 mintedShares);
@@ -84,6 +86,7 @@ contract Pool is ERC20, Ownable {
       uint72[3] memory cachedReserves = reserves;
 
       mintedShares = supply * _amount / cachedReserves[_anchorIndex];
+      require(mintedShares > 0, ZeroOutput());
       require(mintedShares >= _minShares, BadSlippage());
 
       for (uint256 i; i < 3; i++) {
@@ -120,9 +123,13 @@ contract Pool is ERC20, Ownable {
 
     uint256 amountAfterFee = _amount * (FEE_DEN - feeNum) / FEE_DEN;
     amountOut = amountAfterFee * cachedReserves[_indexOut] / (amountAfterFee + cachedReserves[_indexIn]);
+
+    require(amountOut > 0, ZeroOutput());
+    require(cachedReserves[_indexOut] > amountOut, InsufficientReserve());
+    require(_amount + cachedReserves[_indexIn] <= type(uint72).max, ReserveOverflow());
+
     require(amountOut >= _minOut, BadSlippage());
 
-    require(_amount + cachedReserves[_indexIn] <= type(uint72).max, ReserveOverflow());
     reserves[_indexIn] += uint72(_amount);
     reserves[_indexOut] -= uint72(amountOut);
 

@@ -104,3 +104,40 @@ les gardes de sécurité.
 - `swap` est la fonction la moins chère du contrat, 55 679, contre 96 514 pour
   un dépôt : elle écrit deux réserves quand `addLiquidity` en écrit trois et
   mint en plus des parts.
+
+---
+
+## Jalon 2 — 2026-08-15 — gardes `ZeroOutput` et `InsufficientReserve`
+
+Branche `test/swap`. Même périmètre et même profil qu'au jalon 1, à trois
+`require` près : `amountOut > 0` et `cachedReserves[_indexOut] > amountOut`
+dans `swap`, `mintedShares > 0` dans la branche `supply != 0` d'`addLiquidity`.
+Référence rafraîchie dans le commit qui pose les gardes.
+
+| Scénario | Gaz | Δ jalon 1 |
+|---|---|---|
+| `addLiquidity` — pool vide | 218 562 | — |
+| `addLiquidity` — pool amorcé | 96 536 | +22 |
+| `addLiquidity` — pool déséquilibré | 96 558 | +22 |
+| `removeLiquidity` — partiel | 81 261 | — |
+| `removeLiquidity` — total | 76 527 | — |
+| `swap` — pool équilibré | 55 782 | +103 |
+| `swap` — pool déséquilibré | 55 760 | +103 |
+| `setFee` | 19 163 | — |
+
+### Lectures
+
+- **Le prix des deux gardes de `swap` est de 103 de gaz**, soit 0,18 % du coût
+  de la fonction. Les deux comparaisons portent sur des valeurs déjà en
+  mémoire (`amountOut` est une variable locale, `cachedReserves` a été copiée
+  au premier `SLOAD`) : aucune lecture de stockage supplémentaire, seulement
+  de l'arithmétique et deux sauts. C'est le chiffre à donner si le jury
+  demande ce que coûte de garder le contrat plutôt que le front.
+- **`addLiquidity` ne paie que 22 de gaz** pour sa garde, et **le dépôt sur
+  pool vide n'en paie aucun** : `require(mintedShares > 0)` vit dans la
+  branche `supply != 0`, que le premier dépôt ne traverse jamais. Le relevé
+  confirme le placement, il ne le suppose pas.
+- **`removeLiquidity` et `setFee` sont au gaz près identiques au jalon 1**,
+  comme attendu : aucune des trois gardes ne les touche. Une dérive sur ces
+  lignes aurait signalé un effet de bord, par exemple un décalage
+  d'emplacements de stockage.

@@ -29,8 +29,16 @@ une allowance). Ca reste de l'orchestration multi-contrats a travers l'ABI :
 trois ERC-20 sortants dans la meme transaction, plus le token LP, avec de
 vrais comptes.
 
-La couche Solidity fuzz + invariants sur `addLiquidity` et `removeLiquidity`
-est une question distincte, laissee a l'auteur (voir "A venir" plus bas).
+Sur `swap`, le parcours est le plus court des trois : un seul `approve`, sur le
+seul token d'entree, puisque `swap` ne fait qu'un `transferFrom` entrant. Ca
+reste de l'orchestration a travers l'ABI, avec deux ERC-20 differents qui
+bougent dans le meme appel et de vrais comptes de part et d'autre. C'est aussi
+la fonction ou la distinction compte le plus : le front sait deja refuser un
+montant nul ou un pool vide, mais un protocole DeFi qui composerait avec le
+pool ne le sait pas, et c'est le contrat que ces tests interrogent.
+
+La couche Solidity fuzz + invariants sur les trois fonctions est une question
+distincte, laissee a l'auteur (voir "A venir" plus bas).
 
 ## Perimetre couvert
 
@@ -80,6 +88,24 @@ Pool.removeLiquidity
   III] Proprietes de conservation
     A) Aller-retour addLiquidity puis removeLiquidity
     B) Les frais reviennent aux LP
+```
+
+`Pool.swap.test.ts` :
+
+```
+Pool.swap
+  I] Gardes structurelles
+    A) Pool vierge (aucun addLiquidity, les trois reserves a zero)
+    B) InsufficientReserve
+  II] swap sur pool amorce, feeNum = 5
+    A) Cas nominal
+    B) Balayage des six paires (indexIn, indexOut) distinctes
+    C) Reverts
+    D) Cas limites
+    E) Pool desequilibre
+  III] Proprietes de conservation
+    A) Aucune valeur creee ex nihilo
+    B) Comptabilite LP intacte
 ```
 
 La section `II.D` merite un mot. Elle ne recalcule pas la formule interne du
@@ -147,18 +173,67 @@ montant en frais dans les reserves (`Pool.sol:121-122`), et l'unique LP du
 pool en profite au retrait, en recuperant strictement plus que son depot
 initial.
 
-### Duplication des fixtures entre les deux fichiers de test
+`Pool.swap.test.ts` appelle quatre remarques.
 
-`Pool.removeLiquidity.test.ts` redefinit ses propres fixtures et helpers
+La section `I` teste les deux gardes ajoutees le 2026-08-15, et l'une des deux
+n'est pas testable. `ZeroOutput` l'est : sur un pool vierge, la reserve de
+sortie est nulle, donc `amountOut` l'est aussi, et l'appel est refuse au lieu
+d'encaisser le `transferFrom` entrant sans rien rendre. `InsufficientReserve`
+ne l'est pas : elle ne peut se declencher que si la reserve d'ENTREE est nulle
+(des que `reserves[_indexIn] > 0`, `amountOut` est strictement inferieur a
+`reserves[_indexOut]` par construction de la formule), or cet etat n'est plus
+atteignable par l'ABI une fois `ZeroOutput` en place — `addLiquidity` garnit
+les trois reserves ensemble, `removeLiquidity` laisse toujours un residu, et
+`swap` ne peut plus vider une reserve. La garde protege donc un invariant, pas
+un chemin courant, et elle prend son sens en Phase 2, ou le solveur de Newton
+pourra ramener `amountOut` a `reserves[_indexOut]` par un arrondi different.
+Elle reste marquee `it.todo` et renvoyee a la couche Solidity, seule capable de
+forger l'etat par `vm.store`. C'est le meme genre de branche que le
+`totalSupply() == 0` de `removeLiquidity` : reelle, mais inatteignable depuis
+l'exterieur.
+
+La section `II.B` balaie les six paires `(indexIn, indexOut)` distinctes, une
+par `it`. Sur un pool equilibre elles rendent toutes le meme montant, ce qui
+pourrait tenir en une boucle et une assertion ; chacune est pourtant une
+transaction differente au niveau de l'ABI, donc un comportement a verifier
+separement, dans l'esprit du "une ancre = un `it`" d'`addLiquidity`.
+
+La section `II.D` documente un choix de conception assume : `_indexIn ==
+_indexOut` n'est PAS garde. L'appel reussit, le swapper paie `_amount` et
+recupere `amountOut` du meme token, donc il perd les frais et le slippage. Deux
+`it` le verifient par des lectures on-chain, et la conclusion est celle qui
+justifie l'absence de garde : rien n'est draine du pool, la reserve monte
+exactement de ce que l'appelant perd. C'est le seul des trois cas degeneres de
+`swap` a ne pas avoir recu de `require`, et la raison en est la : les deux
+autres faisaient perdre de l'argent a un integrateur qui ne pouvait pas savoir,
+celui-ci ne fait perdre de l'argent qu'a qui le demande explicitement.
+
+Enfin, un seul test de la suite a besoin de DEUX pools vivants en meme temps,
+la comparaison `feeNum = 0` contre `feeNum = 5` (le `feeNum` est fixe a la
+construction, et `setFee` est `onlyOwner` avec un delai d'un jour). Les deux
+`loadFixture` y sont appeles avant toute ecriture, et ce n'est pas cosmetique :
+`loadFixture` restaure un instantane de la chaine, ce qui detruit tout ce qui a
+ete deploye apres sa prise. Charger la seconde fixture apres avoir mint sur la
+premiere effacerait ce mint, et charger la plus ancienne des deux en second
+effacerait les contrats de l'autre. Corollaire utilise ailleurs dans le
+fichier : deux `loadFixture` de la MEME fixture ne donnent jamais deux pools
+independants, seulement deux fois le meme, donc la comparaison "actif rare
+contre actif abondant" se fait par deux `simulate` (qui n'ecrivent rien) sur un
+unique pool.
+
+### Duplication des fixtures entre les trois fichiers de test
+
+`Pool.removeLiquidity.test.ts` et `Pool.swap.test.ts` redefinissent chacun
+leurs propres fixtures et helpers
 (`deployTokensAndPool`, `mintAndApprove`, `readReserves`, `readBalances`,
 `assertPanic`, `deploySeededPoolFixture`, `deployImbalancedPoolFixture`...),
 identiques a ceux d'`addLiquidity`, plutot que de les importer d'un module
 partage. C'est delibere. Chaque fichier de test ouvre sa propre connexion
 reseau via son propre appel a `network.create()` (voir la skill `hardhat`) :
 c'est cette connexion qui porte l'etat de la blockchain simulee et le cache
-de `networkHelpers.loadFixture`. Un module de fixtures partage entre les deux
+de `networkHelpers.loadFixture`. Un module de fixtures partage entre les trois
 fichiers devrait soit se lier a une connexion choisie arbitrairement (couplant
-deux fichiers senses etre independants l'un de l'autre), soit reconstruire ses
+des fichiers senses etre independants les uns des autres), soit reconstruire ses
 fixtures depuis la connexion du fichier appelant a chaque import (perdant
 l'interet du partage). Dans les deux cas, un fichier qui echoue ou se
 modifie peut casser l'autre sans lien logique evident. La duplication a un
@@ -168,7 +243,7 @@ echouer et evoluer separement.
 
 ### Panics Solidity : comment ils sont attrapes
 
-Plusieurs cas de la suite, repartis sur les deux fichiers, attendent un panic
+Plusieurs cas de la suite, repartis sur les trois fichiers, attendent un panic
 Solidity (`Panic(uint256)`) plutot qu'une erreur nommee : `0x11` pour un
 depassement ou un sous-flow arithmetique (les deux produisent le meme code,
 Solidity ne distingue pas "trop grand" de "trop petit" dans son panic),
@@ -208,8 +283,14 @@ message, est ce qui rend le test fiable.
 - deuxieme deposant : parts proportionnelles au premier
 - approbation insuffisante sur un seul des trois tokens : revert ERC-20
   (`ERC20InsufficientAllowance`)
-- `_amount == 0` : transaction sans effet (aucune part mintee, aucun
-  transfert), mais aucun revert
+- `_amount == 0` : `ZeroOutput`. Jusqu'au 2026-08-15 c'etait une transaction
+  sans effet (aucune part mintee, aucun transfert) qui emettait quand meme un
+  `AddedLiquidity` fantome, et quatre cas limites le documentaient ici. La
+  garde `mintedShares > 0` (`Pool.sol:89`) les remplace par un unique revert,
+  et le cas a change de section : ce n'est plus une limite toleree, c'est un
+  refus. La garde ne vit que dans la branche `supply != 0` ; sur la branche
+  d'amorcage `3 * _amount - MINIMUM_LIQUIDITY` ne peut pas valoir zero, un
+  `require` y serait du code mort
 - `_anchorIndex` hors bornes sur un pool amorce : panic `0x32`, acces hors
   bornes d'un tableau memoire (a la difference du pool vide, l'ancre est lue
   des la premiere ligne de la branche)
@@ -278,6 +359,61 @@ message, est ce qui rend le test fiable.
 - un tiers qui fait un aller-retour de swaps laisse des frais dans les
   reserves ; l'unique LP du pool en profite au retrait
 
+### `swap`
+
+**Gardes structurelles**
+
+- pool vierge, `_amount > 0` : `ZeroOutput` — sans cette garde, le
+  `transferFrom` entrant s'executait et le swapper payait pour ne rien recevoir
+- pool vierge, `_amount == 0` : panic `0x12`, le denominateur
+  `amountAfterFee + reserves[_indexIn]` vaut `0 + 0` et la division precede
+  tous les `require`
+- `InsufficientReserve` : inatteignable par l'ABI, `it.todo` renvoye a la
+  couche Solidity (voir la discussion plus haut)
+
+**Reverts**
+
+- `_minOut` strictement superieur a `amountOut` : `BadSlippage`
+- `_amount == 0` sur pool amorce : `ZeroOutput` (fin de l'evenement `Swapped`
+  fantome, que le front lit comme source de donnees)
+- `_amount == 1` avec `feeNum = 5` : `amountAfterFee` tronque a 0, donc
+  `ZeroOutput` — avant la garde, l'unite etait encaissee par la reserve
+- allowance ou solde insuffisant sur le token d'entree : erreurs ERC-20, levees
+  par le token et decodees avec son ABI, pas celle du pool
+- `_indexIn` ou `_indexOut` hors bornes : panic `0x32`, sur le tableau MEMOIRE
+  `cachedReserves`, avant tout transfert (donc aucun `approve` n'est requis
+  pour l'atteindre)
+- `reserves[_indexIn] + _amount > type(uint72).max` : `ReserveOverflow`
+- ordre des gardes, deux cas : un montant poussiere avec un `_minOut`
+  inatteignable echoue par `ZeroOutput`, et un montant qui deborde `uint72`
+  avec le meme `_minOut` echoue par `ReserveOverflow` — jamais `BadSlippage`,
+  qui est verifie en dernier (`Pool.sol:127-131`). C'est l'ordre inverse
+  d'`addLiquidity`, ou le slippage passe en premier pour ne pas lancer la
+  boucle de rebalancement pour rien ; dans `swap` il n'y a pas de boucle a
+  economiser, l'ordre suit donc l'information rendue a l'appelant
+
+**Cas limites**
+
+- `_minOut` exactement egal a `amountOut` : accepte
+- `_indexIn == _indexOut` : accepte, deliberement non garde (voir plus haut)
+- a entree identique, un pool a `feeNum = 0` rend strictement plus qu'un pool
+  a `feeNum = 5`
+- `amountOut` reste strictement sous `reserves[_indexOut]` meme sur une entree
+  cent fois superieure aux reserves : un swap ne peut pas vider le pool
+- impact de prix : deux swaps identiques successifs, le second rend
+  strictement moins que le premier
+- pool desequilibre : acheter l'actif rare rend strictement moins qu'acheter
+  l'actif abondant, a entree identique (montants poses en dur, calcul a la
+  main) ; l'evenement `Swapped` porte bien ces montants
+
+**Proprietes de conservation**
+
+- aller-retour `0 -> 1 -> 0` a `feeNum = 5` : le swapper recupere strictement
+  moins qu'il n'a mis ; a `feeNum = 0`, jamais plus (seule la troncature
+  entiere joue encore, d'ou un `<=` et non un `<`)
+- le produit `reserves[_indexIn] * reserves[_indexOut]` ne diminue jamais
+- le solde LP du swapper reste nul : `swap` ne touche jamais au token LP
+
 ## A venir (couche Solidity)
 
 Deux points sont volontairement renvoyes a la couche fuzz + invariants,
@@ -286,10 +422,19 @@ inatteignables ou peu pertinents en scenario scripte :
 - **`mintedShares` qui tombe a 0 par arrondi entier.** Sur un pool fortement
   desequilibre par l'accumulation de frais sur le tres long terme, la
   division entiere `supply * _amount / reserves[_anchorIndex]` peut s'arrondir
-  a 0 pour un petit depot. C'est un etat degenere qui suppose des centaines
-  de swaps successifs pour deriver les reserves jusqu'a ce point : un fuzzer
-  qui enchaine des sequences d'operations est le bon outil pour l'atteindre,
-  pas un scenario ecrit a la main.
+  a 0 pour un petit depot non nul. Depuis la garde `ZeroOutput`, l'enjeu n'est
+  plus "le deposant paie pour rien" mais "le depot est bien refuse" : ce que
+  le fuzzer doit prouver, c'est qu'aucune sequence d'operations n'atteint le
+  `_mint` avec `mintedShares == 0`. L'etat degenere suppose des centaines de
+  swaps successifs pour deriver les reserves jusqu'a ce que
+  `reserves[_anchorIndex]` depasse `totalSupply()` : un fuzzer qui enchaine
+  des sequences est le bon outil pour l'atteindre, pas un scenario ecrit a la
+  main.
+- **La garde `InsufficientReserve` de `swap`.** Elle n'est atteignable que sur
+  un etat que l'ABI ne permet plus de construire (reserve d'entree nulle,
+  reserve de sortie garnie). Un test Solidity peut forger cet etat par
+  `vm.store` sur le slot des reserves, et c'est le seul endroit ou cette
+  branche s'execute : `it.todo` cote TypeScript, en attendant.
 - **Les invariants de conservation des reserves.** Que la somme des
   transferts entrants/sortants sur `addLiquidity`, `removeLiquidity` et
   `swap` corresponde toujours exactement aux deltas de `reserves`, sur des
