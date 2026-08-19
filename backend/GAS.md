@@ -36,6 +36,22 @@ npx hardhat test solidity contracts/Pool.gas.t.sol --snapshot-check --build-prof
 `.gas-snapshot` est **versionné**, c'est la référence. `gas-stats.json` est un
 produit d'exécution jetable, ignoré par git.
 
+`rapport.json` et `rapportOpt.json` sont versionnés eux aussi, et ne sont pas
+jetables : ils gardent la **même campagne de mesure prise deux fois**, sans
+optimiseur puis avec. Le suffixe `Opt` désigne le relevé optimisé. Exemple sur
+`MockWrappedBTC` : déploiement 925 343 → 513 211, taille runtime 3 734 → 1 862.
+C'est la trace de cette comparaison, que `.gas-snapshot` ne porte pas puisqu'il
+ne relève qu'un profil à la fois.
+
+Leur provenance, retrouvée le 2026-08-19 : ce sont deux `gas-stats.json`
+renommés, produits par la couche **TypeScript**, sans puis avec
+`--build-profile production`.
+
+```bash
+npx hardhat test nodejs --gas-stats                            # -> rapport.json
+npx hardhat test nodejs --gas-stats --build-profile production # -> rapportOpt.json
+```
+
 ### Règle d'or
 
 Les montants du banc (`SEED`, `DEPOSIT`, `SWAP_IN`) **ne se modifient jamais.**
@@ -59,8 +75,13 @@ pourquoi.
 ## Limites connues
 
 - **`--gas-stats` ne produit aucune sortie combiné à `--build-profile
-  production`.** Le tableau détaillé par fonction et la taille du bytecode ne
-  sont donc lisibles que sur le profil `default`, non optimisé. Non résolu.
+  production` sur la couche SOLIDITY** (`hardhat test solidity`). Vérifié à
+  nouveau le 2026-08-19 : toujours vrai, les huit tests passent et aucun
+  tableau ne sort. La limite s'arrête là. Sur la couche TYPESCRIPT
+  (`hardhat test nodejs`), la même combinaison fonctionne et donne le
+  tableau complet, optimiseur compris. La formulation précédente omettait
+  cette distinction et laissait croire qu'aucun relevé optimisé n'était
+  possible.
 - **Ne jamais comparer un chiffre issu des tests Solidity avec un chiffre issu
   des tests TypeScript.** Sur le profil `default`, les deux couches annoncent
   des tailles et des coûts de déploiement différents pour le même contrat
