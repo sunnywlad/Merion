@@ -1,4 +1,6 @@
-export const addresses = {
+const chainId = 31337;
+
+const addresses = {
   31337: {
     tokens: {
       wbtc: {name : "wBTC", address: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512", index: 0n},
@@ -9,4 +11,5 @@ export const addresses = {
   }
 } as const;
 
-export const tokensInfo = Object.values(addresses[31337].tokens);
+export const tokensInfo = Object.values(addresses[chainId].tokens);
+export const deployedPool = addresses[chainId].pool;

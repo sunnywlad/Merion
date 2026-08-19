@@ -4,7 +4,7 @@ import { useReserves } from "@/hooks/useReserves";
 import { useLpBalance } from "@/hooks/useLpBalance";
 import { useState } from "react";
 import { formatUnits } from "viem";
-import { addresses, tokensInfo } from "@/constants/addresses";
+import { deployedPool, tokensInfo } from "@/constants/addresses";
 import {poolAbi} from '@/constants/abi';
 import {useWriteContract, useConnection, usePublicClient} from 'wagmi';
 import { useQueryClient } from "@tanstack/react-query";
@@ -60,7 +60,7 @@ const RemoveLiquidity = () => {
     try {
       setIsPending(true);
       const hash = await mutateAsync({
-        address: addresses[31337].pool,
+        address: deployedPool,
         abi: poolAbi,
         functionName: "removeLiquidity",
         args: [quote.shares, quote.minExpected]

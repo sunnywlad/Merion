@@ -6,7 +6,7 @@ import { useConstants } from "@/hooks/useConstants";
 import { useUserBalances } from "@/hooks/useUserBalances";
 import { useState } from "react";
 import { formatUnits } from "viem";
-import { addresses, tokensInfo } from "@/constants/addresses";
+import { deployedPool, tokensInfo } from "@/constants/addresses";
 import {mockWrappedBTCAbi, poolAbi} from '@/constants/abi';
 import {useWriteContract, useConnection, usePublicClient} from 'wagmi';
 import { useQueryClient } from "@tanstack/react-query";
@@ -68,12 +68,12 @@ const Swap = () => {
         address: tokensInfo[indexIn].address,
         abi: mockWrappedBTCAbi,
         functionName: "approve",
-        args: [addresses[31337].pool, quote.tokenIn.amount]
+        args: [deployedPool, quote.tokenIn.amount]
       })
       await publicClient.waitForTransactionReceipt({hash: hashApprove});
 
       const hashSwap = await mutateAsync({
-        address: addresses[31337].pool,
+        address: deployedPool,
         abi: poolAbi,
         functionName: "swap",
         args: [BigInt(quote.tokenIn.index), quote.tokenIn.amount, BigInt(quote.tokenOut.index), quote.tokenOut.minAmount]

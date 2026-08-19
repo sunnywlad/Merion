@@ -1,18 +1,18 @@
 import { useReadContracts } from 'wagmi';
-import {addresses, tokensInfo} from '@/constants/addresses';
+import {deployedPool, tokensInfo} from '@/constants/addresses';
 import {poolAbi} from '@/constants/abi';
 
 export function useReserves() {
   const { data, isLoading, error, queryKey } = useReadContracts({
     contracts: [...tokensInfo.map((token) => {
       return {
-        address: addresses[31337].pool,
+        address: deployedPool,
         abi: poolAbi,
         functionName: 'reserves',
         args: [token.index]
       } as const}),
       {
-        address: addresses[31337].pool,
+        address: deployedPool,
         abi: poolAbi,
         functionName: 'totalSupply',
         args: []

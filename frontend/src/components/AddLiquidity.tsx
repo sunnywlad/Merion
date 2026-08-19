@@ -4,9 +4,8 @@ import { useReserves } from "@/hooks/useReserves";
 import { useMinimumLiquidity } from "@/hooks/useMinimumLiquidity";
 import { useState } from "react";
 import { formatUnits } from "viem";
-import { tokensInfo } from "@/constants/addresses";
+import { deployedPool, tokensInfo } from "@/constants/addresses";
 import {mockWrappedBTCAbi, poolAbi} from '@/constants/abi';
-import { addresses } from "@/constants/addresses";
 import {useWriteContract, useConnection, usePublicClient} from 'wagmi';
 import { useQueryClient } from "@tanstack/react-query";
 import { getQuote } from "@/lib/quoteAddLiquidity";
@@ -66,13 +65,13 @@ const AddLiquidity = () => {
           address: token.address,
           abi: mockWrappedBTCAbi,
           functionName: "approve",
-          args: [addresses[31337].pool, quote.computed[i]]
+          args: [deployedPool, quote.computed[i]]
         })
         await publicClient.waitForTransactionReceipt({hash})
       }
       setStep(3);
       const hash = await mutateAsync({
-        address: addresses[31337].pool,
+        address: deployedPool,
         abi: poolAbi,
         functionName: "addLiquidity",
         args: [BigInt(anchor), quote.computed[anchor], quote.minExpected]
