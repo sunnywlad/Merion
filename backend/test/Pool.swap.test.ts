@@ -48,18 +48,18 @@ const PANIC_ARRAY_OUT_OF_BOUNDS_ACCESS = 50n; // 0x32
 async function deployTokensAndPool(feeNum: bigint) {
   const [deployer, depositor, other] = await viem.getWalletClients();
 
-  const wbtc = await viem.deployContract("MockWrappedBTC", ["Wrapped BTC", "wBTC"]);
+  const tbtc = await viem.deployContract("MockWrappedBTC", ["Threshold BTC", "tBTC"]);
   const cbbtc = await viem.deployContract("MockWrappedBTC", ["Coinbase BTC", "cbBTC"]);
   const lbtc = await viem.deployContract("MockWrappedBTC", ["Lombard BTC", "lBTC"]);
-  const tokens = [wbtc, cbbtc, lbtc] as const;
+  const tokens = [tbtc, cbbtc, lbtc] as const;
 
   const pool = await viem.deployContract("Pool", [
-    [wbtc.address, cbbtc.address, lbtc.address],
+    [tbtc.address, cbbtc.address, lbtc.address],
     feeNum,
     deployer.account.address,
   ]);
 
-  return { deployer, depositor, other, wbtc, cbbtc, lbtc, tokens, pool };
+  return { deployer, depositor, other, tbtc, cbbtc, lbtc, tokens, pool };
 }
 
 async function deployTokensAndPoolFixture() {
@@ -249,81 +249,7 @@ async function assertSwapYieldsExpectedDeltas(indexIn: 0 | 1 | 2, indexOut: 0 | 
   );
 }
 
-// ---------------------------------------------------------------------------
-// Plan de la suite (squelette). Reflete la structure reelle ci-dessous.
-// ---------------------------------------------------------------------------
-
 describe("Pool.swap", async function () {
-  describe("Plan de test", function () {
-    describe("I] Gardes structurelles", function () {
-      describe("A) Pool vierge (aucun addLiquidity, les trois reserves a zero)", function () {
-        it.todo("_amount > 0 sur un pool vierge : ZeroOutput, faute de reserve de sortie");
-        it.todo("_amount == 0 sur un pool vierge : panic 0x12 (division par zero)");
-      });
-      describe("B) InsufficientReserve", function () {
-        it.todo("InsufficientReserve n'est atteignable qu'en forgeant l'etat via vm.store (test Solidity), pas via l'ABI");
-      });
-    });
-
-    describe("II] swap sur pool amorce, feeNum = 5", function () {
-      describe("A) Cas nominal", function () {
-        it.todo("le swapper recoit exactement 904 956 798 du token de sortie");
-        it.todo("le solde du swapper en token d'entree baisse exactement de _amount");
-        it.todo("reserves[0] (le token d'entree) augmente exactement de _amount, frais compris");
-        it.todo("reserves[2] (le token de sortie) baisse exactement de ce que le swapper a recu");
-        it.todo("reserves[1], le token non implique dans le swap, reste inchangee");
-        it.todo("les soldes ERC-20 du pool sur les tokens 0 et 2 suivent exactement les deltas de reserves");
-        it.todo("la valeur de retour amountOut vaut 904 956 798");
-        it.todo("l'evenement Swapped est emis avec ses cinq arguments");
-        it.todo("totalSupply() du token LP reste inchange : un swap ne mint ni ne brule aucune part");
-      });
-      describe("B) Balayage des six paires (indexIn, indexOut) distinctes", function () {
-        it.todo("0 -> 1");
-        it.todo("0 -> 2");
-        it.todo("1 -> 0");
-        it.todo("1 -> 2");
-        it.todo("2 -> 0");
-        it.todo("2 -> 1");
-      });
-      describe("C) Reverts", function () {
-        it.todo("_minOut strictement superieur a amountOut : BadSlippage");
-        it.todo("_amount == 0 sur pool amorce : ZeroOutput");
-        it.todo("_amount = 1 avec feeNum = 5 : ZeroOutput, l'unite se perd dans la troncature des frais");
-        it.todo("allowance insuffisante sur le token d'entree : ERC20InsufficientAllowance");
-        it.todo("solde insuffisant sur le token d'entree alors que l'allowance suffit : ERC20InsufficientBalance");
-        it.todo("_indexIn hors bornes (valeur 3) : panic 0x32");
-        it.todo("_indexOut hors bornes (valeur 3) : panic 0x32");
-        it.todo("reserves[_indexIn] + _amount depasse uint72.max : ReserveOverflow");
-        it.todo("montant poussiere avec un _minOut inatteignable : ZeroOutput, jamais BadSlippage");
-        it.todo("montant qui deborde uint72 avec un _minOut inatteignable : ReserveOverflow, jamais BadSlippage");
-      });
-      describe("D) Cas limites", function () {
-        it.todo("_minOut exactement egal a amountOut est accepte");
-        it.todo("indexIn == indexOut : le solde net du swapper baisse de _amount moins amountOut");
-        it.todo("indexIn == indexOut : la reserve concernee monte exactement de cette meme perte nette");
-        it.todo("a entree identique, un pool a feeNum = 0 rend strictement plus qu'un pool a feeNum = 5");
-        it.todo("amountOut reste strictement inferieur a la reserve de sortie, meme sur une entree tres superieure aux reserves");
-        it.todo("deux swaps identiques successifs : le second rend strictement moins que le premier");
-      });
-      describe("E) Pool desequilibre", function () {
-        it.todo("depuis le token 1, acheter l'actif abondant (index 0) rend exactement 11 363 636 363");
-        it.todo("depuis le token 1, acheter l'actif rare (index 2) rend exactement 7 272 727 272");
-        it.todo("a entree identique, acheter l'actif rare rend strictement moins qu'acheter l'actif abondant");
-        it.todo("l'evenement Swapped porte les bons montants sur des reserves inegales");
-      });
-    });
-
-    describe("III] Proprietes de conservation", function () {
-      describe("A) Aucune valeur creee ex nihilo", function () {
-        it.todo("aller-retour 0 -> 1 puis 1 -> 0 (feeNum = 5) : le swapper recupere strictement moins qu'il n'a mis");
-        it.todo("meme aller-retour a feeNum = 0 : le swapper ne recupere jamais plus que son entree");
-        it.todo("le produit reserves[_indexIn] * reserves[_indexOut] ne diminue jamais apres un swap");
-      });
-      describe("B) Comptabilite LP intacte", function () {
-        it.todo("le solde LP du swapper reste nul apres un swap");
-      });
-    });
-  });
 
   // ---------------------------------------------------------------------------
   // I] Gardes structurelles
@@ -365,31 +291,27 @@ describe("Pool.swap", async function () {
       });
     });
 
-    describe("B) InsufficientReserve", function () {
-      it.todo(
-        "InsufficientReserve n'est atteignable qu'en forgeant l'etat via vm.store (test Solidity), pas via l'ABI",
-      );
-      // La garde `cachedReserves[_indexOut] > amountOut` (Pool.sol:128) ne
-      // peut se declencher que si la reserve d'ENTREE est nulle : des que
-      // cachedReserves[_indexIn] > 0, amountOut = amountAfterFee *
-      // reserveOut / (amountAfterFee + reserveIn) est strictement inferieur
-      // a reserveOut par construction de la formule (le denominateur excede
-      // toujours le numerateur d'au moins reserveIn > 0). Or, une fois
-      // ZeroOutput en place (I.A ci-dessus), l'etat "reserve d'entree nulle,
-      // reserve de sortie garnie" n'est plus atteignable par l'ABI :
-      // addLiquidity garnit les trois reserves ensemble (Pool.sol:82-83 ou
-      // 92-96), removeLiquidity laisse toujours un residu (les parts mortes
-      // MINIMUM_LIQUIDITY ne sont jamais brulees), et swap lui-meme ne peut
-      // plus vider une reserve jusqu'a zero (c'est precisement ce
-      // qu'empeche cette garde). La garde protege donc un invariant du
-      // contrat, pas un chemin courant : elle prend tout son sens en Phase 2,
-      // ou le solveur de Newton du futur StableSwap pourra ramener amountOut
-      // a reserveOut par un arrondi different de celui du produit constant.
-      // Le seul moyen de l'exercer aujourd'hui est de forger l'etat
-      // directement (vm.store sur le slot de reserves) dans un test
-      // Solidity : hors de portee d'un test fonctionnel TypeScript qui ne
-      // peut appeler le contrat qu'a travers son ABI publique.
-    });
+    // B) InsufficientReserve : garde non atteignable par l'ABI, donc aucun test ici.
+    // La garde `cachedReserves[_indexOut] > amountOut` (Pool.sol:128) ne
+    // peut se declencher que si la reserve d'ENTREE est nulle : des que
+    // cachedReserves[_indexIn] > 0, amountOut = amountAfterFee *
+    // reserveOut / (amountAfterFee + reserveIn) est strictement inferieur
+    // a reserveOut par construction de la formule (le denominateur excede
+    // toujours le numerateur d'au moins reserveIn > 0). Or, une fois
+    // ZeroOutput en place (I.A ci-dessus), l'etat "reserve d'entree nulle,
+    // reserve de sortie garnie" n'est plus atteignable par l'ABI :
+    // addLiquidity garnit les trois reserves ensemble (Pool.sol:82-83 ou
+    // 92-96), removeLiquidity laisse toujours un residu (les parts mortes
+    // MINIMUM_LIQUIDITY ne sont jamais brulees), et swap lui-meme ne peut
+    // plus vider une reserve jusqu'a zero (c'est precisement ce
+    // qu'empeche cette garde). La garde protege donc un invariant du
+    // contrat, pas un chemin courant : elle prend tout son sens en Phase 2,
+    // ou le solveur de Newton du futur StableSwap pourra ramener amountOut
+    // a reserveOut par un arrondi different de celui du produit constant.
+    // Le seul moyen de l'exercer aujourd'hui est de forger l'etat
+    // directement (vm.store sur le slot de reserves) dans un test
+    // Solidity : hors de portee d'un test fonctionnel TypeScript qui ne
+    // peut appeler le contrat qu'a travers son ABI publique.
   });
 
   // ---------------------------------------------------------------------------
@@ -704,8 +626,7 @@ describe("Pool.swap", async function () {
         // donc amountOut tend vers reserves[_indexOut] sans jamais l'atteindre
         // (verifie numeriquement : amountOut = 9 999 999 999, strictement
         // sous reserves[2] = 1e10).
-        const { pool, tokens, other } = await networkHelpers.loadFixture(deploySeededPoolFixture);
-        await mintAndApproveSingleToken(tokens, pool, other, 0, UINT72_MAX);
+        const { pool, other } = await networkHelpers.loadFixture(deploySeededPoolFixture);
 
         await viem.assertions.revertWithCustomError(
           pool.write.swap([0n, UINT72_MAX, 2n, 0n], { account: other.account }),
@@ -738,8 +659,7 @@ describe("Pool.swap", async function () {
         // echoue par ReserveOverflow. Un _minOut insatisfaisable (UINT72_MAX,
         // superieur a n'importe quelle reserve du pool) ne doit jamais etre
         // atteint : ReserveOverflow est verifiee avant BadSlippage.
-        const { pool, tokens, other } = await networkHelpers.loadFixture(deploySeededPoolFixture);
-        await mintAndApproveSingleToken(tokens, pool, other, 0, UINT72_MAX);
+        const { pool, other } = await networkHelpers.loadFixture(deploySeededPoolFixture);
 
         await viem.assertions.revertWithCustomError(
           pool.write.swap([0n, UINT72_MAX, 2n, UINT72_MAX], { account: other.account }),
@@ -979,21 +899,21 @@ describe("Pool.swap", async function () {
         const { pool, tokens, other } = await networkHelpers.loadFixture(deploySeededPoolFixture);
         await mintAndApproveSingleToken(tokens, pool, other, 0, NOMINAL_SWAP_AMOUNT_IN);
         const balanceBefore = (await readBalances(tokens, other.account.address))[0];
-  
+
         const { result: amountOutLeg1 } = await pool.simulate.swap([0n, NOMINAL_SWAP_AMOUNT_IN, 1n, 0n], {
           account: other.account.address,
         });
         await pool.write.swap([0n, NOMINAL_SWAP_AMOUNT_IN, 1n, 0n], { account: other.account });
         await tokens[1].write.approve([pool.address, amountOutLeg1], { account: other.account });
         await pool.write.swap([1n, amountOutLeg1, 0n, 0n], { account: other.account });
-  
+
         const balanceAfter = (await readBalances(tokens, other.account.address))[0];
         assert.ok(
           balanceAfter < balanceBefore,
           `solde token0 apres l'aller-retour=${balanceAfter}, devrait etre strictement inferieur au solde avant=${balanceBefore}`,
         );
       });
-  
+
       it("meme aller-retour a feeNum = 0 : le swapper ne recupere jamais plus que son entree", async function () {
         // Sans frais, seule la troncature entiere joue encore (chaque division
         // de swap() arrondit vers le bas), ce qui suffit deja a empecher toute
@@ -1005,21 +925,21 @@ describe("Pool.swap", async function () {
         const { pool, tokens, other } = await networkHelpers.loadFixture(deployZeroFeeSeededPoolFixture);
         await mintAndApproveSingleToken(tokens, pool, other, 0, NOMINAL_SWAP_AMOUNT_IN);
         const balanceBefore = (await readBalances(tokens, other.account.address))[0];
-  
+
         const { result: amountOutLeg1 } = await pool.simulate.swap([0n, NOMINAL_SWAP_AMOUNT_IN, 1n, 0n], {
           account: other.account.address,
         });
         await pool.write.swap([0n, NOMINAL_SWAP_AMOUNT_IN, 1n, 0n], { account: other.account });
         await tokens[1].write.approve([pool.address, amountOutLeg1], { account: other.account });
         await pool.write.swap([1n, amountOutLeg1, 0n, 0n], { account: other.account });
-  
+
         const balanceAfter = (await readBalances(tokens, other.account.address))[0];
         assert.ok(
           balanceAfter <= balanceBefore,
           `solde token0 apres l'aller-retour=${balanceAfter}, ne devrait jamais depasser le solde avant=${balanceBefore}`,
         );
       });
-  
+
       it("le produit reserves[_indexIn] * reserves[_indexOut] ne diminue jamais apres un swap", async function () {
         // L'invariant "k" du produit constant, restreint a la paire de
         // reserves concernee par le swap : il croit des frais preleves
@@ -1030,9 +950,9 @@ describe("Pool.swap", async function () {
         await mintAndApproveSingleToken(tokens, pool, other, 0, NOMINAL_SWAP_AMOUNT_IN);
         const reservesBefore = await readReserves(pool);
         const productBefore = reservesBefore[0] * reservesBefore[2];
-  
+
         await pool.write.swap([0n, NOMINAL_SWAP_AMOUNT_IN, 2n, 0n], { account: other.account });
-  
+
         const reservesAfter = await readReserves(pool);
         const productAfter = reservesAfter[0] * reservesAfter[2];
         assert.ok(
@@ -1049,9 +969,9 @@ describe("Pool.swap", async function () {
         // n'apparaissent dans swap()).
         const { pool, tokens, other } = await networkHelpers.loadFixture(deploySeededPoolFixture);
         await mintAndApproveSingleToken(tokens, pool, other, 0, NOMINAL_SWAP_AMOUNT_IN);
-  
+
         await pool.write.swap([0n, NOMINAL_SWAP_AMOUNT_IN, 2n, 0n], { account: other.account });
-  
+
         const lpBalance = await pool.read.balanceOf([other.account.address]);
         assert.equal(
           lpBalance,

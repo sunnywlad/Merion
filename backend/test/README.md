@@ -12,7 +12,7 @@ Les tests de ce dossier verifient autre chose : que le contrat se comporte
 correctement quand on l'appelle **exactement comme le fait le front**, a
 travers l'ABI generee, avec de vrais comptes et de vrais transferts. Sur
 `addLiquidity`, c'est concretement de l'orchestration multi-contrats : trois
-ERC-20 differents (WBTC, cbBTC, LBTC) doivent chacun recevoir un `approve` du
+ERC-20 differents (tBTC, cbBTC, LBTC) doivent chacun recevoir un `approve` du
 deposant avant l'appel, et le contrat effectue trois `transferFrom` dans la
 meme transaction. Un test Solidity peut appeler `addLiquidity` directement
 depuis le contrat de test (qui est lui-meme le `msg.sender` et le token
@@ -37,15 +37,25 @@ la fonction ou la distinction compte le plus : le front sait deja refuser un
 montant nul ou un pool vide, mais un protocole DeFi qui composerait avec le
 pool ne le sait pas, et c'est le contrat que ces tests interrogent.
 
+Sur `pause` et `unpause`, le parcours change de nature : il n'y a ni token a
+approuver ni montant a transferer, seulement un appelant et un droit. Ce que la
+suite verifie est donc un controle d'acces exerce a travers l'ABI, avec deux
+comptes distincts (l'owner du deploiement et un tiers), puis l'effet de l'etat
+mis en pause sur les trois fonctions d'entree, appelees comme le front les
+appelle. C'est aussi la seule promesse du contrat qui se formule comme une
+phrase et non comme une formule, "en pause on n'entre plus et on sort
+toujours", ce qui justifie un fichier a elle plutot que des sections ajoutees
+aux trois autres : eclatee en trois, cette promesse devient invisible.
+
 La couche Solidity fuzz + invariants sur les trois fonctions est une question
 distincte, laissee a l'auteur (voir "A venir" plus bas).
 
 ## Perimetre couvert
 
 Cette suite couvre `Pool.sol` seul. Les dependances OpenZeppelin (`ERC20`,
-`Ownable`) sont hors perimetre : on suppose leur comportement correct, on ne
-teste que ce que `Pool.sol` fait avec elles (les montants qu'il transfere, les
-montants qu'il mint, les erreurs qu'il declenche).
+`Ownable`, `Pausable`) sont hors perimetre : on suppose leur comportement
+correct, on ne teste que ce que `Pool.sol` fait avec elles (les montants qu'il
+transfere, les montants qu'il mint, les erreurs qu'il declenche).
 
 ## Structure de la suite
 
@@ -106,6 +116,21 @@ Pool.swap
   III] Proprietes de conservation
     A) Aucune valeur creee ex nihilo
     B) Comptabilite LP intacte
+```
+
+`Pool.pause.test.ts` :
+
+```
+Pool.pause
+  I] pause et unpause
+    A) Controle d'acces
+    B) Cablage sur l'etat OZ
+  II] Effet sur les points d'entree, pool en pause
+    A) addLiquidity refuse
+    B) swap refuse
+    C) removeLiquidity accepte
+    D) setFee reste appelable
+  III] Retour a l'etat normal apres unpause
 ```
 
 La section `II.D` merite un mot. Elle ne recalcule pas la formule interne du
@@ -187,7 +212,7 @@ les trois reserves ensemble, `removeLiquidity` laisse toujours un residu, et
 `swap` ne peut plus vider une reserve. La garde protege donc un invariant, pas
 un chemin courant, et elle prend son sens en Phase 2, ou le solveur de Newton
 pourra ramener `amountOut` a `reserves[_indexOut]` par un arrondi different.
-Elle reste marquee `it.todo` et renvoyee a la couche Solidity, seule capable de
+Elle est documentee en commentaire dans la suite et renvoyee a la couche Solidity, seule capable de
 forger l'etat par `vm.store`. C'est le meme genre de branche que le
 `totalSupply() == 0` de `removeLiquidity` : reelle, mais inatteignable depuis
 l'exterieur.
@@ -221,10 +246,42 @@ independants, seulement deux fois le meme, donc la comparaison "actif rare
 contre actif abondant" se fait par deux `simulate` (qui n'ecrivent rien) sur un
 unique pool.
 
-### Duplication des fixtures entre les trois fichiers de test
+`Pool.pause.test.ts` appelle trois remarques.
 
-`Pool.removeLiquidity.test.ts` et `Pool.swap.test.ts` redefinissent chacun
-leurs propres fixtures et helpers
+La premiere fixe la frontiere du perimetre, plus finement que le "les
+dependances OZ sont hors perimetre" du paragraphe d'ouverture. La regle est :
+on teste ce que `Pool.sol` DECIDE, jamais ce qu'OpenZeppelin EXECUTE. Repauser
+une pool deja en pause revele avec `EnforcedPause()`, mais c'est le modifieur
+d'OZ qui le fait, pas une ligne de `Pool.sol` ; de meme pour l'emission de
+`Paused` et `Unpaused`. Ces cas ne sont pas testes. En revanche "l'owner
+appelle `pause()`, puis `paused()` vaut `true`" l'est, parce que c'est la seule
+assertion qui prouve que la fonction externe est effectivement branchee sur
+`_pause()` : sans elle, une fonction au corps vide passerait toute la suite.
+Meme raison pour `onlyOwner` sur les deux leviers, qui est un choix de
+`Pool.sol` et non d'OZ, et meme raison pour toute la section `II`, qui ne
+verifie pas le fonctionnement du modifieur mais le choix des fonctions sur
+lesquelles il est pose.
+
+La deuxieme porte sur l'ordre des gardes, que cette suite documente comme les
+trois autres, mais avec une conclusion plus courte. Un modifieur n'est pas un
+`require` place avant la fonction : c'est un corps dans lequel le compilateur
+inline le corps de la fonction decoree, a l'emplacement du `_;`. Tout ce qui
+precede le `_;` s'execute donc en premier, et `whenNotPaused` preempte
+integralement les gardes du corps, `BadSlippage`, `ZeroOutput`, les erreurs
+ERC-20 et jusqu'aux panics d'index hors bornes. Un seul `it` etablit cette
+preemption, la ou les autres fichiers consacrent un test a chaque paire de
+gardes.
+
+La troisieme porte sur `II.C` et sur ce qu'une assertion doit affirmer. Un test
+qui se contente de constater l'absence de revert sur `removeLiquidity` passe
+aussi si la fonction ne fait rien : il faut assertion sur les montants
+reellement sortis et sur les reserves apres coup. C'est la promesse centrale de
+la pause, elle merite mieux qu'une double negation.
+
+### Duplication des fixtures entre les fichiers de test
+
+`Pool.removeLiquidity.test.ts`, `Pool.swap.test.ts` et `Pool.pause.test.ts`
+redefinissent chacun leurs propres fixtures et helpers
 (`deployTokensAndPool`, `mintAndApprove`, `readReserves`, `readBalances`,
 `assertPanic`, `deploySeededPoolFixture`, `deployImbalancedPoolFixture`...),
 identiques a ceux d'`addLiquidity`, plutot que de les importer d'un module
@@ -368,7 +425,7 @@ message, est ce qui rend le test fiable.
 - pool vierge, `_amount == 0` : panic `0x12`, le denominateur
   `amountAfterFee + reserves[_indexIn]` vaut `0 + 0` et la division precede
   tous les `require`
-- `InsufficientReserve` : inatteignable par l'ABI, `it.todo` renvoye a la
+- `InsufficientReserve` : inatteignable par l'ABI, documente en commentaire et renvoye a la
   couche Solidity (voir la discussion plus haut)
 
 **Reverts**
@@ -414,6 +471,45 @@ message, est ce qui rend le test fiable.
 - le produit `reserves[_indexIn] * reserves[_indexOut]` ne diminue jamais
 - le solde LP du swapper reste nul : `swap` ne touche jamais au token LP
 
+### `pause` / `unpause`
+
+**Controle d'acces**
+
+- un tiers appelle `pause()` : `OwnableUnauthorizedAccount`
+- un tiers appelle `unpause()` : `OwnableUnauthorizedAccount`
+
+**Cablage**
+
+- l'owner appelle `pause()` : `paused()` vaut `true`. Seule assertion qui
+  distingue une fonction branchee d'une fonction au corps vide
+- l'owner appelle `unpause()` : `paused()` revient a `false`
+- NON testes, hors perimetre : repauser une pool deja en pause
+  (`EnforcedPause()`), depauser une pool qui ne l'est pas (`ExpectedPause()`),
+  et l'emission de `Paused` / `Unpaused`. Trois comportements executes par OZ,
+  aucun decide par `Pool.sol`
+
+**Pool en pause**
+
+- `addLiquidity` : `EnforcedPause()`, sur pool vierge comme sur pool amorce
+- `swap` : `EnforcedPause()`
+- `removeLiquidity` : accepte, verifie sur les montants sortis et sur les
+  reserves apres coup, jamais sur la seule absence de revert
+- ordre des gardes : un `swap` en pause avec un `_minOut` inatteignable echoue
+  par `EnforcedPause()`, jamais `BadSlippage`. Le modifieur s'execute avant le
+  corps, et un seul cas suffit a etablir la preemption
+- `setFee` reste appelable en pause. Choix delibere : la pause sert a preparer
+  la reprise, et le bloquer forcerait a depauser d'abord puis fixer le taux
+  ensuite, laissant une fenetre ou la pool rouvre au taux que la crise a rendu
+  inadapte. Contrepartie a connaitre : `MIN_SET_FEE_DELAY` court sur
+  `block.timestamp`, donc il tourne pendant la pause, et consommer le droit la
+  veille de la reprise le rend indisponible pour les vingt-quatre heures qui
+  suivent la reouverture
+
+**Retour a l'etat normal**
+
+- apres `unpause()`, `addLiquidity` et `swap` repassent et rendent les memes
+  montants qu'avant la pause : la pause ne laisse aucune trace dans l'etat
+
 ## A venir (couche Solidity)
 
 Trois TESTS sont volontairement renvoyes a la couche fuzz + invariants,
@@ -438,7 +534,7 @@ est impossible.
   un etat que l'ABI ne permet plus de construire (reserve d'entree nulle,
   reserve de sortie garnie). Un test Solidity peut forger cet etat par
   `vm.store` sur le slot des reserves, et c'est le seul endroit ou cette
-  branche s'execute : `it.todo` cote TypeScript, en attendant.
+  branche s'execute : simple commentaire cote TypeScript, en attendant.
 - **Les invariants de conservation des reserves.** Que la somme des
   transferts entrants/sortants sur `addLiquidity`, `removeLiquidity` et
   `swap` corresponde toujours exactement aux deltas de `reserves`, sur des

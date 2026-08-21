@@ -43,18 +43,18 @@ const PANIC_ARRAY_OUT_OF_BOUNDS = 50n; // 0x32
 async function deployTokensAndPool(feeNum: bigint) {
   const [deployer, depositor, other] = await viem.getWalletClients();
 
-  const wbtc = await viem.deployContract("MockWrappedBTC", ["Wrapped BTC", "wBTC"]);
+  const tbtc = await viem.deployContract("MockWrappedBTC", ["Threshold BTC", "tBTC"]);
   const cbbtc = await viem.deployContract("MockWrappedBTC", ["Coinbase BTC", "cbBTC"]);
   const lbtc = await viem.deployContract("MockWrappedBTC", ["Lombard BTC", "lBTC"]);
-  const tokens = [wbtc, cbbtc, lbtc] as const;
+  const tokens = [tbtc, cbbtc, lbtc] as const;
 
   const pool = await viem.deployContract("Pool", [
-    [wbtc.address, cbbtc.address, lbtc.address],
+    [tbtc.address, cbbtc.address, lbtc.address],
     feeNum,
     deployer.account.address,
   ]);
 
-  return { deployer, depositor, other, wbtc, cbbtc, lbtc, tokens, pool };
+  return { deployer, depositor, other, tbtc, cbbtc, lbtc, tokens, pool };
 }
 
 async function deployTokensAndPoolFixture() {
@@ -224,67 +224,7 @@ async function assertCompositionPreservedWhenAnchoredOn(anchor: bigint) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Plan de la suite (squelette). Reflete la structure reelle ci-dessous.
-// ---------------------------------------------------------------------------
-
 describe("Pool.addLiquidity", async function () {
-  describe("Plan de test", function () {
-    describe("I] addLiquidity sur pool vide", function () {
-      describe("A) Cas nominal", function () {
-        it.todo("mintedShares vaut 3 * _amount - MINIMUM_LIQUIDITY");
-        it.todo("les trois reserves valent _amount");
-        it.todo("MINIMUM_LIQUIDITY est detenu par l'adresse morte");
-        it.todo("totalSupply() inclut les parts brulees vers l'adresse morte");
-        it.todo("le solde du pool en chacun des trois tokens augmente de _amount");
-        it.todo("le solde du deposant en chacun des trois tokens diminue de _amount");
-        it.todo("l'evenement AddedLiquidity est emis avec les bons arguments");
-      });
-      describe("B) Reverts", function () {
-        it.todo("3 * _amount < MINIMUM_LIQUIDITY echoue par panic 0x11, pas par une erreur nommee");
-        it.todo("_amount > type(uint72).max echoue avec ReserveOverflow");
-        it.todo("_minShares > mintedShares echoue avec BadSlippage");
-        it.todo("amount trop grand ET minShares trop exigeant : BadSlippage avant ReserveOverflow");
-      });
-      describe("C) Cas limites", function () {
-        it.todo("_minShares exactement egal aux parts mintees est accepte");
-        it.todo("_anchorIndex hors bornes (99) sur un pool vide reussit sans revert");
-      });
-    });
-
-    describe("II] addLiquidity sur pool amorce", function () {
-      describe("A) Cas nominal", function () {
-        it.todo("mintedShares vaut supply * _amount / reserves[anchor]");
-        it.todo("chaque reserve croit de _amount * reserves[i] / reserves[anchor]");
-        it.todo("sur un pool equilibre, le resultat est identique quel que soit _anchorIndex");
-        it.todo("un second deposant obtient des parts proportionnelles au premier");
-      });
-      describe("B) Reverts", function () {
-        it.todo("une approbation insuffisante sur un seul des trois tokens revert (ERC-20)");
-        it.todo("_amount == 0 : ZeroOutput, un depot qui ne mint aucune part est refuse");
-      });
-      describe("C) Cas limites", function () {
-        it.todo("_anchorIndex hors bornes (99) sur un pool amorce echoue par panic 0x32");
-      });
-      describe("D) Pool desequilibre", function () {
-        describe("1) Composition et parts, independamment de la formule interne", function () {
-          it.todo("un depot ancre sur token0 ne modifie pas la composition du pool");
-          it.todo("un depot ancre sur token1 ne modifie pas la composition du pool");
-          it.todo("un depot ancre sur token2 ne modifie pas la composition du pool");
-          it.todo("ancre sur l'actif abondant, un apport de 10% du pool mint 10% du totalSupply precedent");
-          it.todo("ancre sur l'actif rare, un apport de 10% du pool mint 10% du totalSupply precedent");
-        });
-        describe("2) Consequence observable du choix de l'ancre (calcul a la main)", function () {
-          it.todo("a _amount identique, ancrer sur l'actif abondant mint 24 000 000 000 parts");
-          it.todo("a _amount identique, ancrer sur l'actif rare mint 37 500 000 000 parts");
-          it.todo("a _amount identique, l'ancre rare preleve plus sur le troisieme token que l'ancre abondante");
-        });
-        describe("3) Evenement avec des montants distincts", function () {
-          it.todo("l'evenement AddedLiquidity est emis avec des amountsIn distincts sur un pool desequilibre");
-        });
-      });
-    });
-  });
 
   // ---------------------------------------------------------------------------
   // I] addLiquidity sur pool vide

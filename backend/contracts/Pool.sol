@@ -5,8 +5,9 @@ pragma solidity 0.8.36;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
 
-contract Pool is ERC20, Ownable {
+contract Pool is ERC20, Ownable, Pausable {
 
 
   address public immutable token0;
@@ -58,6 +59,13 @@ contract Pool is ERC20, Ownable {
     lastFeeUpdate = block.timestamp;
   }
 
+  function pause() external onlyOwner {
+    _pause();
+  }
+  function unpause() external onlyOwner {
+    _unpause();
+  }
+
   function indexToAddress(uint256 _tokenIndex) internal view returns (address tokenAddress) {
     if (_tokenIndex == 0) {
       tokenAddress = token0;
@@ -68,8 +76,8 @@ contract Pool is ERC20, Ownable {
     }
   }
 
-  function addLiquidity(uint256 _anchorIndex, uint256 _amount, uint256 _minShares) external returns (uint256 mintedShares) {
-    // WBTC, LBTC and cbBTC all return true or revert on transferFrom, and none of them is a fee-on-transfer token: no need to check balanceOf
+  function addLiquidity(uint256 _anchorIndex, uint256 _amount, uint256 _minShares) external whenNotPaused returns (uint256 mintedShares) {
+    // tBTC, LBTC and cbBTC all return true or revert on transferFrom, and none of them is a fee-on-transfer token: no need to check balanceOf
     uint256[3] memory amounts;
     uint256 supply = totalSupply();
 
@@ -118,7 +126,7 @@ contract Pool is ERC20, Ownable {
     emit RemovedLiquidity(msg.sender, amountsOut, _burnedShares);
   }
 
-  function swap(uint256 _indexIn, uint256 _amount, uint256 _indexOut, uint256 _minOut) external returns (uint256 amountOut) {
+  function swap(uint256 _indexIn, uint256 _amount, uint256 _indexOut, uint256 _minOut) external whenNotPaused returns (uint256 amountOut) {
     uint72[3] memory cachedReserves = reserves;
 
     uint256 amountAfterFee = _amount * (FEE_DEN - feeNum) / FEE_DEN;

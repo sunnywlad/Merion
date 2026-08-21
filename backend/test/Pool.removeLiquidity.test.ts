@@ -54,18 +54,18 @@ const PANIC_DIVISION_BY_ZERO = 18n; // 0x12
 async function deployTokensAndPool(feeNum: bigint) {
   const [deployer, depositor, other] = await viem.getWalletClients();
 
-  const wbtc = await viem.deployContract("MockWrappedBTC", ["Wrapped BTC", "wBTC"]);
+  const tbtc = await viem.deployContract("MockWrappedBTC", ["Threshold BTC", "tBTC"]);
   const cbbtc = await viem.deployContract("MockWrappedBTC", ["Coinbase BTC", "cbBTC"]);
   const lbtc = await viem.deployContract("MockWrappedBTC", ["Lombard BTC", "lBTC"]);
-  const tokens = [wbtc, cbbtc, lbtc] as const;
+  const tokens = [tbtc, cbbtc, lbtc] as const;
 
   const pool = await viem.deployContract("Pool", [
-    [wbtc.address, cbbtc.address, lbtc.address],
+    [tbtc.address, cbbtc.address, lbtc.address],
     feeNum,
     deployer.account.address,
   ]);
 
-  return { deployer, depositor, other, wbtc, cbbtc, lbtc, tokens, pool };
+  return { deployer, depositor, other, tbtc, cbbtc, lbtc, tokens, pool };
 }
 
 async function deployTokensAndPoolFixture() {
@@ -229,85 +229,7 @@ async function assertRoundTripNeverExceedsDeposit(tokenIndex: 0 | 1 | 2) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Plan de la suite (squelette). Reflete la structure reelle ci-dessous.
-// ---------------------------------------------------------------------------
-
 describe("Pool.removeLiquidity", async function () {
-  describe("Plan de test", function () {
-    describe("I] removeLiquidity sur pool vierge", function () {
-      describe("A) Reverts", function () {
-        it.todo("totalSupply() vaut 0 : la division declenche un panic 0x12 (division par zero)");
-      });
-    });
-
-    describe("II] removeLiquidity sur pool amorce", function () {
-      describe("A) Cas nominal", function () {
-        it.todo("le retirant recoit 10% de chaque reserve sur les trois tokens");
-        it.todo("chaque reserve diminue exactement de ce que le retirant a recu");
-        it.todo("le solde du pool en chacun des trois tokens diminue des memes montants");
-        it.todo("les parts LP du retirant diminuent de _burnedShares");
-        it.todo("totalSupply() diminue de _burnedShares");
-        it.todo("la valeur de retour amountsOut vaut les trois montants transferes");
-        it.todo("l'evenement RemovedLiquidity est emis avec les bons arguments");
-        it.todo("l'adresse morte conserve ses MINIMUM_LIQUIDITY parts apres un retrait");
-      });
-      describe("B) Reverts", function () {
-        it.todo("_burnedShares superieur au solde LP du retirant : ERC20InsufficientBalance");
-        it.todo("un compte sans aucune part ne peut pas retirer : ERC20InsufficientBalance");
-        it.todo("_minOut[0] strictement superieur au montant sortant : BadSlippage");
-        it.todo("_minOut[1] strictement superieur au montant sortant : BadSlippage");
-        it.todo("_minOut[2] strictement superieur au montant sortant : BadSlippage");
-        it.todo("retrait trop grand ET _minOut trop exigeant : BadSlippage avant ERC20InsufficientBalance");
-        it.todo("_burnedShares superieur au totalSupply : panic 0x11, le decrement des reserves sous-flow avant le _burn");
-      });
-      describe("C) Cas limites", function () {
-        it.todo("_minOut exactement egal aux montants sortants est accepte");
-        describe("1) _burnedShares == 0", function () {
-          it.todo("ne transfere aucun token (soldes du retirant inchanges)");
-          it.todo("laisse les trois reserves inchangees");
-          it.todo("laisse totalSupply() inchange");
-          it.todo("emet quand meme RemovedLiquidity, avec trois montants nuls");
-        });
-        describe("2) Arrondi entier, toujours en faveur du pool", function () {
-          it.todo("bruler 1 seule part ne rend aucun token");
-          it.todo("la part brulee disparait quand meme du totalSupply");
-        });
-        describe("3) Retrait total et propriete des parts", function () {
-          it.todo("retirer la totalite de ses parts laisse un residu non nul dans chaque reserve");
-          it.todo("personne ne peut bruler les parts detenues par l'adresse morte");
-          it.todo("un porteur ayant recu ses parts par simple transfer ERC-20 peut retirer");
-        });
-        describe("4) Retraits successifs", function () {
-          it.todo("deux retraits successifs de la meme quantite de parts rendent exactement les memes montants");
-        });
-      });
-      describe("D) Pool desequilibre", function () {
-        describe("1) Composition et proportionnalite", function () {
-          it.todo("un retrait de 10% du totalSupply rend 10% de chaque reserve");
-          it.todo("un retrait ne modifie pas la composition du pool");
-          it.todo("un retrait rend strictement plus du token abondant que du token rare");
-        });
-        describe("2) Consequence chiffree du desequilibre (calcul a la main)", function () {
-          it.todo("bruler 7 000 000 000 parts rend trois montants tronques vers le bas");
-        });
-        describe("3) Evenement avec des montants distincts", function () {
-          it.todo("RemovedLiquidity porte trois amountsOut distincts sur un pool desequilibre");
-        });
-      });
-    });
-
-    describe("III] Proprietes de conservation", function () {
-      describe("A) Aller-retour addLiquidity puis removeLiquidity", function () {
-        it.todo("token0 : ne recupere jamais plus que ce qui a ete depose");
-        it.todo("token1 : ne recupere jamais plus que ce qui a ete depose");
-        it.todo("token2 : ne recupere jamais plus que ce qui a ete depose");
-      });
-      describe("B) Les frais reviennent aux LP", function () {
-        it.todo("apres un aller-retour de swaps d'un tiers, le depositor retire plus que son depot initial");
-      });
-    });
-  });
 
   // ---------------------------------------------------------------------------
   // I] removeLiquidity sur pool vierge
@@ -930,7 +852,7 @@ describe("Pool.removeLiquidity", async function () {
     describe("B) Les frais reviennent aux LP", function () {
       it("apres un aller-retour de swaps d'un tiers, le depositor retire plus que son depot initial", async function () {
         // En v1 les trois BTC enveloppes sont traites 1:1 (aucune conversion
-        // de prix entre wBTC/cbBTC/lBTC dans le contrat) : c'est une
+        // de prix entre tBTC/cbBTC/lBTC dans le contrat) : c'est une
         // hypothese assumee du projet, qui rend la somme des trois montants
         // comparable a un total de BTC, et donc comparable au total depose.
         const { pool, tokens, depositor, other } = await networkHelpers.loadFixture(deploySeededPoolFixture);
