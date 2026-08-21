@@ -30,6 +30,7 @@ const ZERO_FEE_NUM = 0n;
 
 // Codes de panic Solidity utilises dans cette suite (Panic(uint256)).
 const PANIC_ARITHMETIC_OVERFLOW = 17n; // 0x11
+const PANIC_DIVISION_BY_ZERO = 18n; // 0x12
 const PANIC_ARRAY_OUT_OF_BOUNDS = 50n; // 0x32
 
 // ---------------------------------------------------------------------------
@@ -79,6 +80,28 @@ async function mintAndApprove(
   for (const token of tokens) {
     await token.write.mint([account.account.address, amount]);
     await token.write.approve([pool.address, amount], { account: account.account });
+  }
+}
+
+// Mint et approuve, jambe par jambe, exactement ce qu'un depot ancre sur
+// `anchor` va reellement tirer sur chacun des trois tokens : amounts[i] =
+// _amount * reservesBefore[i] / reservesBefore[anchor] (Pool.sol:139), la
+// meme formule que le contrat sur la branche supply != 0. Necessaire des que
+// le pool n'est plus egalement reparti entre les trois reserves : un
+// `mintAndApprove` a montant unique sous-dimensionne alors systematiquement
+// les jambes non ancrees.
+async function mintAndApproveForAnchoredDeposit(
+  tokens: PoolFixture["tokens"],
+  pool: PoolFixture["pool"],
+  account: PoolFixture["depositor"],
+  anchor: 0n | 1n | 2n,
+  amount: bigint,
+  reservesBefore: [bigint, bigint, bigint],
+) {
+  for (let i = 0; i < 3; i++) {
+    const legAmount = (amount * reservesBefore[i]) / reservesBefore[Number(anchor)];
+    await tokens[i].write.mint([account.account.address, legAmount]);
+    await tokens[i].write.approve([pool.address, legAmount], { account: account.account });
   }
 }
 
@@ -147,6 +170,12 @@ async function assertPanic(promise: Promise<unknown>, expectedCode: bigint) {
 }
 
 const SEED_AMOUNT = 100n * 10n ** 8n; // pool amorce a 100 (8 decimales) sur chaque reserve
+// Approuver SEED_AMOUNT a plat sur les trois tokens ne suffit plus pour un
+// premier depot ancre sur token0 : les jambes cbBTC et lBTC tirent chacune
+// 4.5 * SEED_AMOUNT (poids cibles 10/45/45, Pool.sol:118-121). Ce montant
+// couvre les trois jambes avec la meme marge que le contrat en tire sur la
+// plus grosse.
+const SEED_AMOUNT_HEADROOM = 45n * SEED_AMOUNT / 10n;
 
 async function deploySeededPoolFixture() {
   const base = await deployTokensAndPoolFixture();
@@ -177,18 +206,24 @@ async function deployImbalancedPoolFixture() {
   const base = await deployZeroFeeTokensAndPoolFixture();
   const { depositor, tokens, pool } = base;
 
-  const seedAmount = 1000n * 10n ** 8n; // reserves de depart : [1000e8, 1000e8, 1000e8]
+  // Amorcage ancre sur token0, poids cibles 10/45/45 (Pool.sol:118-121) :
+  //   amounts = [1000e8, 4500e8, 4500e8]
+  // totalSupply apres l'amorcage : 1000e8 + 4500e8 + 4500e8 = 10000e8
+  // (part brulee vers l'adresse morte incluse)
+  const seedAmount = 1000n * 10n ** 8n;
   await mintAndApprove(tokens, pool, depositor, seedAmount * 10n);
   await pool.write.addLiquidity([0n, seedAmount, 0n], { account: depositor.account });
 
-  // Swap de 250e8 de token0 vers token2, feeNum = 0 :
+  // Swap de 250e8 de token0 vers token2, feeNum = 0, sur les reserves qui
+  // sortent de l'amorcage ([1000e8, 4500e8, 4500e8]) :
   //   amountOut = amountIn * reserveOut / (amountIn + reserveIn)
-  //             = 250e8 * 1000e8 / (250e8 + 1000e8)
-  //             = 250e8 * 1000e8 / 1250e8
-  //             = 200e8
-  // Reserves apres le swap : [1250e8, 1000e8, 800e8]
-  // totalSupply apres l'amorcage : 3 * 1000e8 = 300 000 000 000 (part brulee
-  // vers l'adresse morte incluse)
+  //             = 250e8 * 4500e8 / (250e8 + 1000e8)
+  //             = 250e8 * 4500e8 / 1250e8
+  //             = 900e8
+  // Reserves apres le swap : [1250e8, 4500e8, 3600e8]
+  // Bandes verifiees a la main (les trois passent, cf. Pool.sol:182-187) :
+  // sum = 9350e8, token0 = 13,36% (bornes 5-25), token1 = 48,12% (15-65),
+  // token2 = 38,50% (22-55).
   const swapAmount = 250n * 10n ** 8n;
   await pool.write.swap([0n, swapAmount, 2n, 0n], { account: depositor.account });
 
@@ -201,16 +236,20 @@ async function deployImbalancedPoolFixture() {
 // scenarios independants (un depot ancre sur token0 est une transaction
 // differente d'un depot ancre sur token1), donc trois tests, chacun avec sa
 // propre assertion.
-async function assertCompositionPreservedWhenAnchoredOn(anchor: bigint) {
+async function assertCompositionPreservedWhenAnchoredOn(anchor: 0n | 1n | 2n) {
   const { pool, tokens, other } = await networkHelpers.loadFixture(deployImbalancedPoolFixture);
   const reservesBefore = await readReserves(pool);
   const depositAmount = reservesBefore[Number(anchor)] / 10n; // 10% de la reserve ancre
 
-  await mintAndApprove(tokens, pool, other, depositAmount * 2n);
+  // Reserves desequilibrees ([1250e8, 4500e8, 3600e8]) : un montant flat sur
+  // les trois tokens sous-dimensionne les jambes non ancrees (jusqu'a 3,6x
+  // depositAmount selon l'ancre) ; mintAndApproveForAnchoredDeposit calcule
+  // exactement ce que chaque jambe va tirer.
+  await mintAndApproveForAnchoredDeposit(tokens, pool, other, anchor, depositAmount, reservesBefore);
   await pool.write.addLiquidity([anchor, depositAmount, 0n], { account: other.account });
 
   const reservesAfter = await readReserves(pool);
-  // On ne recalcule pas la formule interne (Pool.sol:90) : le depot choisi
+  // On ne recalcule pas la formule interne (Pool.sol:139) : le depot choisi
   // vaut exactement 10% de la reserve ancre, et par construction (les 3
   // reserves de la fixture se divisent proprement par 10) chaque reserve doit
   // alors croitre de 10%, quelle que soit l'ancre. C'est cette croissance
@@ -232,38 +271,48 @@ describe("Pool.addLiquidity", async function () {
 
   describe("I] addLiquidity sur pool vide", function () {
     describe("A) Cas nominal", function () {
-      it("mintedShares vaut 3 * _amount - MINIMUM_LIQUIDITY", async function () {
+      it("mintedShares vaut la somme des trois jambes ponderees par les poids cibles, moins MINIMUM_LIQUIDITY", async function () {
+        // Sur pool vide, l'amorcage ne depose plus _amount sur les trois
+        // reserves a egalite : il reparti _amount selon les poids cibles du
+        // pool (targetOf, Pool.sol:101-109), rapportes a l'ancre.
+        //   amounts[i] = _amount * targetOf(i) / targetOf(_anchorIndex)
+        // Ancre = token0 (target 10) : amounts = [_amount, 4.5 * _amount,
+        // 4.5 * _amount] (targets 10/45/45), soit avec _amount = SEED_AMOUNT :
+        //   amounts = [10 000 000 000, 45 000 000 000, 45 000 000 000]
+        //   mintedShares = somme des trois - MINIMUM_LIQUIDITY
+        //                = 100 000 000 000 - 1000 = 99 999 999 000
         const { pool, tokens, depositor } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
-        await mintAndApprove(tokens, pool, depositor, SEED_AMOUNT);
+        await mintAndApprove(tokens, pool, depositor, SEED_AMOUNT_HEADROOM);
 
         await pool.write.addLiquidity([0n, SEED_AMOUNT, 0n], { account: depositor.account });
 
         const mintedShares = await pool.read.balanceOf([depositor.account.address]);
-        const expectedShares = 3n * SEED_AMOUNT - MINIMUM_LIQUIDITY;
+        const expectedShares = 99_999_999_000n;
         assert.equal(
           mintedShares,
           expectedShares,
-          `mintedShares=${mintedShares}, attendu 3 * ${SEED_AMOUNT} - ${MINIMUM_LIQUIDITY} = ${expectedShares}`,
+          `mintedShares=${mintedShares}, attendu ${expectedShares} (calcul a la main en commentaire)`,
         );
       });
 
-      it("les trois reserves valent _amount", async function () {
+      it("les trois reserves valent _amount, 4.5 * _amount et 4.5 * _amount (poids cibles 10/45/45)", async function () {
         const { pool, tokens, depositor } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
-        await mintAndApprove(tokens, pool, depositor, SEED_AMOUNT);
+        await mintAndApprove(tokens, pool, depositor, SEED_AMOUNT_HEADROOM);
 
         await pool.write.addLiquidity([0n, SEED_AMOUNT, 0n], { account: depositor.account });
 
         const reserves = await readReserves(pool);
+        const expectedReserves: [bigint, bigint, bigint] = [SEED_AMOUNT, 45n * SEED_AMOUNT / 10n, 45n * SEED_AMOUNT / 10n];
         assert.deepEqual(
           reserves,
-          [SEED_AMOUNT, SEED_AMOUNT, SEED_AMOUNT],
-          `reserves=[${reserves}], attendu 3x ${SEED_AMOUNT}`,
+          expectedReserves,
+          `reserves=[${reserves}], attendu=[${expectedReserves}] (poids cibles 10/45/45, ancre = token0)`,
         );
       });
 
       it("MINIMUM_LIQUIDITY est detenu par l'adresse morte", async function () {
         const { pool, tokens, depositor } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
-        await mintAndApprove(tokens, pool, depositor, SEED_AMOUNT);
+        await mintAndApprove(tokens, pool, depositor, SEED_AMOUNT_HEADROOM);
 
         await pool.write.addLiquidity([0n, SEED_AMOUNT, 0n], { account: depositor.account });
 
@@ -277,52 +326,54 @@ describe("Pool.addLiquidity", async function () {
 
       it("totalSupply() inclut les parts brulees vers l'adresse morte", async function () {
         const { pool, tokens, depositor } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
-        await mintAndApprove(tokens, pool, depositor, SEED_AMOUNT);
+        await mintAndApprove(tokens, pool, depositor, SEED_AMOUNT_HEADROOM);
 
         await pool.write.addLiquidity([0n, SEED_AMOUNT, 0n], { account: depositor.account });
 
         const totalSupply = await pool.read.totalSupply();
-        const expectedSupply = 3n * SEED_AMOUNT;
+        const expectedSupply = 100_000_000_000n; // somme des trois jambes ponderees, cf. calcul a la main plus haut
         assert.equal(
           totalSupply,
           expectedSupply,
-          `totalSupply=${totalSupply}, attendu 3 * ${SEED_AMOUNT} = ${expectedSupply} (parts du deposant + MINIMUM_LIQUIDITY brulee)`,
+          `totalSupply=${totalSupply}, attendu ${expectedSupply} (parts du deposant + MINIMUM_LIQUIDITY brulee)`,
         );
       });
 
-      it("le solde du pool en chacun des trois tokens augmente de _amount", async function () {
+      it("le solde du pool en chacun des trois tokens augmente de _amount, 4.5 * _amount et 4.5 * _amount", async function () {
         const { pool, tokens, depositor } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
-        await mintAndApprove(tokens, pool, depositor, SEED_AMOUNT);
+        await mintAndApprove(tokens, pool, depositor, SEED_AMOUNT_HEADROOM);
 
         await pool.write.addLiquidity([0n, SEED_AMOUNT, 0n], { account: depositor.account });
 
         const poolBalances = await readBalances(tokens, pool.address);
+        const expectedBalances: [bigint, bigint, bigint] = [SEED_AMOUNT, 45n * SEED_AMOUNT / 10n, 45n * SEED_AMOUNT / 10n];
         assert.deepEqual(
           poolBalances,
-          [SEED_AMOUNT, SEED_AMOUNT, SEED_AMOUNT],
-          `soldes du pool=[${poolBalances}], attendu 3x ${SEED_AMOUNT}`,
+          expectedBalances,
+          `soldes du pool=[${poolBalances}], attendu=[${expectedBalances}]`,
         );
       });
 
-      it("le solde du deposant en chacun des trois tokens diminue de _amount", async function () {
+      it("le solde du deposant en chacun des trois tokens diminue de _amount, 4.5 * _amount et 4.5 * _amount", async function () {
         const { pool, tokens, depositor } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
-        await mintAndApprove(tokens, pool, depositor, SEED_AMOUNT);
+        await mintAndApprove(tokens, pool, depositor, SEED_AMOUNT_HEADROOM);
         const balancesBefore = await readBalances(tokens, depositor.account.address);
 
         await pool.write.addLiquidity([0n, SEED_AMOUNT, 0n], { account: depositor.account });
 
         const balancesAfter = await readBalances(tokens, depositor.account.address);
         const spent = balancesBefore.map((before, i) => before - balancesAfter[i]);
+        const expectedSpent: [bigint, bigint, bigint] = [SEED_AMOUNT, 45n * SEED_AMOUNT / 10n, 45n * SEED_AMOUNT / 10n];
         assert.deepEqual(
           spent,
-          [SEED_AMOUNT, SEED_AMOUNT, SEED_AMOUNT],
-          `depense=[${spent}] (avant - apres), attendu 3x ${SEED_AMOUNT}`,
+          expectedSpent,
+          `depense=[${spent}] (avant - apres), attendu=[${expectedSpent}]`,
         );
       });
 
       it("l'evenement AddedLiquidity est emis avec les bons arguments", async function () {
         const { pool, tokens, depositor } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
-        await mintAndApprove(tokens, pool, depositor, SEED_AMOUNT);
+        await mintAndApprove(tokens, pool, depositor, SEED_AMOUNT_HEADROOM);
 
         await viem.assertions.emitWithArgs(
           pool.write.addLiquidity([0n, SEED_AMOUNT, 0n], { account: depositor.account }),
@@ -330,19 +381,20 @@ describe("Pool.addLiquidity", async function () {
           "AddedLiquidity",
           [
             depositor.account.address,
-            [SEED_AMOUNT, SEED_AMOUNT, SEED_AMOUNT],
-            3n * SEED_AMOUNT - MINIMUM_LIQUIDITY,
+            [SEED_AMOUNT, 45n * SEED_AMOUNT / 10n, 45n * SEED_AMOUNT / 10n],
+            99_999_999_000n,
           ],
         );
       });
     });
 
     describe("B) Reverts", function () {
-      it("3 * _amount < MINIMUM_LIQUIDITY echoue par panic 0x11, pas par une erreur nommee", async function () {
+      it("somme des trois jambes < MINIMUM_LIQUIDITY echoue par panic 0x11, pas par une erreur nommee", async function () {
         const { pool, depositor } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
-        // 3 * 100 = 300 < MINIMUM_LIQUIDITY (1000) : la soustraction sous-flow
-        // avant meme d'atteindre le require de BadSlippage.
-        const tooSmallAmount = 100n;
+        // Ancre = token0 : amounts = [90, 405, 405] (90 * 45 / 10 = 405),
+        // somme = 900 < MINIMUM_LIQUIDITY (1000) : la soustraction sous-flow
+        // avant meme d'atteindre le require de BadSlippage (Pool.sol:123-124).
+        const tooSmallAmount = 90n;
 
         await assertPanic(
           pool.write.addLiquidity([0n, tooSmallAmount, 0n], { account: depositor.account }),
@@ -351,6 +403,9 @@ describe("Pool.addLiquidity", async function () {
       });
 
       it("_amount > type(uint72).max echoue avec ReserveOverflow", async function () {
+        // Ancre = token0 : amounts[0] = _amount (targetOf(0)/targetOf(0) = 1),
+        // donc le tout premier passage de la boucle (Pool.sol:118-121, i = 0)
+        // depasse deja type(uint72).max et revert avant tout calcul de parts.
         const { pool, depositor } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
         const tooLargeAmount = UINT72_MAX + 1n;
 
@@ -363,8 +418,8 @@ describe("Pool.addLiquidity", async function () {
 
       it("_minShares > mintedShares echoue avec BadSlippage", async function () {
         const { pool, tokens, depositor } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
-        await mintAndApprove(tokens, pool, depositor, SEED_AMOUNT);
-        const mintedShares = 3n * SEED_AMOUNT - MINIMUM_LIQUIDITY;
+        await mintAndApprove(tokens, pool, depositor, SEED_AMOUNT_HEADROOM);
+        const mintedShares = 99_999_999_000n; // cf. calcul a la main du cas nominal
 
         await viem.assertions.revertWithCustomError(
           pool.write.addLiquidity([0n, SEED_AMOUNT, mintedShares + 1n], { account: depositor.account }),
@@ -373,17 +428,24 @@ describe("Pool.addLiquidity", async function () {
         );
       });
 
-      it("amount trop grand ET minShares trop exigeant : BadSlippage avant ReserveOverflow", async function () {
+      it("amount trop grand ET minShares trop exigeant : ReserveOverflow avant BadSlippage", async function () {
+        // Ordre inverse de ce qu'on pourrait attendre par analogie avec la
+        // branche pool amorce (ou le slippage passe en premier, cf.
+        // II.B ci-dessous) : sur la branche d'amorcage, ReserveOverflow est
+        // verifiee JAMBE PAR JAMBE dans la boucle qui calcule `amounts`
+        // (Pool.sol:118-121), avant meme que mintedShares n'existe. Ancre =
+        // token0 : amounts[0] = _amount des le premier passage de boucle
+        // (i = 0), donc un _amount hors bornes revert par ReserveOverflow
+        // avant que le require de BadSlippage (Pool.sol:124) ne soit atteint,
+        // quelle que soit la valeur de _minShares.
         const { pool, depositor } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
         const tooLargeAmount = UINT72_MAX + 1n;
-        // mintedShares theorique = 3 * tooLargeAmount - MINIMUM_LIQUIDITY (le
-        // require de slippage est evalue avant celui d'overflow, Pool.sol:76-77)
-        const mintedShares = 3n * tooLargeAmount - MINIMUM_LIQUIDITY;
+        const impossibleMinShares = UINT72_MAX; // insatisfaisable quel que soit mintedShares reel
 
         await viem.assertions.revertWithCustomError(
-          pool.write.addLiquidity([0n, tooLargeAmount, mintedShares + 1n], { account: depositor.account }),
+          pool.write.addLiquidity([0n, tooLargeAmount, impossibleMinShares], { account: depositor.account }),
           pool,
-          "BadSlippage",
+          "ReserveOverflow",
         );
       });
     });
@@ -391,8 +453,8 @@ describe("Pool.addLiquidity", async function () {
     describe("C) Cas limites", function () {
       it("_minShares exactement egal aux parts mintees est accepte", async function () {
         const { pool, tokens, depositor } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
-        await mintAndApprove(tokens, pool, depositor, SEED_AMOUNT);
-        const mintedShares = 3n * SEED_AMOUNT - MINIMUM_LIQUIDITY;
+        await mintAndApprove(tokens, pool, depositor, SEED_AMOUNT_HEADROOM);
+        const mintedShares = 99_999_999_000n; // cf. calcul a la main du cas nominal
 
         // Ne doit pas revert : on attend juste que la promesse se resolve.
         await assert.doesNotReject(
@@ -401,16 +463,21 @@ describe("Pool.addLiquidity", async function () {
         );
       });
 
-      it("_anchorIndex hors bornes (99) sur un pool vide reussit sans revert", async function () {
-        // Documente un comportement du contrat : sur la branche supply == 0,
-        // _anchorIndex n'est jamais lu (Pool.sol:74-81), donc une valeur hors
-        // bornes n'a aucun effet.
+      it("_anchorIndex hors bornes (99) sur un pool vide echoue par panic 0x12 (division par zero)", async function () {
+        // Documente un changement de comportement du contrat : sur la
+        // branche supply == 0, _anchorIndex EST desormais lu (Pool.sol:119,
+        // targetOf(_anchorIndex) au denominateur), a la difference de l'ancien
+        // amorcage a trois montants egaux ou l'ancre n'intervenait dans aucun
+        // calcul. targetOf() ne couvre que 0, 1 et 2 (Pool.sol:101-109) ; pour
+        // toute autre valeur, la variable de retour garde son defaut Solidity
+        // (0), et targetOf(i) / targetOf(99) devient une division par zero,
+        // avant meme le require de ReserveOverflow qui suit dans la boucle.
         const { pool, tokens, depositor } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
-        await mintAndApprove(tokens, pool, depositor, SEED_AMOUNT);
+        await mintAndApprove(tokens, pool, depositor, SEED_AMOUNT_HEADROOM);
 
-        await assert.doesNotReject(
+        await assertPanic(
           pool.write.addLiquidity([99n, SEED_AMOUNT, 0n], { account: depositor.account }),
-          "_anchorIndex ne doit jamais etre lu quand supply == 0",
+          PANIC_DIVISION_BY_ZERO,
         );
       });
     });
@@ -432,8 +499,7 @@ describe("Pool.addLiquidity", async function () {
         await pool.write.addLiquidity([0n, ADD_AMOUNT, 0n], { account: depositor.account });
 
         const mintedShares = await pool.read.balanceOf([depositor.account.address]);
-        const expectedTotalShares =
-          (3n * SEED_AMOUNT - MINIMUM_LIQUIDITY) + (supplyBefore * ADD_AMOUNT) / reservesBefore[0];
+        const expectedTotalShares = 99_999_999_000n + (supplyBefore * ADD_AMOUNT) / reservesBefore[0];
         assert.equal(
           mintedShares,
           expectedTotalShares,
@@ -459,15 +525,22 @@ describe("Pool.addLiquidity", async function () {
         );
       });
 
-      it("sur un pool equilibre, le resultat est identique quel que soit _anchorIndex", async function () {
-        // Claim intrinsequement comparatif : "identique quel que soit
-        // l'ancre" n'a de sens qu'avec au moins deux valeurs a comparer, donc
-        // pas decomposable en 3 tests independants sans perdre la propriete
-        // testee. On garde un seul it, mais l'unique assertion porte un
-        // message qui liste les 3 resultats pour le diagnostic.
+      it("sur un pool fraichement amorce, mintedShares est identique pour cbBTC et lBTC (memes poids cibles)", async function () {
+        // Ancien enonce de ce test ("identique quel que soit _anchorIndex") :
+        // perime depuis l'amorcage pondere. Un pool "equilibre" au sens du
+        // contrat (compose exactement selon targetOf) n'a plus des reserves
+        // EGALES : deploySeededPoolFixture donne [1e10, 4.5e10, 4.5e10], donc
+        // mintedShares = supply * _amount / reserves[anchor] differe deja
+        // entre l'ancre 0 et les ancres 1/2, par construction (reserves[0] !=
+        // reserves[1]). La seule egalite qui subsiste, et qui tient EXACTEMENT
+        // (meme division, meme troncature), est entre les ancres 1 et 2 :
+        // targetOf(1) == targetOf(2) == 45 (Pool.sol:104-107), donc
+        // reserves[1] == reserves[2], donc mintedShares(ancre=1) ==
+        // mintedShares(ancre=2). Comparaison intrinsequement binaire, donc un
+        // seul it avec une unique assertion, message listant les deux valeurs.
         const mintedSharesByAnchor: bigint[] = [];
 
-        for (const anchor of [0n, 1n, 2n]) {
+        for (const anchor of [1n, 2n]) {
           const { pool, depositor } = await networkHelpers.loadFixture(deploySeededPoolFixture);
           await pool.write.addLiquidity([anchor, ADD_AMOUNT, 0n], { account: depositor.account });
           const mintedTotal = await pool.read.balanceOf([depositor.account.address]);
@@ -475,9 +548,9 @@ describe("Pool.addLiquidity", async function () {
         }
 
         assert.equal(
-          new Set(mintedSharesByAnchor).size,
-          1,
-          `mintedShares devrait etre identique pour les 3 ancres sur un pool equilibre : anchor0=${mintedSharesByAnchor[0]}, anchor1=${mintedSharesByAnchor[1]}, anchor2=${mintedSharesByAnchor[2]}`,
+          mintedSharesByAnchor[0],
+          mintedSharesByAnchor[1],
+          `mintedShares devrait etre identique pour les ancres cbBTC et lBTC : anchor1=${mintedSharesByAnchor[0]}, anchor2=${mintedSharesByAnchor[1]}`,
         );
       });
 
@@ -485,7 +558,11 @@ describe("Pool.addLiquidity", async function () {
         const { pool, tokens, other } = await networkHelpers.loadFixture(deploySeededPoolFixture);
         const supplyBefore = await pool.read.totalSupply();
         const reservesBefore = await readReserves(pool);
-        await mintAndApprove(tokens, pool, other, ADD_AMOUNT);
+        // reservesBefore = [1e10, 4.5e10, 4.5e10] (poids cibles) : un depot
+        // ancre sur token0 tire ADD_AMOUNT sur token0 mais 4.5 * ADD_AMOUNT
+        // sur token1 et token2, un mintAndApprove a montant unique sous-
+        // dimensionnerait ces deux jambes.
+        await mintAndApproveForAnchoredDeposit(tokens, pool, other, 0n, ADD_AMOUNT, reservesBefore);
 
         await pool.write.addLiquidity([0n, ADD_AMOUNT, 0n], { account: other.account });
 
@@ -502,14 +579,17 @@ describe("Pool.addLiquidity", async function () {
     describe("B) Reverts", function () {
       it("une approbation insuffisante sur un seul des trois tokens revert (ERC-20)", async function () {
         const { pool, tokens, other } = await networkHelpers.loadFixture(deploySeededPoolFixture);
-        // Les deux premiers tokens sont pleinement approuves, le troisieme
-        // (lbtc, index 2) ne l'est pas du tout : le transferFrom sur lbtc doit
-        // revert avant la fin de la boucle (Pool.sol:96-98).
+        const reservesBefore = await readReserves(pool); // [1e10, 4.5e10, 4.5e10]
+        const legToken1 = (ADD_AMOUNT * reservesBefore[1]) / reservesBefore[0]; // 4.5 * ADD_AMOUNT
+        // Les deux premiers tokens sont approuves pour exactement ce que le
+        // depot va tirer sur leur jambe, le troisieme (lbtc, index 2) ne l'est
+        // pas du tout : le transferFrom sur lbtc doit revert avant la fin de
+        // la boucle (Pool.sol:145-147).
         await tokens[0].write.mint([other.account.address, ADD_AMOUNT]);
         await tokens[0].write.approve([pool.address, ADD_AMOUNT], { account: other.account });
-        await tokens[1].write.mint([other.account.address, ADD_AMOUNT]);
-        await tokens[1].write.approve([pool.address, ADD_AMOUNT], { account: other.account });
-        await tokens[2].write.mint([other.account.address, ADD_AMOUNT]);
+        await tokens[1].write.mint([other.account.address, legToken1]);
+        await tokens[1].write.approve([pool.address, legToken1], { account: other.account });
+        await tokens[2].write.mint([other.account.address, legToken1]);
         // pas d'approve sur tokens[2]
 
         await viem.assertions.revertWithCustomError(
@@ -551,8 +631,8 @@ describe("Pool.addLiquidity", async function () {
       it("_anchorIndex hors bornes (99) sur un pool amorce echoue par panic 0x32", async function () {
         const { pool, depositor } = await networkHelpers.loadFixture(deploySeededPoolFixture);
         // Sur la branche supply != 0, cachedReserves[_anchorIndex] est lu des
-        // la ligne 86 : un index hors bornes d'un tableau memoire declenche un
-        // acces hors bornes (Pool.sol:84-86).
+        // le calcul de mintedShares : un index hors bornes d'un tableau
+        // memoire declenche un acces hors bornes (Pool.sol:134).
 
         await assertPanic(
           pool.write.addLiquidity([99n, SEED_AMOUNT, 0n], { account: depositor.account }),
@@ -576,13 +656,16 @@ describe("Pool.addLiquidity", async function () {
         });
 
         it("ancre sur l'actif abondant, un apport de 10% du pool mint 10% du totalSupply precedent", async function () {
+          // Avec le swap prealable de la fixture, l'actif abondant n'est plus
+          // token0 mais token1 (cbBTC, 4500e8) : le swap a fait grossir
+          // token0 (entrant) et maigrir token2 (sortant), sans toucher token1.
           const { pool, tokens, other } = await networkHelpers.loadFixture(deployImbalancedPoolFixture);
           const supplyBefore = await pool.read.totalSupply();
           const reservesBefore = await readReserves(pool);
-          const depositAmount = reservesBefore[0] / 10n; // token0 = actif abondant (1250e8)
+          const depositAmount = reservesBefore[1] / 10n; // token1 = actif abondant (4500e8)
 
-          await mintAndApprove(tokens, pool, other, depositAmount * 2n);
-          await pool.write.addLiquidity([0n, depositAmount, 0n], { account: other.account });
+          await mintAndApproveForAnchoredDeposit(tokens, pool, other, 1n, depositAmount, reservesBefore);
+          await pool.write.addLiquidity([1n, depositAmount, 0n], { account: other.account });
 
           const mintedShares = await pool.read.balanceOf([other.account.address]);
           const expectedShares = supplyBefore / 10n;
@@ -594,13 +677,15 @@ describe("Pool.addLiquidity", async function () {
         });
 
         it("ancre sur l'actif rare, un apport de 10% du pool mint 10% du totalSupply precedent", async function () {
+          // L'actif rare est maintenant token0 (tBTC, 1250e8), le plus petit
+          // des trois apres le swap prealable (voir le test voisin).
           const { pool, tokens, other } = await networkHelpers.loadFixture(deployImbalancedPoolFixture);
           const supplyBefore = await pool.read.totalSupply();
           const reservesBefore = await readReserves(pool);
-          const depositAmount = reservesBefore[2] / 10n; // token2 = actif rare (800e8)
+          const depositAmount = reservesBefore[0] / 10n; // token0 = actif rare (1250e8)
 
-          await mintAndApprove(tokens, pool, other, depositAmount * 2n);
-          await pool.write.addLiquidity([2n, depositAmount, 0n], { account: other.account });
+          await mintAndApproveForAnchoredDeposit(tokens, pool, other, 0n, depositAmount, reservesBefore);
+          await pool.write.addLiquidity([0n, depositAmount, 0n], { account: other.account });
 
           const mintedShares = await pool.read.balanceOf([other.account.address]);
           const expectedShares = supplyBefore / 10n;
@@ -613,21 +698,23 @@ describe("Pool.addLiquidity", async function () {
       });
 
       describe("2) Consequence observable du choix de l'ancre (calcul a la main)", function () {
-        it("a _amount identique, ancrer sur l'actif abondant mint 24 000 000 000 parts", async function () {
-          // supply avant depot = 300 000 000 000 (cf. fixture)
-          // reserves avant depot = [1250e8, 1000e8, 800e8] (cf. fixture)
-          // mintedShares = supply * amount / reserves[0]
-          //              = 300 000 000 000 * 10 000 000 000 / 125 000 000 000
-          //              = 300 000 000 000 * 0,08
-          //              = 24 000 000 000
+        it("a _amount identique, ancrer sur l'actif abondant (token1) mint 22 222 222 222 parts", async function () {
+          // totalSupply = 1 000 000 000 000 (fixe depuis l'amorcage : le swap
+          // qui desequilibre la fixture ne mint ni ne brule aucune part LP,
+          // seule la COMPOSITION des reserves change, pas leur somme rapportee
+          // au totalSupply)
+          // reserves avant depot = [1250e8, 4500e8, 3600e8] (cf. fixture)
+          // mintedShares = totalSupply * amount / reserves[1]
+          //              = 1 000 000 000 000 * 10 000 000 000 / 450 000 000 000
+          //              = 22 222 222 222,22... -> 22 222 222 222 (tronque)
           const { pool, tokens, other } = await networkHelpers.loadFixture(deployImbalancedPoolFixture);
           const amount = 100n * 10n ** 8n;
           await mintAndApprove(tokens, pool, other, amount);
 
-          await pool.write.addLiquidity([0n, amount, 0n], { account: other.account });
+          await pool.write.addLiquidity([1n, amount, 0n], { account: other.account });
 
           const mintedShares = await pool.read.balanceOf([other.account.address]);
-          const expectedShares = 24_000_000_000n;
+          const expectedShares = 22_222_222_222n;
           assert.equal(
             mintedShares,
             expectedShares,
@@ -635,24 +722,25 @@ describe("Pool.addLiquidity", async function () {
           );
         });
 
-        it("a _amount identique, ancrer sur l'actif rare mint 37 500 000 000 parts", async function () {
-          // supply avant depot = 300 000 000 000 (cf. fixture)
-          // reserves avant depot = [1250e8, 1000e8, 800e8] (cf. fixture)
-          // mintedShares = supply * amount / reserves[2]
-          //              = 300 000 000 000 * 10 000 000 000 / 80 000 000 000
-          //              = 300 000 000 000 * 0,125
-          //              = 37 500 000 000
+        it("a _amount identique, ancrer sur l'actif rare (token0) mint 80 000 000 000 parts", async function () {
+          // totalSupply = 1 000 000 000 000 (fixe depuis l'amorcage, cf. test
+          // voisin)
+          // reserves avant depot = [1250e8, 4500e8, 3600e8] (cf. fixture)
+          // mintedShares = totalSupply * amount / reserves[0]
+          //              = 1 000 000 000 000 * 10 000 000 000 / 125 000 000 000
+          //              = 80 000 000 000
           const { pool, tokens, other } = await networkHelpers.loadFixture(deployImbalancedPoolFixture);
           const amount = 100n * 10n ** 8n;
-          // Ancrer sur le token rare (index 2) preleve plus que `amount` sur
-          // les deux autres tokens (voir le calcul du test suivant) : il faut
-          // donc plus de marge que pour l'ancre abondante.
-          await mintAndApprove(tokens, pool, other, amount * 2n);
+          const reservesBefore = await readReserves(pool);
+          // Ancrer sur le token rare (index 0) preleve beaucoup plus que
+          // `amount` sur les deux autres tokens (voir le calcul du test
+          // suivant) : il faut donc une marge par jambe, pas un montant flat.
+          await mintAndApproveForAnchoredDeposit(tokens, pool, other, 0n, amount, reservesBefore);
 
-          await pool.write.addLiquidity([2n, amount, 0n], { account: other.account });
+          await pool.write.addLiquidity([0n, amount, 0n], { account: other.account });
 
           const mintedShares = await pool.read.balanceOf([other.account.address]);
-          const expectedShares = 37_500_000_000n;
+          const expectedShares = 80_000_000_000n;
           assert.equal(
             mintedShares,
             expectedShares,
@@ -661,32 +749,33 @@ describe("Pool.addLiquidity", async function () {
         });
 
         it("a _amount identique, l'ancre rare preleve plus sur le troisieme token que l'ancre abondante", async function () {
-          // amount = 100e8, reserves = [1250e8, 1000e8, 800e8]
-          // ancre = token0 (abondant) : amounts[1] = amount * reserves[1] / reserves[0]
-          //                                        = 10e9 * 1000e8 / 1250e8 = 8 000 000 000
-          // ancre = token2 (rare)     : amounts[1] = amount * reserves[1] / reserves[2]
-          //                                        = 10e9 * 1000e8 / 800e8  = 12 500 000 000
+          // amount = 100e8, reserves = [1250e8, 4500e8, 3600e8]
+          // ancre = token1 (abondant) : amounts[2] = amount * reserves[2] / reserves[1]
+          //                                        = 10e9 * 3600e8 / 4500e8 = 8 000 000 000
+          // ancre = token0 (rare)     : amounts[2] = amount * reserves[2] / reserves[0]
+          //                                        = 10e9 * 3600e8 / 1250e8 = 28 800 000 000
           // On lit les soldes reels plutot que de reappliquer la formule.
           const amount = 100n * 10n ** 8n;
 
           const abundant = await networkHelpers.loadFixture(deployImbalancedPoolFixture);
           await mintAndApprove(abundant.tokens, abundant.pool, abundant.other, amount);
-          const token1BeforeAbundant = await abundant.tokens[1].read.balanceOf([abundant.other.account.address]);
-          await abundant.pool.write.addLiquidity([0n, amount, 0n], { account: abundant.other.account });
-          const token1AfterAbundant = await abundant.tokens[1].read.balanceOf([abundant.other.account.address]);
-          const pulledAbundant = token1BeforeAbundant - token1AfterAbundant;
+          const token2BeforeAbundant = await abundant.tokens[2].read.balanceOf([abundant.other.account.address]);
+          await abundant.pool.write.addLiquidity([1n, amount, 0n], { account: abundant.other.account });
+          const token2AfterAbundant = await abundant.tokens[2].read.balanceOf([abundant.other.account.address]);
+          const pulledAbundant = token2BeforeAbundant - token2AfterAbundant;
 
           // loadFixture restaure l'etat au snapshot (avant le depot ci-dessus)
           const rare = await networkHelpers.loadFixture(deployImbalancedPoolFixture);
-          await mintAndApprove(rare.tokens, rare.pool, rare.other, amount * 2n);
-          const token1BeforeRare = await rare.tokens[1].read.balanceOf([rare.other.account.address]);
-          await rare.pool.write.addLiquidity([2n, amount, 0n], { account: rare.other.account });
-          const token1AfterRare = await rare.tokens[1].read.balanceOf([rare.other.account.address]);
-          const pulledRare = token1BeforeRare - token1AfterRare;
+          const rareReservesBefore = await readReserves(rare.pool);
+          await mintAndApproveForAnchoredDeposit(rare.tokens, rare.pool, rare.other, 0n, amount, rareReservesBefore);
+          const token2BeforeRare = await rare.tokens[2].read.balanceOf([rare.other.account.address]);
+          await rare.pool.write.addLiquidity([0n, amount, 0n], { account: rare.other.account });
+          const token2AfterRare = await rare.tokens[2].read.balanceOf([rare.other.account.address]);
+          const pulledRare = token2BeforeRare - token2AfterRare;
 
           assert.ok(
             pulledRare > pulledAbundant,
-            `ancre rare devrait prelever plus sur token1 : rare=${pulledRare}, abondante=${pulledAbundant}`,
+            `ancre rare devrait prelever plus sur token2 : rare=${pulledRare}, abondante=${pulledAbundant}`,
           );
         });
       });
@@ -694,20 +783,20 @@ describe("Pool.addLiquidity", async function () {
       describe("3) Evenement avec des montants distincts", function () {
         it("l'evenement AddedLiquidity est emis avec des amountsIn distincts sur un pool desequilibre", async function () {
           // Memes valeurs que le test de parts hardcodees ci-dessus : ancre =
-          // token0 (abondant), amount = 100e8, reserves avant = [1250e8,
-          // 1000e8, 800e8], mintedShares = 24 000 000 000.
-          // amounts[0] = amount                                = 10 000 000 000
-          // amounts[1] = amount * reserves[1] / reserves[0]    =  8 000 000 000
-          // amounts[2] = amount * reserves[2] / reserves[0]    =  6 400 000 000
+          // token1 (abondant), amount = 100e8, reserves avant = [1250e8,
+          // 4500e8, 3600e8], mintedShares = 22 222 222 222.
+          // amounts[0] = amount * reserves[0] / reserves[1] = 2 777 777 777
+          // amounts[1] = amount                             = 10 000 000 000
+          // amounts[2] = amount * reserves[2] / reserves[1] =  8 000 000 000
           const { pool, tokens, other } = await networkHelpers.loadFixture(deployImbalancedPoolFixture);
           const amount = 100n * 10n ** 8n;
           await mintAndApprove(tokens, pool, other, amount);
 
           await viem.assertions.emitWithArgs(
-            pool.write.addLiquidity([0n, amount, 0n], { account: other.account }),
+            pool.write.addLiquidity([1n, amount, 0n], { account: other.account }),
             pool,
             "AddedLiquidity",
-            [other.account.address, [10_000_000_000n, 8_000_000_000n, 6_400_000_000n], 24_000_000_000n],
+            [other.account.address, [2_777_777_777n, 10_000_000_000n, 8_000_000_000n], 22_222_222_222n],
           );
         });
       });

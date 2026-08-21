@@ -113,6 +113,7 @@ Pool.swap
     C) Reverts
     D) Cas limites
     E) Pool desequilibre
+    F) Bandes par actif (plancher/plafond)
   III] Proprietes de conservation
     A) Aucune valeur creee ex nihilo
     B) Comptabilite LP intacte
@@ -133,37 +134,57 @@ Pool.pause
   III] Retour a l'etat normal apres unpause
 ```
 
+L'amorcage lui-meme change de forme depuis le 2026-08-21 : sur pool vide,
+`addLiquidity` ne depose plus `_amount` a egalite sur les trois reserves, il
+le reparti selon les poids cibles du pool (`targetOf`, `Pool.sol:101-109`,
+10/45/45 pour tBTC/cbBTC/lBTC), rapportes a l'ancre — `amounts[i] = _amount *
+targetOf(i) / targetOf(_anchorIndex)` (`Pool.sol:118-121`). Un premier depot
+ancre sur token0 donne donc des reserves `[A, 4,5A, 4,5A]`, jamais `[A, A, A]`,
+et `mintedShares` vaut la somme des trois moins `MINIMUM_LIQUIDITY`. Toute la
+suite `I]` (pool vide) est ecrite sur cette base.
+
 La section `II.D` merite un mot. Elle ne recalcule pas la formule interne du
-contrat (`_amount * reserves[i] / reserves[_anchorIndex]`, `Pool.sol:90`) en
-JavaScript pour la comparer au resultat on-chain : un test qui reimplemente la
-ligne qu'il teste ne prouve rien, il verifie que le code fait ce que le code
-fait. La sous-section `1)` verifie a la place des proprietes qui se deduisent
-de ce que doit etre un AMM, independamment de l'implementation : un depot ne
-change pas la composition du pool (le rapport entre deux reserves est
-identique avant et apres, verifie en comparant directement les reserves
-attendues — chaque reserve doit croitre de la meme fraction que le depot
-represente sur son ancre — a celles lues on-chain), et les parts emises sont
-proportionnelles a la fraction du pool apportee. Cette propriete de
-composition est testee une fois par ancre (trois `it` distincts, une fonction
-d'aide nommee factorise le scenario) : chaque ancre est une transaction
-differente, donc un comportement a verifier separement, une seule assertion
-par test. La sous-section `2)` documente, avec des montants poses en dur et un
-calcul a la main en commentaire, la consequence observable du choix de
-l'ancre : a montant nominal identique, ancrer sur l'actif rare mint plus de
-parts et preleve plus sur les autres tokens qu'ancrer sur l'actif abondant. La
-sous-section `3)` verifie que l'evenement `AddedLiquidity` porte bien trois
-`amountsIn` distincts sur un pool desequilibre (la verification sur pool vide,
-en `I.A`, ne peut montrer que trois montants triviaux et egaux).
+contrat sur pool amorce (`_amount * reserves[i] / reserves[_anchorIndex]`,
+`Pool.sol:139`) en JavaScript pour la comparer au resultat on-chain : un test
+qui reimplemente la ligne qu'il teste ne prouve rien, il verifie que le code
+fait ce que le code fait. La sous-section `1)` verifie a la place des
+proprietes qui se deduisent de ce que doit etre un AMM, independamment de
+l'implementation : un depot ne change pas la composition du pool (le rapport
+entre deux reserves est identique avant et apres, verifie en comparant
+directement les reserves attendues — chaque reserve doit croitre de la meme
+fraction que le depot represente sur son ancre — a celles lues on-chain), et
+les parts emises sont proportionnelles a la fraction du pool apportee. Cette
+propriete de composition est testee une fois par ancre (trois `it` distincts,
+une fonction d'aide nommee factorise le scenario) : chaque ancre est une
+transaction differente, donc un comportement a verifier separement, une seule
+assertion par test. La sous-section `2)` documente, avec des montants poses en
+dur et un calcul a la main en commentaire, la consequence observable du choix
+de l'ancre : a montant nominal identique, ancrer sur l'actif le plus rare mint
+plus de parts et preleve plus sur les autres tokens qu'ancrer sur l'actif le
+plus abondant. Sur la fixture desequilibree de ce fichier (un swap prealable
+depuis token0 a fait grossir token0 et maigrir token2), c'est token1 (cbBTC)
+qui se retrouve le plus abondant et token0 (tBTC) le plus rare — l'inverse de
+leurs poids cibles au depart, consequence du sens du swap, pas une regle
+generale sur l'identite des tokens. La sous-section `3)` verifie que
+l'evenement `AddedLiquidity` porte bien trois `amountsIn` distincts sur ce
+pool desequilibre (la verification sur pool vide, en `I.A`, montre deja des
+montants distincts entre l'ancre et les deux autres jambes, mais jamais trois
+valeurs mutuellement distinctes, cbBTC et lBTC partageant le meme poids
+cible).
 
 Un seul test fait exception a la regle "une assertion par `it`" au sens strict
-du decompte de lignes `assert` : "sur un pool equilibre, le resultat est
-identique quel que soit `_anchorIndex`" (`II.A`) execute trois depots (un par
-ancre) et conclut par une unique assertion sur leur egalite. La claim testee
-("identique quel que soit l'ancre") est intrinsequement comparative et ne se
-decompose pas en trois tests independants sans perdre ce qu'elle affirme : un
-`it` isole par ancre prouverait une valeur, jamais une egalite entre plusieurs
-valeurs. C'est different du cas de composition ci-dessus, ou chaque ancre est
-une transaction et un comportement distincts.
+du decompte de lignes `assert` : "mintedShares est identique pour cbBTC et
+lBTC" (`II.A`) execute deux depots (un par ancre) et conclut par une unique
+assertion sur leur egalite. Cette propriete a change de nature avec
+l'amorcage pondere : sur un pool fraichement amorce, les reserves ne sont
+plus egales entre elles (`[1e10, 4,5e10, 4,5e10]`), donc `mintedShares` n'est
+plus identique quel que soit l'ancre — seule la paire cbBTC/lBTC, qui partage
+le meme poids cible (45), continue de donner le meme resultat. La claim
+testee reste intrinsequement comparative et ne se decompose pas en tests
+independants sans perdre ce qu'elle affirme : un `it` isole par ancre
+prouverait une valeur, jamais une egalite entre deux valeurs. C'est different
+du cas de composition ci-dessus, ou chaque ancre est une transaction et un
+comportement distincts.
 
 La section `II.C` de `Pool.removeLiquidity.test.ts` merite le meme genre de
 mot que `II.D` d'`addLiquidity`. Sa sous-section `2)` (arrondi entier) fixe un
@@ -176,8 +197,9 @@ calcul en commentaire, plutot que par un recalcul de la formule interne — le
 recalcul ne prouverait que la coherence du code avec lui-meme. Sa sous-section
 `3)` va plus loin : un retrait de la totalite du solde "libre" d'un
 deposant (tout sauf les parts perdues sur l'adresse morte) laisse un residu
-non nul dans chaque reserve (`334` unites, calcul a la main en commentaire).
-C'est la meme protection anti-inflation que `MINIMUM_LIQUIDITY` en amorcage,
+non nul dans chaque reserve (`100` unites sur token0, `450` sur token1 et
+token2 — proportionnel aux poids cibles de l'amorcage, calcul a la main en
+commentaire). C'est la meme protection anti-inflation que `MINIMUM_LIQUIDITY` en amorcage,
 mais observee de l'autre cote : le pool ne peut structurellement pas se vider
 sous le seuil que sa premiere part brulee garantit. Sa sous-section `4)`
 verifie que la fonction se comporte de la meme facon au deuxieme passage
@@ -194,11 +216,11 @@ plus qu'on a depose), sur les trois tokens independamment via une fonction
 d'aide nommee, dans le meme esprit que `assertCompositionPreservedWhenAnchoredOn`
 d'`addLiquidity`. `III.B` verifie la contrepartie economique du modele a
 frais : un tiers qui fait un aller-retour de swaps laisse une partie de son
-montant en frais dans les reserves (`Pool.sol:121-122`), et l'unique LP du
+montant en frais dans les reserves (`Pool.sol:170,191`), et l'unique LP du
 pool en profite au retrait, en recuperant strictement plus que son depot
 initial.
 
-`Pool.swap.test.ts` appelle quatre remarques.
+`Pool.swap.test.ts` appelle cinq remarques.
 
 La section `I` teste les deux gardes ajoutees le 2026-08-15, et l'une des deux
 n'est pas testable. `ZeroOutput` l'est : sur un pool vierge, la reserve de
@@ -218,10 +240,14 @@ forger l'etat par `vm.store`. C'est le meme genre de branche que le
 l'exterieur.
 
 La section `II.B` balaie les six paires `(indexIn, indexOut)` distinctes, une
-par `it`. Sur un pool equilibre elles rendent toutes le meme montant, ce qui
-pourrait tenir en une boucle et une assertion ; chacune est pourtant une
-transaction differente au niveau de l'ABI, donc un comportement a verifier
-separement, dans l'esprit du "une ancre = un `it`" d'`addLiquidity`.
+par `it`. Depuis l'amorcage pondere, elles ne rendent plus toutes le meme
+montant sur `deploySeededPoolFixture` (reserves `[1e10, 4,5e10, 4,5e10]`) :
+seule la symetrie cbBTC/lBTC (meme poids cible) survit, d'ou trois constantes
+`SWAP_AMOUNT_OUT_*` plutot qu'une seule, chacune calculee a la main. Chaque
+paire reste neanmoins testee individuellement, et non via une boucle
+englobee dans un `it` : chacune est une transaction differente au niveau de
+l'ABI, donc un comportement a verifier separement, dans l'esprit du "une
+ancre = un `it`" d'`addLiquidity`.
 
 La section `II.D` documente un choix de conception assume : `_indexIn ==
 _indexOut` n'est PAS garde. L'appel reussit, le swapper paie `_amount` et
@@ -233,8 +259,18 @@ exactement de ce que l'appelant perd. C'est le seul des trois cas degeneres de
 autres faisaient perdre de l'argent a un integrateur qui ne pouvait pas savoir,
 celui-ci ne fait perdre de l'argent qu'a qui le demande explicitement.
 
-Enfin, un seul test de la suite a besoin de DEUX pools vivants en meme temps,
-la comparaison `feeNum = 0` contre `feeNum = 5` (le `feeNum` est fixe a la
+Toujours en `II.D`, un cas a change de nature le 2026-08-21 : l'ancien
+"`amountOut` reste strictement sous `reserves[_indexOut]`, meme sur une entree
+tres superieure aux reserves" attendait `amountOut < reserveOut` sur une
+entree de `1e12`. La propriete elle-meme tient toujours de la seule formule du
+produit constant, mais elle n'est plus atteignable par l'ABI : la boucle de
+bandes (`Pool.sol:182-187`) revert desormais bien avant, avec `CeilingTouched`
+sur la jambe entrante (`95,69%` de la somme, plafond `25%`). Le test verifie
+maintenant ce revert, avec un commentaire qui explique le changement plutot
+que de faire disparaitre la trace de l'ancienne propriete.
+
+Un seul test de la suite a besoin de DEUX pools vivants en meme temps, la
+comparaison `feeNum = 0` contre `feeNum = 5` (le `feeNum` est fixe a la
 construction, et `setFee` est `onlyOwner` avec un delai d'un jour). Les deux
 `loadFixture` y sont appeles avant toute ecriture, et ce n'est pas cosmetique :
 `loadFixture` restaure un instantane de la chaine, ce qui detruit tout ce qui a
@@ -242,9 +278,31 @@ ete deploye apres sa prise. Charger la seconde fixture apres avoir mint sur la
 premiere effacerait ce mint, et charger la plus ancienne des deux en second
 effacerait les contrats de l'autre. Corollaire utilise ailleurs dans le
 fichier : deux `loadFixture` de la MEME fixture ne donnent jamais deux pools
-independants, seulement deux fois le meme, donc la comparaison "actif rare
-contre actif abondant" se fait par deux `simulate` (qui n'ecrivent rien) sur un
-unique pool.
+independants, seulement deux fois le meme, donc la comparaison "le plus rare
+contre l'intermediaire" (`II.E`) se fait par deux `simulate` (qui n'ecrivent
+rien) sur un unique pool. Ces memes labels ont change avec le swap prealable
+de `deployImbalancedPoolFixture` : c'est token1 (cbBTC) qui devient le plus
+abondant et token0 (tBTC) le plus rare (voir la remarque equivalente sur
+`Pool.addLiquidity.test.ts` plus haut) ; depuis token1, les deux destinations
+possibles sont donc token0 (le plus rare) et token2 (l'intermediaire).
+
+Enfin, la section `II.F` couvre la boucle de bandes ajoutee le 2026-08-21,
+apres le calcul d'`amountOut` et ses gardes existantes, avant `BadSlippage`
+(`Pool.sol:182-187`) : pour chacun des trois indices, l'etat d'arrivee du pool
+doit rester strictement entre `floorOf(i)`% et `ceilingOf(i)`% de la somme des
+trois reserves. Trois cas sont testes, sur `deployImbalancedPoolFixture` :
+un swap qui pousse la jambe ENTRANTE au-dessus de son plafond
+(`CeilingTouched`), un swap qui pousse la jambe SORTANTE sous son plancher
+(`FloorTouched`), et un swap nominal qui laisse les trois jambes dans leurs
+bandes. Le quatrieme cas est le plus important des quatre, puisqu'il justifie
+a lui seul que la boucle parcoure les TROIS indices et pas seulement
+`_indexIn`/`_indexOut` : un swap qui dilue la jambe NON impliquee hors de sa
+bande, alors que les deux jambes actives restent chacune dans la leur. Il
+demande une preparation, deux swaps `1 -> 0` qui garent token0 pres de son
+plancher sans faire sortir personne de sa bande, avant qu'un `1 -> 2` ne le
+fasse tomber dessous par le seul jeu du denominateur. Une seule preparation
+ne suffit pas : la dilution requise ferait alors franchir a token1 son propre
+plafond en premier.
 
 `Pool.pause.test.ts` appelle trois remarques.
 
@@ -324,16 +382,25 @@ message, est ce qui rend le test fiable.
 
 ### `addLiquidity` — pool vide
 
-- depot minimal : `3 * _amount < MINIMUM_LIQUIDITY` sous-flow en panic
-  arithmetique (`0x11`), pas une erreur nommee
-- `_amount > type(uint72).max` : `ReserveOverflow`
+- amorcage pondere : `addLiquidity` reparti `_amount` selon les poids cibles
+  du pool (`targetOf`, 10/45/45 pour tBTC/cbBTC/lBTC), rapportes a l'ancre,
+  plutot que de deposer `_amount` a egalite sur les trois reserves
+- depot minimal : la somme des trois jambes ponderees `< MINIMUM_LIQUIDITY`
+  sous-flow en panic arithmetique (`0x11`), pas une erreur nommee
+- `_amount > type(uint72).max` : `ReserveOverflow`, verifiee jambe par jambe
+  DANS la boucle qui calcule `amounts` (`Pool.sol:118-121`)
 - `_minShares` strictement superieur aux parts mintees : `BadSlippage`
 - `_minShares` exactement egal aux parts mintees : accepte, pas de revert
 - ordre des gardes : un appel a la fois trop grand (`> uint72.max`) et trop
-  exigeant en `_minShares` echoue par `BadSlippage`, jamais `ReserveOverflow`
-  (le garde de slippage est verifie en premier, `Pool.sol:76-77`)
-- `_anchorIndex` hors bornes sur un pool vide : reussit sans revert, la
-  branche `supply == 0` ne lit jamais l'ancre
+  exigeant en `_minShares` echoue par `ReserveOverflow`, jamais `BadSlippage`
+  — ordre INVERSE de la branche pool amorce, ci-dessous, parce que
+  `ReserveOverflow` vit desormais dans la boucle par jambe, avant que
+  `mintedShares` n'existe meme
+- `_anchorIndex` hors bornes (99) sur un pool vide : panic `0x12` (division
+  par zero). Changement de comportement notable : l'ancre est desormais LUE
+  meme sur la branche d'amorcage (`targetOf(_anchorIndex)` au denominateur,
+  `Pool.sol:119`) ; pour un indice hors 0/1/2, `targetOf` renvoie 0 (defaut
+  Solidity), d'ou la division par zero
 
 ### `addLiquidity` — pool amorce
 
@@ -343,17 +410,17 @@ message, est ce qui rend le test fiable.
 - `_amount == 0` : `ZeroOutput`. Jusqu'au 2026-08-15 c'etait une transaction
   sans effet (aucune part mintee, aucun transfert) qui emettait quand meme un
   `AddedLiquidity` fantome, et quatre cas limites le documentaient ici. La
-  garde `mintedShares > 0` (`Pool.sol:89`) les remplace par un unique revert,
+  garde `mintedShares > 0` (`Pool.sol:135`) les remplace par un unique revert,
   et le cas a change de section : ce n'est plus une limite toleree, c'est un
   refus. La garde ne vit que dans la branche `supply != 0` ; sur la branche
-  d'amorcage `3 * _amount - MINIMUM_LIQUIDITY` ne peut pas valoir zero, un
-  `require` y serait du code mort
+  d'amorcage la somme des jambes ponderees moins `MINIMUM_LIQUIDITY` ne peut
+  pas valoir zero, un `require` y serait du code mort
 - `_anchorIndex` hors bornes sur un pool amorce : panic `0x32`, acces hors
-  bornes d'un tableau memoire (a la difference du pool vide, l'ancre est lue
-  des la premiere ligne de la branche)
+  bornes d'un tableau memoire (a la difference du pool vide, ou le meme index
+  hors bornes panique par division par zero, pas par acces hors bornes)
 - pool desequilibre par un `swap` prealable : composition preservee et parts
   proportionnelles quel que soit l'anchorIndex ; consequence chiffree du
-  choix de l'ancre (rare vs abondant)
+  choix de l'ancre (le plus rare des trois vs le plus abondant)
 
 ### `removeLiquidity`
 
@@ -374,11 +441,11 @@ message, est ce qui rend le test fiable.
 - ordre des gardes : un retrait a la fois trop grand (`> solde LP`) et trop
   exigeant en `_minOut` echoue par `BadSlippage`, jamais
   `ERC20InsufficientBalance` (la boucle de slippage s'execute avant le
-  `_burn`, `Pool.sol:106-111`)
+  `_burn`, `Pool.sol:155-160`)
 - `_burnedShares` superieur au `totalSupply()` lui-meme (pas seulement au
   solde du retirant) : panic arithmetique (`0x11`), pas
-  `ERC20InsufficientBalance` — le decrement des reserves (`Pool.sol:106-110`)
-  sous-flow avant que le `_burn` (`Pool.sol:111`) n'ait la moindre chance de
+  `ERC20InsufficientBalance` — le decrement des reserves (`Pool.sol:155-159`)
+  sous-flow avant que le `_burn` (`Pool.sol:160`) n'ait la moindre chance de
   s'executer
 
 **Cas limites**
@@ -444,10 +511,11 @@ message, est ce qui rend le test fiable.
 - ordre des gardes, deux cas : un montant poussiere avec un `_minOut`
   inatteignable echoue par `ZeroOutput`, et un montant qui deborde `uint72`
   avec le meme `_minOut` echoue par `ReserveOverflow` — jamais `BadSlippage`,
-  qui est verifie en dernier (`Pool.sol:127-131`). C'est l'ordre inverse
-  d'`addLiquidity`, ou le slippage passe en premier pour ne pas lancer la
-  boucle de rebalancement pour rien ; dans `swap` il n'y a pas de boucle a
-  economiser, l'ordre suit donc l'information rendue a l'appelant
+  qui est verifie en dernier, apres la boucle de bandes (`Pool.sol:173-189`).
+  C'est l'ordre inverse d'`addLiquidity`, ou le slippage passe en premier
+  pour ne pas lancer la boucle de rebalancement pour rien ; dans `swap` il
+  n'y a pas de boucle a economiser, l'ordre suit donc l'information rendue a
+  l'appelant
 
 **Cas limites**
 
@@ -455,13 +523,34 @@ message, est ce qui rend le test fiable.
 - `_indexIn == _indexOut` : accepte, deliberement non garde (voir plus haut)
 - a entree identique, un pool a `feeNum = 0` rend strictement plus qu'un pool
   a `feeNum = 5`
-- `amountOut` reste strictement sous `reserves[_indexOut]` meme sur une entree
-  cent fois superieure aux reserves : un swap ne peut pas vider le pool
+- une entree tres superieure aux reserves (`1e12` sur des reserves de
+  quelques `1e10`) echoue desormais par `CeilingTouched` sur la jambe
+  entrante — voir la remarque dediee plus haut sur ce changement de nature
 - impact de prix : deux swaps identiques successifs, le second rend
   strictement moins que le premier
-- pool desequilibre : acheter l'actif rare rend strictement moins qu'acheter
-  l'actif abondant, a entree identique (montants poses en dur, calcul a la
-  main) ; l'evenement `Swapped` porte bien ces montants
+
+**Pool desequilibre**
+
+- depuis token1 (le plus abondant apres le swap prealable de la fixture),
+  acheter le plus rare des deux autres (token0) rend strictement moins
+  qu'acheter l'intermediaire (token2), a entree identique (montants poses en
+  dur, calcul a la main) ; l'evenement `Swapped` porte bien ces montants
+
+**Bandes par actif (plancher/plafond)**
+
+- un swap qui pousse la jambe ENTRANTE au-dessus de son plafond :
+  `CeilingTouched`, sur l'indice de cette jambe
+- un swap qui pousse la jambe SORTANTE sous son plancher : `FloorTouched`,
+  sur l'indice de cette jambe (le test choisit un etat ou une deuxieme jambe
+  est egalement hors bande, pour illustrer que la boucle s'arrete au premier
+  indice en defaut, `i = 0` ici, jamais aux suivants)
+- un swap nominal (10% de la fixture desequilibree) laisse les trois jambes
+  dans leurs bandes : cas de non-regression, aucune des deux gardes
+  ci-dessus ne doit se declencher sur un usage ordinaire
+- un swap qui dilue UNIQUEMENT la jambe non impliquee hors de sa bande, les
+  deux jambes actives restant chacune dans la leur : deux swaps `1 -> 0` de
+  preparation, puis un `1 -> 2` de 75e8 qui fait tomber token0 a 4,994% sans
+  qu'aucune de ses propres reserves ne bouge — `FloorTouched(0)`
 
 **Proprietes de conservation**
 
@@ -530,7 +619,7 @@ est impossible.
   des sequences est le bon outil pour l'atteindre, pas un scenario ecrit a la
   main.
 - **Le test de la garde `InsufficientReserve` de `swap`** (la garde, elle, est
-  en place dans `Pool.sol:128`). Elle n'est atteignable que sur
+  en place dans `Pool.sol:174`). Elle n'est atteignable que sur
   un etat que l'ABI ne permet plus de construire (reserve d'entree nulle,
   reserve de sortie garnie). Un test Solidity peut forger cet etat par
   `vm.store` sur le slot des reserves, et c'est le seul endroit ou cette
@@ -544,9 +633,9 @@ est impossible.
 Un point supplementaire, propre a `removeLiquidity`, est explicitement laisse
 **hors** de toute couche de test, Solidity comme TypeScript : l'atomicite de
 la transaction quand le `_burn` echoue apres que la boucle de decrement des
-reserves (`Pool.sol:106-110`) a deja tourne. La question est reelle : ce
+reserves (`Pool.sol:155-159`) a deja tourne. La question est reelle : ce
 decrement a bel et bien lieu, dans l'etat transitoire de la transaction,
-avant l'echec eventuel du `_burn` (`Pool.sol:111`) ; ce qui l'annule ensuite
+avant l'echec eventuel du `_burn` (`Pool.sol:160`) ; ce qui l'annule ensuite
 n'est pas une garde de `Pool.sol` mais le revert de l'EVM lui-meme, qui
 efface tout l'etat modifie durant la transaction des qu'un appel echoue.
 Repondre "cette transaction reste bien atomique" est donc verifier l'EVM,
