@@ -599,36 +599,83 @@ message, est ce qui rend le test fiable.
 - apres `unpause()`, `addLiquidity` et `swap` repassent et rendent les memes
   montants qu'avant la pause : la pause ne laisse aucune trace dans l'etat
 
-## A venir (couche Solidity)
+## Couche Solidity fuzz + invariants
 
-Trois TESTS sont volontairement renvoyes a la couche fuzz + invariants,
-inatteignables ou peu pertinents en scenario scripte. Il s'agit bien de tests
-manquants, jamais de code de contrat manquant : les gardes citees ci-dessous
-sont ecrites, compilees et deployees, c'est leur EXERCICE depuis TypeScript qui
-est impossible.
+L'etat livre a la fin de l'item 6 du plan, dans `Pool.invariant.t.sol`. Les
+trois ajouts ajoutes a la couche existante (deux Foundry invariants deja
+ecrits) sont :
 
-- **`mintedShares` qui tombe a 0 par arrondi entier.** Sur un pool fortement
-  desequilibre par l'accumulation de frais sur le tres long terme, la
-  division entiere `supply * _amount / reserves[_anchorIndex]` peut s'arrondir
-  a 0 pour un petit depot non nul. Depuis la garde `ZeroOutput`, l'enjeu n'est
-  plus "le deposant paie pour rien" mais "le depot est bien refuse" : ce que
-  le fuzzer doit prouver, c'est qu'aucune sequence d'operations n'atteint le
-  `_mint` avec `mintedShares == 0`. L'etat degenere suppose des centaines de
-  swaps successifs pour deriver les reserves jusqu'a ce que
-  `reserves[_anchorIndex]` depasse `totalSupply()` : un fuzzer qui enchaine
-  des sequences est le bon outil pour l'atteindre, pas un scenario ecrit a la
-  main.
-- **Le test de la garde `InsufficientReserve` de `swap`** (la garde, elle, est
-  en place dans `Pool.sol:174`). Elle n'est atteignable que sur
-  un etat que l'ABI ne permet plus de construire (reserve d'entree nulle,
-  reserve de sortie garnie). Un test Solidity peut forger cet etat par
-  `vm.store` sur le slot des reserves, et c'est le seul endroit ou cette
-  branche s'execute : simple commentaire cote TypeScript, en attendant.
-- **Les invariants de conservation des reserves.** Que la somme des
-  transferts entrants/sortants sur `addLiquidity`, `removeLiquidity` et
-  `swap` corresponde toujours exactement aux deltas de `reserves`, sur des
-  sequences arbitraires d'operations. C'est la definition meme d'un test
-  d'invariant Foundry, pas d'un test fonctionnel isole.
+- **`k` ne decroit jamais sur un swap.** Mesure par paire, `k = reserves[in] *
+  reserves[out]`, snapshot avant l'appel, recalcule apres, assertion dans
+  `swapWrapper`. La forme par appel est plus stricte qu'un invariant Foundry
+  (qui ne verifie qu'apres chaque sequence) : elle attrape toute baisse
+  individuelle de `k`, pas seulement la baisse nette en fin de run. Egalite
+  possible quand `amountAfterFee` troncature a zero, mais `ZeroOutput` l'a
+  deja rejete a ce stade.
+- **`mintedShares > 0` sur tout `addLiquidity` reussi.** Assertion sur la
+  valeur de retour dans `addLiquidityWrapper`. La garde `ZeroOutput` dans la
+  branche `supply != 0` de `Pool.addLiquidity` rend la condition inatteignable
+  par l'ABI ; le fuzzer Foundry, en enchainant swaps et depots, doit
+  confirmer qu'aucune sequence n'atteint le `_mint` avec un nombre nul. Les
+  sequences qui font varier `reserves[_anchorIndex]` par rapport a
+  `totalSupply()` sont l'outil naturel, pas un scenario ecrit a la main.
+- **Branche `InsufficientReserve` joignable par forge d'etat.**
+  `test_InsufficientReserveReachedViaForgedState` : amorce par
+  `handler.addLiquidityWrapper`, `vm.store` sur le slot des reserves (decouvert
+  par lecture du getter public + balayage, pas code en dur) pour mettre
+  `reserves[0]` a zero, puis `pool.swap(0, 1000, 1, 0)` doit revert avec
+  `Pool.InsufficientReserve.selector`. Le `require` au debut du test echoue
+  proprement si l'ecriture n'a pas touche le bon slot, ce qui detecte un
+  deplacement de layout en OZ sans laisser la regression silencieuse.
+
+Les deux invariants Foundry deja presents restent en place :
+`invariant_reservesNeverExceedBalances` (le solde du pool couvre toujours ses
+reserves) et `invariant_shareValueNeverDecreases` (la valeur unitaire des parts
+ne baisse jamais), ce dernier etant plus fort que l'invariant `k` pour le pool
+a produit constant : frais et skew cumulatif font toujours monter la valeur
+unitaire, donc la baisse de `k` qu'on cherche a empecher est elle-meme
+empechee par la monoticite de la valeur de part. Garder les deux pour la
+clarte, pas la redondance.
+
+## Differe (couche Solidity)
+
+Deux invariants du plan item 6 restent en attente, chacun avec son blocker
+ecrit :
+
+- **Chaque jambe reste dans sa bande.** Le `require` existe en commentaire
+  dans `Pool.sol:182-187`, les `floorOf`/`ceilingOf` aussi
+  (`Pool.sol:81-109`). L'item 4 bis du plan (cibles 33/33/33 et six bandes
+  redessinees autour) n'est pas livre, donc ecrire l'invariant aujourd'hui
+  revient a le tester contre du code mort. A rouvrir quand `swap` embarque
+  la boucle de bandes effective.
+- **Le pot MRN de l'encheresse couvre refunds + pending + high bid.**
+  L'enchere elle-meme n'existe pas (`Auction.sol` non ecrit, item 8a-c du
+  plan non livre). La forme finale depend de la regle de confiscation du
+  cautionnement et du flot de streaming sous 8c, donc l'invariant ne peut
+  pas etre ecrit avant l'enchere, et l'ecrire en anticipation le ferait
+  ecrire deux fois.
+
+## Hors perimetre (atomcite EVM)
+
+Un point supplementaire, propre a `removeLiquidity`, est explicitement laisse
+**hors** de toute couche de test, Solidity comme TypeScript : l'atomicite de
+la transaction quand le `_burn` echoue apres que la boucle de decrement des
+reserves (`Pool.sol:155-159`) a deja tourne. La question est reelle : ce
+decrement a bel et bien lieu, dans l'etat transitoire de la transaction,
+avant l'echec eventuel du `_burn` (`Pool.sol:160`) ; ce qui l'annule ensuite
+n'est pas une garde de `Pool.sol` mais le revert de l'EVM lui-meme, qui
+efface tout l'etat modifie durant la transaction des qu'un appel echoue.
+Repondre "cette transaction reste bien atomique" est donc verifier l'EVM,
+pas le contrat, ce qui met la question hors perimetre d'un test fonctionnel
+sur `Pool.sol`. Le point ci-dessus (`II.B`, `_burnedShares` superieur au
+`totalSupply()`) rend d'ailleurs ce paragraphe plus interessant qu'il n'y
+parait : c'est justement le seul cas ou ce decrement est effectivement
+fautif (`reserves[i] -= uint72(amountsOut[i])` avec `amountsOut[i] >
+reserves[i]`), et il echoue de lui-meme, par sous-flow arithmetique, sans
+jamais atteindre le `_burn` : c'est la verification integree de Solidity 0.8
+qui l'arrete sur place, a l'endroit meme de la faute, plutot qu'une erreur
+levee plus loin dans la fonction et qui compterait sur le revert pour
+rattraper un etat deja fausse.
 
 Un point supplementaire, propre a `removeLiquidity`, est explicitement laisse
 **hors** de toute couche de test, Solidity comme TypeScript : l'atomicite de

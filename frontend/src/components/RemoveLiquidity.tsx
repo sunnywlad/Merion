@@ -137,7 +137,7 @@ const RemoveLiquidity = () => {
       {error && <p>{error}</p>}
       {minDisplay &&
         <div>
-          <p>Nombre minimal de tokens reçus : {minDisplay[0]} tBTC, {minDisplay[1]} cbBTC, {minDisplay[2]} LBTC</p>
+          <p>Nombre minimal de tokens reçus : {minDisplay[0]} wBTC, {minDisplay[1]} cbBTC, {minDisplay[2]} LBTC</p>
         </div>
       }
     </Panel>

@@ -7,27 +7,27 @@ import {Test} from "forge-std/Test.sol";
 
 contract PoolTest is Test {
 
-  MockWrappedBTC public tbtc;
+  MockWrappedBTC public wbtc;
   MockWrappedBTC public cbbtc;
   MockWrappedBTC public lbtc;
   Pool public pool;
 
   function setUp() public {
-    tbtc = new MockWrappedBTC("Threshold BTC", "tBTC");
+    wbtc = new MockWrappedBTC("Wrapped BTC", "wBTC");
     cbbtc = new MockWrappedBTC("Coinbase BTC", "cbBTC");
     lbtc = new MockWrappedBTC("Lombard BTC", "lBTC");
 
-    address[3] memory tokens = [address(tbtc), address(cbbtc), address(lbtc)];
+    address[3] memory tokens = [address(wbtc), address(cbbtc), address(lbtc)];
     uint256 feeNum = 5;
     address feeSetter = address(this);
 
     pool = new Pool(tokens, feeNum, feeSetter);
 
-    tbtc.mint(address(this), 1000 * 10 ** 8);
+    wbtc.mint(address(this), 1000 * 10 ** 8);
     cbbtc.mint(address(this), 1000 * 10 ** 8);
     lbtc.mint(address(this), 1000 * 10 ** 8);
 
-    tbtc.approve(address(pool), 1000 * 10 ** 8);
+    wbtc.approve(address(pool), 1000 * 10 ** 8);
     cbbtc.approve(address(pool), 1000 * 10 ** 8);
     lbtc.approve(address(pool), 1000 * 10 ** 8);
   }

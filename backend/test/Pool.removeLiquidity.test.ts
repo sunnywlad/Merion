@@ -54,18 +54,18 @@ const PANIC_DIVISION_BY_ZERO = 18n; // 0x12
 async function deployTokensAndPool(feeNum: bigint) {
   const [deployer, depositor, other] = await viem.getWalletClients();
 
-  const tbtc = await viem.deployContract("MockWrappedBTC", ["Threshold BTC", "tBTC"]);
+  const wbtc = await viem.deployContract("MockWrappedBTC", ["Wrapped BTC", "wBTC"]);
   const cbbtc = await viem.deployContract("MockWrappedBTC", ["Coinbase BTC", "cbBTC"]);
   const lbtc = await viem.deployContract("MockWrappedBTC", ["Lombard BTC", "lBTC"]);
-  const tokens = [tbtc, cbbtc, lbtc] as const;
+  const tokens = [wbtc, cbbtc, lbtc] as const;
 
   const pool = await viem.deployContract("Pool", [
-    [tbtc.address, cbbtc.address, lbtc.address],
+    [wbtc.address, cbbtc.address, lbtc.address],
     feeNum,
     deployer.account.address,
   ]);
 
-  return { deployer, depositor, other, tbtc, cbbtc, lbtc, tokens, pool };
+  return { deployer, depositor, other, wbtc, cbbtc, lbtc, tokens, pool };
 }
 
 async function deployTokensAndPoolFixture() {
@@ -898,7 +898,7 @@ describe("Pool.removeLiquidity", async function () {
     describe("B) Les frais reviennent aux LP", function () {
       it("apres un aller-retour de swaps d'un tiers, le depositor retire plus que son depot initial", async function () {
         // En v1 les trois BTC enveloppes sont traites 1:1 (aucune conversion
-        // de prix entre tBTC/cbBTC/lBTC dans le contrat) : c'est une
+        // de prix entre wBTC/cbBTC/lBTC dans le contrat) : c'est une
         // hypothese assumee du projet, qui rend la somme des trois montants
         // comparable a un total de BTC, et donc comparable au total depose.
         const { pool, tokens, depositor, other } = await networkHelpers.loadFixture(deploySeededPoolFixture);

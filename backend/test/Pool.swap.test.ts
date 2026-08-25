@@ -48,18 +48,18 @@ const PANIC_ARRAY_OUT_OF_BOUNDS_ACCESS = 50n; // 0x32
 async function deployTokensAndPool(feeNum: bigint) {
   const [deployer, depositor, other] = await viem.getWalletClients();
 
-  const tbtc = await viem.deployContract("MockWrappedBTC", ["Threshold BTC", "tBTC"]);
+  const wbtc = await viem.deployContract("MockWrappedBTC", ["Wrapped BTC", "wBTC"]);
   const cbbtc = await viem.deployContract("MockWrappedBTC", ["Coinbase BTC", "cbBTC"]);
   const lbtc = await viem.deployContract("MockWrappedBTC", ["Lombard BTC", "lBTC"]);
-  const tokens = [tbtc, cbbtc, lbtc] as const;
+  const tokens = [wbtc, cbbtc, lbtc] as const;
 
   const pool = await viem.deployContract("Pool", [
-    [tbtc.address, cbbtc.address, lbtc.address],
+    [wbtc.address, cbbtc.address, lbtc.address],
     feeNum,
     deployer.account.address,
   ]);
 
-  return { deployer, depositor, other, tbtc, cbbtc, lbtc, tokens, pool };
+  return { deployer, depositor, other, wbtc, cbbtc, lbtc, tokens, pool };
 }
 
 async function deployTokensAndPoolFixture() {
@@ -219,8 +219,8 @@ const NOMINAL_SWAP_AMOUNT_OUT = 4_072_305_593n;
 //     amountOut = 995 000 000 * 4,5e10 / (995 000 000 + 4,5e10)
 //               = 44 775 000 000 000 000 000 / 45 995 000 000
 //               = 973 475 377 (tronque)
-const SWAP_AMOUNT_OUT_FROM_TBTC = 4_072_305_593n;
-const SWAP_AMOUNT_OUT_TO_TBTC = 216_327_861n;
+const SWAP_AMOUNT_OUT_FROM_WBTC = 4_072_305_593n;
+const SWAP_AMOUNT_OUT_TO_WBTC = 216_327_861n;
 const SWAP_AMOUNT_OUT_BETWEEN_CBBTC_LBTC = 973_475_377n;
 
 // Fixture dediee au pool desequilibre (section II.E). feeNum = 0, par choix
@@ -532,15 +532,15 @@ describe("Pool.swap", async function () {
       // comportement a verifier separement, avec sa propre fixture fraiche
       // et sa propre assertion.
       it("0 -> 1", async function () {
-        await assertSwapYieldsExpectedDeltas(0, 1, SWAP_AMOUNT_OUT_FROM_TBTC);
+        await assertSwapYieldsExpectedDeltas(0, 1, SWAP_AMOUNT_OUT_FROM_WBTC);
       });
 
       it("0 -> 2", async function () {
-        await assertSwapYieldsExpectedDeltas(0, 2, SWAP_AMOUNT_OUT_FROM_TBTC);
+        await assertSwapYieldsExpectedDeltas(0, 2, SWAP_AMOUNT_OUT_FROM_WBTC);
       });
 
       it("1 -> 0", async function () {
-        await assertSwapYieldsExpectedDeltas(1, 0, SWAP_AMOUNT_OUT_TO_TBTC);
+        await assertSwapYieldsExpectedDeltas(1, 0, SWAP_AMOUNT_OUT_TO_WBTC);
       });
 
       it("1 -> 2", async function () {
@@ -548,7 +548,7 @@ describe("Pool.swap", async function () {
       });
 
       it("2 -> 0", async function () {
-        await assertSwapYieldsExpectedDeltas(2, 0, SWAP_AMOUNT_OUT_TO_TBTC);
+        await assertSwapYieldsExpectedDeltas(2, 0, SWAP_AMOUNT_OUT_TO_WBTC);
       });
 
       it("2 -> 1", async function () {

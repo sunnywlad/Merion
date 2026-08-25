@@ -44,18 +44,18 @@ const PANIC_ARRAY_OUT_OF_BOUNDS = 50n; // 0x32
 async function deployTokensAndPool(feeNum: bigint) {
   const [deployer, depositor, other] = await viem.getWalletClients();
 
-  const tbtc = await viem.deployContract("MockWrappedBTC", ["Threshold BTC", "tBTC"]);
+  const wbtc = await viem.deployContract("MockWrappedBTC", ["Wrapped BTC", "wBTC"]);
   const cbbtc = await viem.deployContract("MockWrappedBTC", ["Coinbase BTC", "cbBTC"]);
   const lbtc = await viem.deployContract("MockWrappedBTC", ["Lombard BTC", "lBTC"]);
-  const tokens = [tbtc, cbbtc, lbtc] as const;
+  const tokens = [wbtc, cbbtc, lbtc] as const;
 
   const pool = await viem.deployContract("Pool", [
-    [tbtc.address, cbbtc.address, lbtc.address],
+    [wbtc.address, cbbtc.address, lbtc.address],
     feeNum,
     deployer.account.address,
   ]);
 
-  return { deployer, depositor, other, tbtc, cbbtc, lbtc, tokens, pool };
+  return { deployer, depositor, other, wbtc, cbbtc, lbtc, tokens, pool };
 }
 
 async function deployTokensAndPoolFixture() {
@@ -677,7 +677,7 @@ describe("Pool.addLiquidity", async function () {
         });
 
         it("ancre sur l'actif rare, un apport de 10% du pool mint 10% du totalSupply precedent", async function () {
-          // L'actif rare est maintenant token0 (tBTC, 1250e8), le plus petit
+          // L'actif rare est maintenant token0 (wBTC, 1250e8), le plus petit
           // des trois apres le swap prealable (voir le test voisin).
           const { pool, tokens, other } = await networkHelpers.loadFixture(deployImbalancedPoolFixture);
           const supplyBefore = await pool.read.totalSupply();

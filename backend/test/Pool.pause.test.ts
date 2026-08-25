@@ -67,21 +67,21 @@ const UINT72_MAX = 2n ** 72n - 1n;
 async function deployTokensAndPool(feeNum: bigint) {
   const [deployer, depositor, other] = await viem.getWalletClients();
 
-  const tbtc = await viem.deployContract("MockWrappedBTC", ["Threshold BTC", "tBTC"]);
+  const wbtc = await viem.deployContract("MockWrappedBTC", ["Wrapped BTC", "wBTC"]);
   const cbbtc = await viem.deployContract("MockWrappedBTC", ["Coinbase BTC", "cbBTC"]);
   const lbtc = await viem.deployContract("MockWrappedBTC", ["Lombard BTC", "lBTC"]);
-  const tokens = [tbtc, cbbtc, lbtc] as const;
+  const tokens = [wbtc, cbbtc, lbtc] as const;
 
   // Le troisieme argument du constructeur est le _feeSetter, qui devient
   // l'owner (Ownable(_feeSetter), Pool.sol:42) : dans toute cette suite,
   // `deployer` est donc l'owner, et `other` le tiers non autorise.
   const pool = await viem.deployContract("Pool", [
-    [tbtc.address, cbbtc.address, lbtc.address],
+    [wbtc.address, cbbtc.address, lbtc.address],
     feeNum,
     deployer.account.address,
   ]);
 
-  return { deployer, depositor, other, tbtc, cbbtc, lbtc, tokens, pool };
+  return { deployer, depositor, other, wbtc, cbbtc, lbtc, tokens, pool };
 }
 
 async function deployTokensAndPoolFixture() {
