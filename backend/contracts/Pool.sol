@@ -15,6 +15,8 @@ contract Pool is ERC20, Ownable, Pausable {
   address public immutable token2;
 
   uint72[3] public reserves;
+  uint8 public constant floor;
+  uint8 public constant ceiling;
 
   uint256 public feeNum;
   uint256 constant public MAX_FEE_NUM = 10;
@@ -31,8 +33,8 @@ contract Pool is ERC20, Ownable, Pausable {
   error ReserveOverflow();
   error InsufficientReserve();
   error ZeroOutput();
-  // error FloorTouched(uint256 tokenIndex);
-  // error CeilingTouched(uint256 tokenIndex);
+  error FloorTouched(uint256 tokenIndex);
+  error CeilingTouched(uint256 tokenIndex);
 
   event FeeSet(uint256 oldFee, uint256 newFee);
   event AddedLiquidity(address indexed provider, uint256[3] amountsIn, uint256 mintedShares);
@@ -78,49 +80,12 @@ contract Pool is ERC20, Ownable, Pausable {
     }
   }
 
-  // function floorOf(uint256 _tokenIndex) internal pure returns (uint256 floor) {
-  //   if (_tokenIndex == 0) {
-  //     floor = 5;
-  //   }  else if (_tokenIndex == 1) {
-  //     floor = 15;
-  //   } else if (_tokenIndex == 2) {
-  //     floor = 22;
-  //   }
-  // }
-
-  // function ceilingOf(uint256 _tokenIndex) internal pure returns (uint256 ceiling) {
-  //   if (_tokenIndex == 0) {
-  //     ceiling = 25;
-  //   }  else if (_tokenIndex == 1) {
-  //     ceiling = 65;
-  //   } else if (_tokenIndex == 2) {
-  //     ceiling = 55;
-  //   }
-  // }
-
-  // function targetOf(uint256 _tokenIndex) internal pure returns (uint256 target) {
-  //   if (_tokenIndex == 0) {
-  //     target = 10;
-  //   }  else if (_tokenIndex == 1) {
-  //     target = 45;
-  //   } else if (_tokenIndex == 2) {
-  //     target = 45;
-  //   }
-  // }
-
-  function addLiquidity(uint256 _anchorIndex, uint256 _amount, uint256 _minShares) external whenNotPaused returns (uint256 mintedShares) {    
+  function addLiquidity(uint256 _anchorIndex, uint256 _amount, uint256 _minShares) external whenNotPaused returns (uint256 mintedShares) {
     // WBTC, LBTC and cbBTC all return true or revert on transferFrom, and none of them is a fee-on-transfer token: no need to check balanceOf
     uint256[3] memory amounts;
     uint256 supply = totalSupply();
 
     if (supply == 0) {
-
-      // for (uint256 i; i < 3; i++) {
-      //   amounts[i] = _amount * targetOf(i) / targetOf(_anchorIndex);
-      //   require(amounts[i] <= type(uint72).max, ReserveOverflow());
-      // }
-
-      // mintedShares = amounts[0] + amounts[1] + amounts[2] - MINIMUM_LIQUIDITY;
       mintedShares = 3 * _amount - MINIMUM_LIQUIDITY;
       require(mintedShares >= _minShares, BadSlippage());
       amounts[0] = amounts[1] = amounts[2] = _amount;
@@ -176,15 +141,15 @@ contract Pool is ERC20, Ownable, Pausable {
     require(cachedReserves[_indexOut] > amountOut, InsufficientReserve());
     require(_amount + cachedReserves[_indexIn] <= type(uint72).max, ReserveOverflow());
 
-    // uint256[3] memory afterSwapReserves = [uint256(cachedReserves[0]), cachedReserves[1], cachedReserves[2]];
-    // afterSwapReserves[_indexIn] = _amount + afterSwapReserves[_indexIn];
-    // afterSwapReserves[_indexOut] = afterSwapReserves[_indexOut] - amountOut;
-    // uint256 sum = afterSwapReserves[0] + afterSwapReserves[1] + afterSwapReserves[2];
+    uint256[3] memory afterSwapReserves = [uint256(cachedReserves[0]), cachedReserves[1], cachedReserves[2]];
+    afterSwapReserves[_indexIn] = _amount + afterSwapReserves[_indexIn];
+    afterSwapReserves[_indexOut] = afterSwapReserves[_indexOut] - amountOut;
+    uint256 sum = afterSwapReserves[0] + afterSwapReserves[1] + afterSwapReserves[2];
 
-    // for (uint256 i; i < 3; i++) {
-    //   require(afterSwapReserves[i] * 100 < ceilingOf(i) * sum, CeilingTouched(i));
-    //   require(afterSwapReserves[i] * 100 > floorOf(i) * sum, FloorTouched(i));
-    // }
+    for (uint256 i; i < 3; i++) {
+      require(afterSwapReserves[i] * 100 < ceiling * sum, CeilingTouched(i));
+      require(afterSwapReserves[i] * 100 > floor * sum, FloorTouched(i));
+    }
 
     require(amountOut >= _minOut, BadSlippage());
 
