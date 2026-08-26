@@ -41,6 +41,8 @@ contract Pool is ERC20, Ownable, Pausable {
 
   error FeeTooHigh();
   error EmptyFeeBand();
+  error ZeroEpochDuration();
+  error PriorityWindowTooLong();
   error FeeUpdateTooSoon();
   error BadSlippage();
   error ReserveOverflow();
@@ -69,6 +71,8 @@ contract Pool is ERC20, Ownable, Pausable {
     PRIORITY_WINDOW = _priorityWindow;
     require(_nominalFeeNum * UNBALANCE_FACTOR <= MAX_FEE_NUM, FeeTooHigh());
     require(_minFeeNum * UNBALANCE_FACTOR <= MAX_FEE_NUM, EmptyFeeBand());
+    require(_epochDuration > 0, ZeroEpochDuration());
+    require(_priorityWindow <= _epochDuration, PriorityWindowTooLong());
 
     MIN_FEE_NUM = _minFeeNum;
     NOMINAL_FEE_NUM = _nominalFeeNum;
@@ -84,6 +88,10 @@ contract Pool is ERC20, Ownable, Pausable {
 
   function decimals() public pure override returns (uint8) {
     return 8;
+  }
+
+  function currentEpoch() public view returns (uint256) {
+    return (block.timestamp - GENESIS) / EPOCH_DURATION;
   }
 
   function setFee(uint256 _feeNum) external onlyOwner {
