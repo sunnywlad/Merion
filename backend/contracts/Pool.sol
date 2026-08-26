@@ -37,6 +37,9 @@ contract Pool is ERC20, Ownable, Pausable {
   uint256 public immutable PRIORITY_WINDOW;
   address public immutable treasury;
 
+  mapping(uint256 epoch => address) public managerOf;
+  address public auction;
+
   uint256 constant public MINIMUM_LIQUIDITY = 1000;
 
   error FeeTooHigh();
@@ -51,11 +54,17 @@ contract Pool is ERC20, Ownable, Pausable {
   error NotBootstrapped();
   error FloorTouched(uint256 tokenIndex);
   error CeilingTouched(uint256 tokenIndex);
+  error NotAuctionOrOwner();
+  error EpochAlreadyStarted();
+  error ZeroManager();
+  error ManagerAlreadySet();
+  error AuctionAlreadySet();
 
   event FeeSet(uint256 oldFee, uint256 newFee);
   event AddedLiquidity(address indexed provider, uint256[3] amountsIn, uint256 mintedShares);
   event RemovedLiquidity(address indexed provider, uint256[3] amountsOut, uint256 burnedShares);
   event Swapped(address indexed swapper, uint256 indexed indexIn, uint256 amountIn, uint256 indexed indexOut, uint256 amountOut);
+  event ManagerSet(uint256 indexed epoch, address indexed manager);
 
   constructor(
     address[3] memory _tokens,
@@ -92,6 +101,24 @@ contract Pool is ERC20, Ownable, Pausable {
 
   function currentEpoch() public view returns (uint256) {
     return (block.timestamp - GENESIS) / EPOCH_DURATION;
+  }
+
+  function manager() public view returns (address) {
+    return managerOf[currentEpoch()];
+  }
+
+  function setAuction(address _auction) external onlyOwner {
+    require(auction == address(0), AuctionAlreadySet());
+    auction = _auction;
+  }
+
+  function setManager(uint256 _epoch, address _who) external {
+    require(msg.sender == auction || (auction == address(0) && msg.sender == owner()), NotAuctionOrOwner());
+    require(_epoch > currentEpoch(), EpochAlreadyStarted());
+    require(_who != address(0), ZeroManager());
+    require(managerOf[_epoch] == address(0), ManagerAlreadySet());
+    managerOf[_epoch] = _who;
+    emit ManagerSet(_epoch, _who);
   }
 
   function setFee(uint256 _feeNum) external onlyOwner {
