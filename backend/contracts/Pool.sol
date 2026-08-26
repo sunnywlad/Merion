@@ -2,21 +2,23 @@
 
 pragma solidity 0.8.36;
 
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+using SafeERC20 for IERC20;
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
+import "@openzeppelin/contracts/utils/math/Math.sol";
 
 contract Pool is ERC20, Ownable, Pausable {
-
 
   address public immutable token0;
   address public immutable token1;
   address public immutable token2;
 
   uint72[3] public reserves;
-  uint8 public constant floor;
-  uint8 public constant ceiling;
+  uint8 public constant floor = 27;
+  uint8 public constant ceiling = 40;
 
   uint256 public feeNum;
   uint256 constant public MAX_FEE_NUM = 10;
@@ -103,14 +105,14 @@ contract Pool is ERC20, Ownable, Pausable {
       require(mintedShares >= _minShares, BadSlippage());
 
       for (uint256 i; i < 3; i++) {
-        amounts[i] = _amount * cachedReserves[i] / cachedReserves[_anchorIndex];
+        amounts[i] = Math.ceilDiv(_amount * cachedReserves[i], cachedReserves[_anchorIndex]);
         require(reserves[i] + amounts[i] <= type(uint72).max, ReserveOverflow());
         reserves[i] += uint72(amounts[i]);
       }
     }
     _mint(msg.sender, mintedShares);
     for (uint256 i; i < 3; i++) {
-      IERC20(indexToAddress(i)).transferFrom(msg.sender, address(this), amounts[i]);
+      IERC20(indexToAddress(i)).safeTransferFrom(msg.sender, address(this), amounts[i]);
     }
     emit AddedLiquidity(msg.sender, amounts, mintedShares);
   }
@@ -126,7 +128,7 @@ contract Pool is ERC20, Ownable, Pausable {
     }
     _burn(msg.sender, _burnedShares);
     for (uint256 i; i < 3; i++) {
-      IERC20(indexToAddress(i)).transfer(msg.sender, amountsOut[i]);
+      IERC20(indexToAddress(i)).safeTransfer(msg.sender, amountsOut[i]);
     }
     emit RemovedLiquidity(msg.sender, amountsOut, _burnedShares);
   }
@@ -156,8 +158,8 @@ contract Pool is ERC20, Ownable, Pausable {
     reserves[_indexIn] += uint72(_amount);
     reserves[_indexOut] -= uint72(amountOut);
 
-    IERC20(indexToAddress(_indexIn)).transferFrom(msg.sender, address(this), _amount);
-    IERC20(indexToAddress(_indexOut)).transfer(msg.sender, amountOut);
+    IERC20(indexToAddress(_indexIn)).safeTransferFrom(msg.sender, address(this), _amount);
+    IERC20(indexToAddress(_indexOut)).safeTransfer(msg.sender, amountOut);
 
     emit Swapped(msg.sender, _indexIn, _amount, _indexOut, amountOut);
   }
