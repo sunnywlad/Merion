@@ -66,6 +66,32 @@ frontiere a la seconde. Un test Solidity poserait la meme question par
 `vm.warp` depuis l'interieur de l'EVM, ce qui verifie la formule mais pas le
 parcours de lecture.
 
+Sur `feeInForce`, la reponse s'inverse, et c'est le point le plus interessant
+du dossier. La question du LECTEUR EXTERNE se pose comme pour `currentEpoch` —
+le front et le bot d'enchere liront le frais en vigueur par `eth_call` — mais
+la couche TypeScript ne peut pas, a elle seule, prouver que la fonction fait
+quoi que ce soit. En l'etat du contrat, `feeInForce()` est INDISTINGUABLE d'un
+`return NOMINAL_FEE_NUM` a travers l'ABI : `lastSetFeeEpoch` (`Pool.sol:33`)
+vaut `0` au deploiement et rien ne l'ecrit jamais — le `setFee` `onlyOwner`
+encore present ne touche que `feeNum` et `lastFeeUpdate` — et pendant l'epoch
+`0`, la seule ou la comparaison de `Pool.sol:135` puisse etre vraie, `feeNum`
+vaut exactement `NOMINAL_FEE_NUM`, pose par le constructeur (`Pool.sol:100`).
+La branche "mandat courant" du ternaire n'est donc jamais prise avec une valeur
+qui la distingue de l'autre branche, et aucune sequence d'appels ABI ne peut y
+changer quoi que ce soit.
+
+`test/Pool.feeInForce.test.ts` couvre donc ce qu'il peut couvrir honnetement —
+la fonction est exposee et lisible sans transaction, elle suit le nominal du
+POOL INTERROGE (deux pools a nominaux differents), le passage d'epoch ne
+demande aucun appel, la lecture ne deplace rien, meme en pause — et l'annonce
+noir sur blanc dans son entete : la preuve n'est pas la. Elle est dans
+`test/Pool.feeInForce.t.sol`, qui forge le slot partage par `vm.store` pour
+exhiber le seul etat ou les deux branches rendent des valeurs differentes. La
+regle habituelle de ce dossier ("TypeScript pour le parcours, Solidity pour la
+formule") tient toujours ; ce qui est nouveau ici, c'est qu'un fichier
+TypeScript vert ne vaut rien sans son jumeau Solidity, et qu'il vaut mieux
+l'ecrire dans le fichier que le laisser deviner.
+
 La couche Solidity (fuzz, invariants, forge d'etat par `vm.store`, tenue des
 bandes face a une decote) est une question distincte, traitee dans sa propre
 section plus bas.
@@ -84,8 +110,8 @@ Le panier est fige a trois wrappers de BTC a cibles EGALES, un tiers chacun :
 WBTC en indice 0, cbBTC en indice 1, LBTC en indice 2. Il n'y a plus ni
 quatrieme jeton ni poids cibles differencies.
 
-La suite compte 256 tests verts : 190 en TypeScript (7 fichiers `test/*.test.ts`)
-et 66 en Solidity (8 fichiers `test/*.t.sol`, 4 fichiers `contracts/*.t.sol`).
+La suite compte 281 tests verts : 198 en TypeScript (8 fichiers `test/*.test.ts`)
+et 83 en Solidity (9 fichiers `test/*.t.sol`, 4 fichiers `contracts/*.t.sol`).
 
 ## Structure de la suite
 
@@ -125,6 +151,22 @@ Pool.currentEpoch
     A) La lecture est monotone
     B) L'horloge ne s'arrete pas quand le pool est en pause
     C) La lecture n'a aucun effet de bord
+```
+
+`Pool.feeInForce.test.ts` :
+
+```
+Pool.feeInForce
+  I] La valeur rendue au deploiement
+    A) Le nominal passe au constructeur, sur deux pools distincts
+    B) Accord avec le getter brut feeNum()
+    C) lastSetFeeEpoch est lisible par l'ABI
+  II] Le repli sur le nominal quand l'epoch a tourne
+    A) L'epoch 1
+    B) Une epoch lointaine
+  III] Proprietes de la lecture
+    A) La lecture n'a aucun effet de bord
+    B) La pause ne change pas la valeur rendue
 ```
 
 `Pool.addLiquidity.test.ts` :
@@ -244,6 +286,7 @@ test/Pool.swap.t.sol             fuzz, domaine partage par MAX_IN_BAND_AMOUNT
 test/Pool.setFee.t.sol           fuzz du delai, du plafond, du controle d'acces
 test/Pool.safeERC20.t.sol        les quatre sites d'appel de SafeERC20
 test/Pool.forgedState.t.sol      proprietes atteintes par forge d'etat (vm.store)
+test/Pool.feeInForce.t.sol       packing du slot + lecture paresseuse, par vm.store
 test/Pool.depeg.t.sol            les bandes face a une decote reelle d'un wrapper
 test/Pool.invariant.t.sol        handler + quatre invariants + un test cible
 contracts/Pool.gas.t.sol         mesures de gas (rapport dans GAS.md)
@@ -817,6 +860,66 @@ message, est ce qui rend le test fiable.
   recalculable hors chaine sans jamais interroger le contrat, et ce qui
   garantit qu'aucune epoque ne peut etre "sautee" faute d'appelant
 
+### `feeInForce`
+
+**Ce que la couche TypeScript peut dire (`Pool.feeInForce.test.ts`)**
+
+- au deploiement, la vue rend le `_nominalFeeNum` passe au constructeur, sur
+  deux pools deployes a `5` et a `20` : la valeur suit l'argument du pool
+  interroge, elle n'est pas gravee dans l'ABI ni partagee entre deploiements.
+  Assertion faible et assumee comme telle, `NOMINAL_FEE_NUM` etant lui-meme un
+  immuable du constructeur : un `return NOMINAL_FEE_NUM` la passerait aussi
+- a l'epoch `0`, `feeInForce()` et le getter brut `feeNum()` s'accordent. Les
+  deux branches du ternaire coincident a cet instant, donc l'accord ne dit PAS
+  quelle branche a ete prise ; ce qu'il fige, c'est qu'un front lisant l'un ou
+  l'autre getter pendant la premiere epoch affiche le meme chiffre
+- `lastSetFeeEpoch()` est bien expose en public et vaut `0` au deploiement, le
+  constructeur ne l'ecrivant pas
+- a l'epoch `1` puis au milieu de l'epoch `42`, la vue rend toujours
+  `NOMINAL_FEE_NUM`, et le seul bloc mine entre le deploiement et la lecture
+  est VIDE : personne n'a paye de `SSTORE` de remise a zero
+- la lecture n'a aucun effet de bord : sur un pool amorce puis mis en pause,
+  `reserves`, `feeNum`, `lastSetFeeEpoch` et `totalSupply` sont identiques
+  avant et apres plusieurs appels separes par un saut de cinq epochs
+- la pause ne change pas la valeur rendue. `feeInForce()` ne porte pas
+  `whenNotPaused`, et c'est DELIBERE : la pause arrete ce qui deplace de la
+  valeur, elle n'a pas a aveugler un front ou un bot qui veut afficher le frais
+  pendant l'incident, exactement comme l'horloge continue de defiler en pause
+
+**Ce que seule la couche Solidity peut dire (`Pool.feeInForce.t.sol`)**
+
+- le packing est reel : une ecriture d'UN SEUL mot de 32 octets deplace
+  `feeNum` ET `lastSetFeeEpoch` ensemble ; au deploiement le mot brut vaut
+  exactement `NOMINAL_FEE_NUM`, ce qui fixe l'ordre des bits (`feeNum` en
+  poids faibles, `lastSetFeeEpoch` decale de `16`) et montre que rien d'autre
+  ne partage ce slot ; le mot relu par `vm.load` est bit pour bit celui qui a
+  ete ecrit
+- la branche "mandat courant" rend bien `feeNum` : a l'epoch `3`, slot forge a
+  `(feeNum = 21, lastSetFeeEpoch = 3)`, la vue rend `21` et non le nominal `5`.
+  C'est LE test du dossier, le seul qu'un `return NOMINAL_FEE_NUM` echoue
+- le rollover est gratuit : une `EPOCH_DURATION` plus tard, sans le moindre
+  appel — `vm.warp` est un cheatcode, pas une transaction — la vue rebascule
+  seule sur le nominal alors que `feeNum` brut vaut toujours `21`,
+  `lastSetFeeEpoch` toujours `3`, et que le SLOT ENTIER est identique bit pour
+  bit. Zero `SSTORE` : c'est la formulation exacte de la gratuite
+- la frontiere se joue a la seconde : a `GENESIS + 4 * EPOCH_DURATION - 1` le
+  mandat de l'epoch `3` est encore en vigueur, a
+  `GENESIS + 4 * EPOCH_DURATION` il est perime. Borne inclusive cote epoch
+  suivante, comme celle de `currentEpoch()`
+- fuzz des deux moities : hors de son epoch un mandat ne vaut rien quel que
+  soit son contenu (`feeNum` borne par `MAX_FEE_NUM`, epoch forgee bornee par
+  `type(uint32).max` et differente de l'epoch courante) ; dans son epoch il
+  s'impose, quel que soit son contenu
+- bornes du typage : `lastSetFeeEpoch` forge a `type(uint32).max` laisse la vue
+  sur le nominal tant que `currentEpoch()` est en dessous, et rend bien le
+  `feeNum` du mandat quand `vm.warp` amene `currentEpoch()` exactement sur ce
+  plafond. Le cas ou `currentEpoch()` DEPASSE `type(uint32).max` est laisse en
+  commentaire dans le fichier plutot qu'en test : il demanderait environ
+  `1,96` million d'annees de `block.timestamp`, et il ne changerait rien — la
+  comparaison promeut le `uint32` en `uint256`, donc au-dela du plafond
+  `lastSetFeeEpoch` ne peut plus jamais egaler `currentEpoch()`, la vue se fige
+  sur `NOMINAL_FEE_NUM`, sans repli ni collision d'epochs
+
 ### `addLiquidity` — pool vide
 
 - amorcage a montants egaux : `amounts[0] = amounts[1] = amounts[2] = _amount`
@@ -1107,9 +1210,10 @@ message, est ce qui rend le test fiable.
 
 ## Couche Solidity : fuzz, invariants, forge d'etat
 
-Quatre fichiers portent ce que la couche TypeScript ne peut pas atteindre :
-un domaine d'entrees, un enchainement d'appels, une valeur de retour ERC-20
-non conforme, ou un etat de reserves qu'aucune sequence legitime ne produit.
+Les fichiers ci-dessous portent ce que la couche TypeScript ne peut pas
+atteindre : un domaine d'entrees, un enchainement d'appels, une valeur de
+retour ERC-20 non conforme, ou un etat qu'aucune sequence legitime ne produit —
+des reserves impossibles, ou un mandat de frais que rien n'ecrit encore.
 
 ### `Pool.swap.t.sol` : un domaine fuzze partage, pas filtre
 
@@ -1201,6 +1305,34 @@ donc proprement, au lieu d'ecrire silencieusement au mauvais endroit.
   `swap` (`Pool.sol:151-154`). Etant proportionnels, ils ne corrigent pas le
   ratio hors bande, mais ils ne le signalent pas non plus. C'est exactement le
   piege que `invariant_bandsAlwaysRespected` doit pouvoir reveler.
+
+### `Pool.feeInForce.t.sol` : la preuve que la couche TypeScript ne peut pas donner
+
+Meme technique que `Pool.forgedState.t.sol`, meme raison de fond — un etat reel
+du contrat qu'aucune sequence d'appels legitime ne produit — mais un slot
+different et un balayage RETOURNE.
+
+`Pool.forgedState.t.sol` recompose depuis les getters le mot qu'il cherche,
+puis balaye les vingt premiers slots a la recherche de cette valeur. Ici ce
+serait sans effet : au deploiement, le mot cherche vaut `5`, un entier qu'un
+autre slot peut porter par hasard. Le balayage ECRIT donc un mot distinctif
+(`feeNum = 37`, hors bande legitime, et `lastSetFeeEpoch = 123 456`) dans
+chaque slot candidat, regarde si les DEUX getters basculent ensemble, puis
+restaure le slot avant de passer au suivant. Ce balayage est deja, en lui-meme,
+la preuve du packing : si le compilateur separait un jour les deux champs,
+aucune ecriture d'un slot unique ne pourrait plus les deplacer tous les deux, et
+la recherche sortirait en `revert` au lieu de laisser la regression passer en
+silence. Le commentaire de `Pool.sol:23-28` n'est jamais pris pour argent
+comptant : c'est lui que ce fichier verifie.
+
+Pourquoi pas le `setFee` `onlyOwner` pour deplacer `feeNum`, ce qui aurait
+evite tout `vm.store` : parce qu'il est supprime a la sous-etape I.1.7, avec
+`lastFeeUpdate` et `MIN_SET_FEE_DELAY`. Un test bati dessus mourrait avec lui
+dans deux sous-etapes. `vm.store` ne depend d'aucun organe condamne, et
+survivra au `setFee` gestionnaire qui arrive a I.1.6.
+
+Le detail des six sections du fichier est dans la liste des cas limites
+ci-dessus, sous `feeInForce`.
 
 ### `Pool.depeg.t.sol` : ce que les bandes valent face a une decote reelle
 
