@@ -2,19 +2,23 @@
 
 pragma solidity 0.8.36;
 
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+using SafeERC20 for IERC20;
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
+import "@openzeppelin/contracts/utils/math/Math.sol";
 
 contract Pool is ERC20, Ownable, Pausable {
-
 
   address public immutable token0;
   address public immutable token1;
   address public immutable token2;
 
   uint72[3] public reserves;
+  uint8 public constant floor = 13;
+  uint8 public constant ceiling = 53;
 
   uint256 public feeNum;
   uint256 constant public MAX_FEE_NUM = 10;
@@ -78,50 +82,15 @@ contract Pool is ERC20, Ownable, Pausable {
     }
   }
 
-  function floorOf(uint256 _tokenIndex) internal pure returns (uint256 floor) {
-    if (_tokenIndex == 0) {
-      floor = 5;
-    }  else if (_tokenIndex == 1) {
-      floor = 15;
-    } else if (_tokenIndex == 2) {
-      floor = 22;
-    }
-  }
-
-  function ceilingOf(uint256 _tokenIndex) internal pure returns (uint256 ceiling) {
-    if (_tokenIndex == 0) {
-      ceiling = 25;
-    }  else if (_tokenIndex == 1) {
-      ceiling = 65;
-    } else if (_tokenIndex == 2) {
-      ceiling = 55;
-    }
-  }
-
-  function targetOf(uint256 _tokenIndex) internal pure returns (uint256 target) {
-    if (_tokenIndex == 0) {
-      target = 10;
-    }  else if (_tokenIndex == 1) {
-      target = 45;
-    } else if (_tokenIndex == 2) {
-      target = 45;
-    }
-  }
-
   function addLiquidity(uint256 _anchorIndex, uint256 _amount, uint256 _minShares) external whenNotPaused returns (uint256 mintedShares) {
-    // tBTC, LBTC and cbBTC all return true or revert on transferFrom, and none of them is a fee-on-transfer token: no need to check balanceOf
+    // WBTC, LBTC and cbBTC all return true or revert on transferFrom, and none of them is a fee-on-transfer token: no need to check balanceOf
     uint256[3] memory amounts;
     uint256 supply = totalSupply();
 
     if (supply == 0) {
-
-      for (uint256 i; i < 3; i++) {
-        amounts[i] = _amount * targetOf(i) / targetOf(_anchorIndex);
-        require(amounts[i] <= type(uint72).max, ReserveOverflow());
-      }
-
-      mintedShares = amounts[0] + amounts[1] + amounts[2] - MINIMUM_LIQUIDITY;
+      mintedShares = 3 * _amount - MINIMUM_LIQUIDITY;
       require(mintedShares >= _minShares, BadSlippage());
+      amounts[0] = amounts[1] = amounts[2] = _amount;
 
       for (uint256 i; i < 3; i++) {
         reserves[i] += uint72(amounts[i]);
@@ -136,14 +105,14 @@ contract Pool is ERC20, Ownable, Pausable {
       require(mintedShares >= _minShares, BadSlippage());
 
       for (uint256 i; i < 3; i++) {
-        amounts[i] = _amount * cachedReserves[i] / cachedReserves[_anchorIndex];
+        amounts[i] = Math.ceilDiv(_amount * cachedReserves[i], cachedReserves[_anchorIndex]);
         require(reserves[i] + amounts[i] <= type(uint72).max, ReserveOverflow());
         reserves[i] += uint72(amounts[i]);
       }
     }
     _mint(msg.sender, mintedShares);
     for (uint256 i; i < 3; i++) {
-      IERC20(indexToAddress(i)).transferFrom(msg.sender, address(this), amounts[i]);
+      IERC20(indexToAddress(i)).safeTransferFrom(msg.sender, address(this), amounts[i]);
     }
     emit AddedLiquidity(msg.sender, amounts, mintedShares);
   }
@@ -159,7 +128,7 @@ contract Pool is ERC20, Ownable, Pausable {
     }
     _burn(msg.sender, _burnedShares);
     for (uint256 i; i < 3; i++) {
-      IERC20(indexToAddress(i)).transfer(msg.sender, amountsOut[i]);
+      IERC20(indexToAddress(i)).safeTransfer(msg.sender, amountsOut[i]);
     }
     emit RemovedLiquidity(msg.sender, amountsOut, _burnedShares);
   }
@@ -180,19 +149,17 @@ contract Pool is ERC20, Ownable, Pausable {
     uint256 sum = afterSwapReserves[0] + afterSwapReserves[1] + afterSwapReserves[2];
 
     for (uint256 i; i < 3; i++) {
-      require(afterSwapReserves[i] * 100 < ceilingOf(i) * sum, CeilingTouched(i));
-      require(afterSwapReserves[i] * 100 > floorOf(i) * sum, FloorTouched(i));
+      require(afterSwapReserves[i] * 100 < ceiling * sum, CeilingTouched(i));
+      require(afterSwapReserves[i] * 100 > floor * sum, FloorTouched(i));
     }
-    require(afterSwapReserves[_indexIn] * 100 < ceilingOf(_indexIn) * sum, CeilingTouched(_indexIn));
-    require(afterSwapReserves[_indexOut] * 100 > floorOf(_indexOut) * sum, FloorTouched(_indexOut));
 
     require(amountOut >= _minOut, BadSlippage());
 
     reserves[_indexIn] += uint72(_amount);
     reserves[_indexOut] -= uint72(amountOut);
 
-    IERC20(indexToAddress(_indexIn)).transferFrom(msg.sender, address(this), _amount);
-    IERC20(indexToAddress(_indexOut)).transfer(msg.sender, amountOut);
+    IERC20(indexToAddress(_indexIn)).safeTransferFrom(msg.sender, address(this), _amount);
+    IERC20(indexToAddress(_indexOut)).safeTransfer(msg.sender, amountOut);
 
     emit Swapped(msg.sender, _indexIn, _amount, _indexOut, amountOut);
   }

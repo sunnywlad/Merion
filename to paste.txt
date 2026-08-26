@@ -1,0 +1,11 @@
+On continue le travail de fuzzing sur Merion, Merion/backend, branche tests/fuzzing.
+
+Où j'en suis : PoolTestBase.sol (setUp commun, virtual) plus quatre fichiers dans test/, un par fonction (Pool.addLiquidity.t.sol, Pool.removeLiquidity.t.sol, Pool.swap.t.sol, Pool.setFee.t.sol), chacun avec des tests fuzzés unitaires (une propriété par test, pas de if/else) puis un test combinant plusieurs paramètres fuzzés ensemble. 43 tests verts, npx hardhat test solidity.
+
+Les bandes de réserve sont commentées dans Pool.sol sur cette branche, volontairement : incompatibles avec des tokens de valeur égale sur un pool à produit constant tant que le design des bandes n'est pas stabilisé. Ne pas les réactiver sans y revenir.
+
+La suite : la couche invariants/stateful, avec le pattern Handler. Nouveau fichier test/Pool.invariant.t.sol. Un contrat Handler (pas un Test, pas de fonction test_) qui détient pool et les mocks, expose des fonctions wrapper qui bornent elles-mêmes leurs entrées avant d'appeler addLiquidity/swap/removeLiquidity. Un contrat de test séparé qui déploie tout, appelle targetContract(address(handler)), et déclare des fonctions invariant_...().
+
+Premier invariant à écrire, le plus mécanique : les réserves internes ne doivent jamais dépasser les soldes réels détenus par le pool sur chaque mock. Ça valide le mécanisme du Handler avant de viser la propriété économique plus fine, la valeur par part LP qui ne doit jamais diminuer suite à un swap (les frais s'accumulent dans les réserves), et rester stable sur les dépôts/retraits.
+
+Guide-moi étape par étape comme dans la session précédente, syntaxe donnée directement quand c'est de l'outillage jamais pratiqué, raisonnement de conception laissé à moi.

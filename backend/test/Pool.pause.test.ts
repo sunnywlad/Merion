@@ -47,7 +47,7 @@ const { viem, networkHelpers } = await network.create();
 
 const DEFAULT_FEE_NUM = 5n; // reprend la valeur du Pool.t.sol d'origine
 const MIN_SET_FEE_DELAY = 24n * 60n * 60n; // 1 days, Pool.sol:24
-// Sur les fixtures de cette suite, les reserves valent au plus 4,5e10 : aucun
+// Sur les fixtures de cette suite, les reserves valent au plus 1e10 : aucun
 // amountOut ne peut donc jamais atteindre UINT72_MAX, ce qui en fait un
 // _minOut insatisfaisable par construction. C'est ce qui rend le test
 // d'ordre des gardes (section II.B) probant : sans la pause, le meme appel
@@ -67,21 +67,21 @@ const UINT72_MAX = 2n ** 72n - 1n;
 async function deployTokensAndPool(feeNum: bigint) {
   const [deployer, depositor, other] = await viem.getWalletClients();
 
-  const tbtc = await viem.deployContract("MockWrappedBTC", ["Threshold BTC", "tBTC"]);
+  const wbtc = await viem.deployContract("MockWrappedBTC", ["Wrapped BTC", "wBTC"]);
   const cbbtc = await viem.deployContract("MockWrappedBTC", ["Coinbase BTC", "cbBTC"]);
   const lbtc = await viem.deployContract("MockWrappedBTC", ["Lombard BTC", "lBTC"]);
-  const tokens = [tbtc, cbbtc, lbtc] as const;
+  const tokens = [wbtc, cbbtc, lbtc] as const;
 
   // Le troisieme argument du constructeur est le _feeSetter, qui devient
   // l'owner (Ownable(_feeSetter), Pool.sol:42) : dans toute cette suite,
   // `deployer` est donc l'owner, et `other` le tiers non autorise.
   const pool = await viem.deployContract("Pool", [
-    [tbtc.address, cbbtc.address, lbtc.address],
+    [wbtc.address, cbbtc.address, lbtc.address],
     feeNum,
     deployer.account.address,
   ]);
 
-  return { deployer, depositor, other, tbtc, cbbtc, lbtc, tokens, pool };
+  return { deployer, depositor, other, wbtc, cbbtc, lbtc, tokens, pool };
 }
 
 async function deployTokensAndPoolFixture() {
@@ -92,7 +92,7 @@ type PoolFixture = Awaited<ReturnType<typeof deployTokensAndPoolFixture>>;
 
 // Mint `amount` des 3 tokens vers `account` et approuve le pool pour ce meme
 // montant sur chacun : c'est le parcours d'un deposant, addLiquidity exigeant
-// bien les trois approves (trois transferFrom entrants, Pool.sol:145-147).
+// bien les trois approves (trois transferFrom entrants, Pool.sol:114-116).
 async function mintAndApprove(
   tokens: PoolFixture["tokens"],
   pool: PoolFixture["pool"],
@@ -140,10 +140,8 @@ async function readBalances(
 }
 
 const SEED_AMOUNT = 100n * 10n ** 8n; // pool amorce a 100 (8 decimales) sur chaque reserve
-// Approuver SEED_AMOUNT a plat sur les trois tokens ne suffit plus pour un
-// premier depot ancre sur token0 : les jambes cbBTC et lBTC tirent chacune
-// 4.5 * SEED_AMOUNT (poids cibles 10/45/45, Pool.sol:118-121).
-const SEED_AMOUNT_HEADROOM = 45n * SEED_AMOUNT / 10n;
+// Amorcage a montants egaux (Pool.sol:93) : approuver SEED_AMOUNT a plat sur
+// les trois tokens suffit pour n'importe quel ancre.
 
 async function deploySeededPoolFixture() {
   const base = await deployTokensAndPoolFixture();
@@ -151,7 +149,7 @@ async function deploySeededPoolFixture() {
 
   // Marge genereuse pour les depots additionnels effectues dans les tests qui
   // reutilisent cette fixture.
-  const headroom = SEED_AMOUNT_HEADROOM * 10n;
+  const headroom = SEED_AMOUNT * 10n;
   await mintAndApprove(tokens, pool, depositor, headroom);
 
   await pool.write.addLiquidity([0n, SEED_AMOUNT, 0n], { account: depositor.account });
@@ -175,46 +173,45 @@ async function deployPausedSeededPoolFixture() {
 }
 
 // Etat du pool amorce, commun a toutes les fixtures ci-dessus :
-//   addLiquidity([0, 1e10, 0]) sur un pool vide, poids cibles 10/45/45
-//   (Pool.sol:118-121), mint amounts = [1e10, 4,5e10, 4,5e10] au deposant
-//   (moins MINIMUM_LIQUIDITY) et 1000 a l'adresse morte, soit
-//   totalSupply = 100 000 000 000, et reserves = [1e10, 4,5e10, 4,5e10].
+//   addLiquidity([0, 1e10, 0]) sur un pool vide, montants egaux
+//   (Pool.sol:93), mint amounts = [1e10, 1e10, 1e10] au deposant (moins
+//   MINIMUM_LIQUIDITY) et 1000 a l'adresse morte, soit totalSupply =
+//   30 000 000 000, et reserves = [1e10, 1e10, 1e10].
 
 // Parts brulees par le test de retrait en pause (section II.C) : 10% du
 // totalSupply du pool amorce. Choisi parce qu'il divise proprement.
-const BURN_AMOUNT = 1n * 10n ** 10n; // 10 000 000 000
-// Calcul a la main (reserves = [1e10, 4,5e10, 4,5e10], totalSupply = 1e11) :
+const BURN_AMOUNT = 3n * 10n ** 9n; // 3 000 000 000
+// Calcul a la main (reserves = [1e10, 1e10, 1e10], totalSupply = 3e10) :
 //   amountsOut[i] = reserves[i] * _burnedShares / totalSupply
-//                 = reserves[i] * 1e10 / 1e11 = reserves[i] / 10
+//                 = reserves[i] * 3e9 / 3e10 = reserves[i] / 10
 // Aucune troncature : la division tombe juste sur les trois tokens.
 const EXPECTED_AMOUNTS_OUT_WHILE_PAUSED: [bigint, bigint, bigint] = [
   1_000_000_000n,
-  4_500_000_000n,
-  4_500_000_000n,
+  1_000_000_000n,
+  1_000_000_000n,
 ];
 
 // _amount du swap nominal de la section III : 10% de SEED_AMOUNT.
 const NOMINAL_SWAP_AMOUNT_IN = SEED_AMOUNT / 10n; // 1 000 000 000
-// Calcul a la main (feeNum = 5, reserves = [1e10, 4,5e10, 4,5e10], swap
-// 0 -> 2) :
+// Calcul a la main (feeNum = 5, reserves = [1e10, 1e10, 1e10], swap 0 -> 2) :
 //   amountAfterFee = 1e9 * (1000 - 5) / 1000 = 995 000 000
-//   amountOut = 995 000 000 * 4,5e10 / (995 000 000 + 1e10)
-//             = 44 775 000 000 000 000 000 / 10 995 000 000
-//             = 4 072 305 593 (tronque vers le bas)
+//   amountOut = 995 000 000 * 1e10 / (995 000 000 + 1e10)
+//             = 9 950 000 000 000 000 000 / 10 995 000 000
+//             = 904 956 798 (tronque vers le bas)
 // C'est exactement la valeur attendue sur une pool jamais mise en pause
 // (elle est posee a l'identique dans Pool.swap.test.ts) : la retrouver apres
 // un cycle pause / unpause est precisement ce que la section III affirme.
-const NOMINAL_SWAP_AMOUNT_OUT = 4_072_305_593n;
+const NOMINAL_SWAP_AMOUNT_OUT = 904_956_798n;
 
 // _amount du depot nominal de la section III : 10% de SEED_AMOUNT, ancre sur
 // token0.
 const NOMINAL_DEPOSIT_AMOUNT = SEED_AMOUNT / 10n; // 1 000 000 000
-// Calcul a la main (reserves = [1e10, 4,5e10, 4,5e10], totalSupply = 1e11,
+// Calcul a la main (reserves = [1e10, 1e10, 1e10], totalSupply = 3e10,
 // ancre = 0) :
 //   mintedShares = totalSupply * _amount / reserves[0]
-//                = 1e11 * 1e9 / 1e10
-//                = 10 000 000 000
-const NOMINAL_MINTED_SHARES = 10_000_000_000n;
+//                = 3e10 * 1e9 / 1e10
+//                = 3 000 000 000
+const NOMINAL_MINTED_SHARES = 3_000_000_000n;
 
 // Nouveau taux pose par le test de setFee en pause (section II.D),
 // different de DEFAULT_FEE_NUM pour que l'assertion ait quelque chose a
@@ -287,7 +284,7 @@ describe("Pool.pause", async function () {
   //
   // Cette section ne verifie pas le fonctionnement du modifieur whenNotPaused,
   // qui appartient a OZ, mais le choix des fonctions sur lesquelles Pool.sol
-  // l'a pose : addLiquidity et swap (Pool.sol:111 et 167) le portent,
+  // l'a pose : addLiquidity et swap (Pool.sol:85 et 136) le portent,
   // removeLiquidity et setFee non, et ces deux absences sont deliberees.
   // ---------------------------------------------------------------------------
 
@@ -309,7 +306,7 @@ describe("Pool.pause", async function () {
 
       it("addLiquidity sur pool amorcee en pause : EnforcedPause", async function () {
         // La branche supply == 0 et la branche supply > 0 d'addLiquidity sont
-        // deux chemins distincts (Pool.sol:116 et 131) ; le modifieur est pose
+        // deux chemins distincts (Pool.sol:90 et 100) ; le modifieur est pose
         // sur la fonction, donc en amont des deux, et les deux cas le
         // verifient separement. Le deposant garde ici de quoi deposer : la
         // fixture amorcee lui a mint et approuve dix fois SEED_AMOUNT.
@@ -345,7 +342,7 @@ describe("Pool.pause", async function () {
         // la preemption, celui-ci : _minOut = UINT72_MAX est insatisfaisable
         // par construction sur ce pool (les reserves valent 1e10, aucun
         // amountOut ne peut les depasser), donc sans la pause cet appel
-        // echouerait sur BadSlippage (Pool.sol:189).
+        // echouerait sur BadSlippage (Pool.sol:126).
         //
         // Ce test appartient a la section B) plutot qu'a une section propre :
         // c'est un swap, et l'arborescence de test/README.md arrete la
@@ -405,7 +402,7 @@ describe("Pool.pause", async function () {
         // laissant une fenetre ou la pool rouvre au taux que la crise a rendu
         // inadapte.
         //
-        // Le delai de setFee (MIN_SET_FEE_DELAY, Pool.sol:58) court sur
+        // Le delai de setFee (MIN_SET_FEE_DELAY, Pool.sol:28) court sur
         // block.timestamp et lastFeeUpdate est initialise a la construction :
         // il faut donc avancer le temps avant l'appel, sinon ce test echoue
         // sur FeeUpdateTooSoon et ne prouve plus rien sur la pause. C'est
@@ -459,10 +456,10 @@ describe("Pool.pause", async function () {
     it("apres unpause(), un addLiquidity nominal mint exactement les parts attendues", async function () {
       const { pool, tokens, deployer, other } = await networkHelpers.loadFixture(deployPausedSeededPoolFixture);
       await pool.write.unpause({ account: deployer.account });
-      // Ancre sur token0 : les jambes cbBTC et lBTC tirent chacune 4,5 *
-      // NOMINAL_DEPOSIT_AMOUNT (poids cibles 10/45/45), un montant flat sur
-      // les trois tokens les sous-dimensionnerait.
-      await mintAndApprove(tokens, pool, other, 45n * NOMINAL_DEPOSIT_AMOUNT / 10n);
+      // Reserves egales apres l'amorcage (Pool.sol:93) : les trois jambes
+      // tirent exactement NOMINAL_DEPOSIT_AMOUNT chacune, quel que soit
+      // l'ancre choisie.
+      await mintAndApprove(tokens, pool, other, NOMINAL_DEPOSIT_AMOUNT);
 
       await pool.write.addLiquidity([0n, NOMINAL_DEPOSIT_AMOUNT, 0n], { account: other.account });
 

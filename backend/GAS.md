@@ -162,3 +162,99 @@ Référence rafraîchie dans le commit qui pose les gardes.
   comme attendu : aucune des trois gardes ne les touche. Une dérive sur ces
   lignes aurait signalé un effet de bord, par exemple un décalage
   d'emplacements de stockage.
+
+---
+
+## Jalon 3 — 2026-08-26 — bandes élargies (13/53) et SWAP_IN recalibré (50 BTC)
+
+Deux changements localisés. `Pool.sol` : `floor` passe de 27 à 13 et `ceiling`
+de 40 à 53 (constantes `uint8` en tête du contrat, déclarées en place, la
+boucle de vérification des bandes dans `swap` reste correcte : à 33,33 %,
+`33,33 * 100 = 3333` reste largement à l'intérieur de `[13, 53] * 100`,
+donc aucun risque d'invariant cassé). `Pool.gas.t.sol` : `SWAP_IN` passe
+de `250 * 10 ** 8` à `50 * 10 ** 8`, **explicitement recalibré dans ce
+jalon** (la règle d'or préserve `SEED` et `DEPOSIT`, inchangés à `1000e8`
+et `100e8`). Référence rafraîchie dans le commit qui pose les deux
+changements, `git add .` et message explicite.
+
+Base `40e3982`. Solidity 0.8.36, profil `production` (optimiseur, 200 runs).
+
+| Scénario | Gaz | Δ jalon 2 |
+|---|---|---|
+| `addLiquidity` — pool vide | 222 726 | +4 164 |
+| `addLiquidity` — pool amorcé | 98 848 | +2 312 |
+| `addLiquidity` — pool déséquilibré | 98 870 | +2 312 |
+| `removeLiquidity` — partiel | 81 258 | −3 |
+| `removeLiquidity` — total | 76 524 | −3 |
+| `swap` — pool équilibré | 60 456 | +4 674 |
+| `swap` — pool déséquilibré | 60 434 | +4 674 |
+| `setFee` | 19 185 | +22 |
+
+### Lectures
+
+- **Le tableau ci-dessus est reproductible au chiffre près** : les huit valeurs
+  ont été re-mesurées indépendamment sous le même profil `production`, à partir
+  du code exact du commit. Ce qui suit corrige l'explication qui accompagnait
+  ces chiffres, fausse sur plusieurs points.
+
+- **La base `40e3982` ne passe pas son propre banc.** En reconstruisant le
+  commit parent tel quel (bandes `27/40`, `SWAP_IN = 250e8`) et en le rejouant
+  sous le profil `production`, `PoolGasImbalancedPool.setUp()` et
+  `PoolGasSeededPool.test_gas_Swap()` revertent avec `CeilingTouched(0)`. Le
+  calcul le confirme : un pool amorcé à parts égales (1000 BTC chacune) puis un
+  échange de 250 BTC de token 0 vers token 2, avec 0,5 % de frais, porte la
+  réserve 0 à environ 40,97 % de la somme post-échange, au-delà du plafond de
+  40 %, et fait tomber la réserve 2 à environ 26,25 %, en dessous du plancher
+  de 27 %. Les deux bandes sont franchies, pas une seule, et dans le sens du
+  dépassement, pas de la marge. Les trois lignes du tableau jalon 2 qui portent
+  sur `swap` ou sur un pool déséquilibré ne peuvent donc pas avoir été mesurées
+  sur le code réel de `40e3982` : ce sont des valeurs héritées d'un état
+  antérieur du contrat, où la boucle de bandes était encore commentée, jamais
+  rafraîchies depuis. L'élargissement des bandes à `13/53` dans ce commit ne se
+  contente donc pas d'ouvrir une marge pour un futur scénario de stress : il
+  corrige un banc de gaz qui, au commit précédent, ne s'exécutait plus.
+
+- **Ni l'élargissement des bandes ni la baisse de `SWAP_IN` n'expliquent le
+  delta, pris isolément.** Vérifié en isolant chaque variable : à bandes
+  `13/53` fixes, remettre `SWAP_IN` à `250e8` reproduit exactement les huit
+  chiffres du jalon 3 ; à `SWAP_IN` fixe, remettre les bandes à `27/40` (dès
+  lors que le banc ne revert plus) reproduit aussi exactement les huit
+  chiffres du jalon 3. Plus décisif : dans un fichier de banc réduit au seul
+  scénario pool vide, sans aucun contrat pouvant revert, ni le changement de
+  bandes ni celui de `SWAP_IN` ne modifient le gaz mesuré d'un seul point, et
+  le bytecode déployé de `Pool` (comparé par empreinte SHA-256) est
+  strictement identique entre `SWAP_IN = 50e8` et `SWAP_IN = 250e8`, ce qui est
+  attendu puisque cette constante n'apparaît nulle part dans `Pool.sol`.
+  **L'explication par un « réarrangement du bytecode » donnée dans une version
+  antérieure de cette section est donc fausse** : elle suppose un effet sur un
+  contrat dont le bytecode n'a, dans ce test, pas changé d'un octet.
+
+- **La cause réelle du delta sur les cinq scénarios qui ne touchent ni aux
+  bandes ni à `SWAP_IN`** (`addLiquidity` pool vide et pool amorcé,
+  `removeLiquidity` partiel et total, `setFee`) **reste, au sens strict, non
+  identifiée.** Ce qui est établi : leur chiffre bascule uniformément du jeu
+  de valeurs du jalon 2 vers celui du jalon 3 exactement quand
+  `PoolGasImbalancedPool.setUp()` cesse de revert dans la même exécution du
+  fichier, et ce basculement disparaît dès qu'on mesure ces scénarios seuls,
+  dans un fichier sans contrat pouvant revert. Le mécanisme précis, à
+  l'intérieur de l'outil de banc de gaz natif de Hardhat 3, qui fait dépendre
+  le chiffre rapporté pour un contrat de test du sort d'un contrat de test
+  voisin dans le même fichier, n'a pas été retrouvé. C'est un artefact de
+  mesure, pas un effet du contrat, mais son mécanisme exact est inexpliqué.
+
+- **La phrase « le doublement exact entre `swap` équilibré et `swap`
+  déséquilibré (+4 674 dans les deux) », dans une version antérieure de cette
+  section, est incohérente** : les deux deltas sont égaux, ce n'est pas un
+  doublement. Ce que confirme l'égalité des deux deltas reste vrai, en
+  revanche : le déséquilibre du pool ne coûte rien, conformément à la lecture
+  du jalon 1.
+
+### Leçon de procédure
+
+Un instantané de gaz n'est une référence que s'il a été régénéré sur le code
+qu'il prétend mesurer. Le contrôle de non-régression de la CI est gardé par
+`if: github.event_name == 'pull_request'` : entre deux ouvertures de pull
+request, rien ne vérifie que `.gas-snapshot` correspond encore au contrat. Le
+banc a ainsi porté trois lignes fausses sur deux commits sans que rien ne le
+signale. À chaque commit qui touche `Pool.sol`, rejouer le banc et lire la
+sortie, ne pas se fier au silence de la CI.
