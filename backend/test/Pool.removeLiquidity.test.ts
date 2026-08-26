@@ -32,6 +32,7 @@ const MINIMUM_LIQUIDITY = 1000n;
 // _minOut insatisfaisable par construction.
 const UINT72_MAX = 2n ** 72n - 1n;
 const DEFAULT_FEE_NUM = 5n; // reprend la valeur du Pool.t.sol d'origine
+const MIN_FEE_NUM = 1n; // _minFeeNum passe au constructeur, cf. PoolTestBase.sol
 const ZERO_FEE_NUM = 0n;
 
 // Codes de panic Solidity utilises dans cette suite (Panic(uint256)).
@@ -59,6 +60,7 @@ async function deployTokensAndPool(feeNum: bigint) {
     [wbtc.address, cbbtc.address, lbtc.address],
     feeNum,
     deployer.account.address,
+    MIN_FEE_NUM,
   ]);
 
   return { deployer, depositor, other, wbtc, cbbtc, lbtc, tokens, pool };

@@ -46,6 +46,7 @@ const { viem, networkHelpers } = await network.create();
 // ---------------------------------------------------------------------------
 
 const DEFAULT_FEE_NUM = 5n; // reprend la valeur du Pool.t.sol d'origine
+const MIN_FEE_NUM = 1n; // _minFeeNum passe au constructeur, cf. PoolTestBase.sol
 const MIN_SET_FEE_DELAY = 24n * 60n * 60n; // 1 days, Pool.sol:24
 // Sur les fixtures de cette suite, les reserves valent au plus 1e10 : aucun
 // amountOut ne peut donc jamais atteindre UINT72_MAX, ce qui en fait un
@@ -79,6 +80,7 @@ async function deployTokensAndPool(feeNum: bigint) {
     [wbtc.address, cbbtc.address, lbtc.address],
     feeNum,
     deployer.account.address,
+    MIN_FEE_NUM,
   ]);
 
   return { deployer, depositor, other, wbtc, cbbtc, lbtc, tokens, pool };
@@ -193,15 +195,16 @@ const EXPECTED_AMOUNTS_OUT_WHILE_PAUSED: [bigint, bigint, bigint] = [
 
 // _amount du swap nominal de la section III : 10% de SEED_AMOUNT.
 const NOMINAL_SWAP_AMOUNT_IN = SEED_AMOUNT / 10n; // 1 000 000 000
-// Calcul a la main (feeNum = 5, reserves = [1e10, 1e10, 1e10], swap 0 -> 2) :
-//   amountAfterFee = 1e9 * (1000 - 5) / 1000 = 995 000 000
-//   amountOut = 995 000 000 * 1e10 / (995 000 000 + 1e10)
-//             = 9 950 000 000 000 000 000 / 10 995 000 000
-//             = 904 956 798 (tronque vers le bas)
+// Calcul a la main (feeNum = 5, FEE_DEN = 10000, reserves = [1e10, 1e10, 1e10],
+// swap 0 -> 2) :
+//   amountAfterFee = 1e9 * (10000 - 5) / 10000 = 999 500 000
+//   amountOut = 999 500 000 * 1e10 / (999 500 000 + 1e10)
+//             = 9 995 000 000 000 000 000 / 10 999 500 000
+//             = 908 677 667 (tronque vers le bas)
 // C'est exactement la valeur attendue sur une pool jamais mise en pause
 // (elle est posee a l'identique dans Pool.swap.test.ts) : la retrouver apres
 // un cycle pause / unpause est precisement ce que la section III affirme.
-const NOMINAL_SWAP_AMOUNT_OUT = 904_956_798n;
+const NOMINAL_SWAP_AMOUNT_OUT = 908_677_667n;
 
 // _amount du depot nominal de la section III : 10% de SEED_AMOUNT, ancre sur
 // token0.
@@ -215,7 +218,7 @@ const NOMINAL_MINTED_SHARES = 3_000_000_000n;
 
 // Nouveau taux pose par le test de setFee en pause (section II.D),
 // different de DEFAULT_FEE_NUM pour que l'assertion ait quelque chose a
-// distinguer, et sous MAX_FEE_NUM (10, Pool.sol:20).
+// distinguer, et sous MAX_FEE_NUM (50).
 const NEW_FEE_NUM = 7n;
 
 describe("Pool.pause", async function () {

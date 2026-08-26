@@ -29,6 +29,7 @@ const { viem, networkHelpers } = await network.create();
 
 const UINT72_MAX = 2n ** 72n - 1n;
 const DEFAULT_FEE_NUM = 5n; // reprend la valeur du Pool.t.sol d'origine
+const MIN_FEE_NUM = 1n; // _minFeeNum passe au constructeur, cf. PoolTestBase.sol
 const ZERO_FEE_NUM = 0n;
 
 // Codes de panic Solidity utilises dans cette suite (Panic(uint256)).
@@ -57,6 +58,7 @@ async function deployTokensAndPool(feeNum: bigint) {
     [wbtc.address, cbbtc.address, lbtc.address],
     feeNum,
     deployer.account.address,
+    MIN_FEE_NUM,
   ]);
 
   return { deployer, depositor, other, wbtc, cbbtc, lbtc, tokens, pool };
@@ -188,16 +190,16 @@ async function deployZeroFeeSeededPoolFixture() {
 // removeLiquidity pour son calcul propre.
 const NOMINAL_SWAP_AMOUNT_IN = SEED_AMOUNT / 10n; // 1 000 000 000
 // Amorcage a montants egaux (Pool.sol:93) : reserves = [1e10, 1e10, 1e10].
-// Calcul a la main (feeNum = 5, n'importe quelle paire, puisque les trois
-// reserves sont identiques) :
-//   amountAfterFee = 1e9 * (1000 - 5) / 1000 = 995 000 000
-//   amountOut = 995 000 000 * 1e10 / (995 000 000 + 1e10)
-//             = 9 950 000 000 000 000 000 / 10 995 000 000
-//             = 904 956 798 (tronque vers le bas)
+// Calcul a la main (feeNum = 5, FEE_DEN = 10000, n'importe quelle paire,
+// puisque les trois reserves sont identiques) :
+//   amountAfterFee = 1e9 * (10000 - 5) / 10000 = 999 500 000
+//   amountOut = 999 500 000 * 1e10 / (999 500 000 + 1e10)
+//             = 9 995 000 000 000 000 000 / 10 999 500 000
+//             = 908 677 667 (tronque vers le bas)
 // Contrairement a l'amorcage pondere d'avant, cette valeur vaut desormais
 // pour les SIX paires indistinctement : les trois reserves de depart sont
 // identiques, donc reserveIn == reserveOut pour n'importe quel couple.
-const NOMINAL_SWAP_AMOUNT_OUT = 904_956_798n;
+const NOMINAL_SWAP_AMOUNT_OUT = 908_677_667n;
 
 // Fixture dediee au pool desequilibre (section II.E et II.F). feeNum = 0, par
 // choix delibere, comme dans les deux autres fichiers de la suite : les
@@ -552,7 +554,7 @@ describe("Pool.swap", async function () {
       });
 
       it("_amount = 1 avec feeNum = 5 : ZeroOutput, l'unite se perd dans la troncature des frais", async function () {
-        // Calcul a la main : amountAfterFee = 1 * (1000 - 5) / 1000 = 0
+        // Calcul a la main : amountAfterFee = 1 * (10000 - 5) / 10000 = 0
         // (division entiere), donc amountOut = 0. Avant la garde, le
         // swapper perdait purement et simplement son unite : le
         // transferFrom entrant s'executait (Pool.sol:161), la reserve
@@ -765,14 +767,14 @@ describe("Pool.swap", async function () {
         // reserveOut), mais elle n'est plus atteignable par l'ABI : la
         // boucle de bandes (Pool.sol:151-154) bloque desormais bien avant.
         // _amount = 2 * SEED_AMOUNT (2e10), sur reserves = [1e10, 1e10, 1e10],
-        // feeNum = 5. Calcul a la main :
-        //   amountAfterFee = 2e10 * 995 / 1000 = 19 900 000 000
-        //   amountOut = 19 900 000 000 * 1e10 / (19 900 000 000 + 1e10)
-        //             = 6 655 518 394 (tronque)
-        //   afterSwapReserves = [3e10, 1e10, 3 344 481 606], sum = 43 344 481 606
-        //   token0 (l'entrante) : 30e9 * 100 / 43 344 481 606 = 69,21 %,
+        // feeNum = 5, FEE_DEN = 10000. Calcul a la main :
+        //   amountAfterFee = 2e10 * 9995 / 10000 = 19 990 000 000
+        //   amountOut = 19 990 000 000 * 1e10 / (19 990 000 000 + 1e10)
+        //             = 6 665 555 185 (tronque)
+        //   afterSwapReserves = [3e10, 1e10, 3 334 444 815], sum = 43 334 444 815
+        //   token0 (l'entrante) : 30e9 * 100 / 43 334 444 815 = 69,23 %,
         //   au-dessus de son plafond (53 %) : premier indice de la boucle
-        //   (i = 0), le require y revert avant que token2 (10,29 % apres
+        //   (i = 0), le require y revert avant que token2 (7,69 % apres
         //   coup) ne soit lui-meme examine.
         const { pool, tokens, other } = await networkHelpers.loadFixture(deploySeededPoolFixture);
         const hugeAmount = 2n * SEED_AMOUNT;

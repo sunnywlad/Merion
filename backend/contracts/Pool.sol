@@ -21,11 +21,16 @@ contract Pool is ERC20, Ownable, Pausable {
   uint8 public constant ceiling = 53;
 
   uint256 public feeNum;
-  uint256 constant public MAX_FEE_NUM = 10;
-  uint256 constant public FEE_DEN = 1000;
+  uint256 constant public MAX_FEE_NUM = 50;
+  uint256 constant public FEE_DEN = 10000;
+  uint256 constant public NOMINAL_FEE_NUM = 5;
+  uint256 constant public UNBALANCE_FACTOR = 2;
+  uint256 constant public TOL_DEN = 10000;
 
   uint256 public lastFeeUpdate;
   uint256 constant public MIN_SET_FEE_DELAY = 1 days;
+
+  uint256 public immutable MIN_FEE_NUM;
 
   uint256 constant public MINIMUM_LIQUIDITY = 1000;
 
@@ -44,9 +49,15 @@ contract Pool is ERC20, Ownable, Pausable {
   event RemovedLiquidity(address indexed provider, uint256[3] amountsOut, uint256 burnedShares);
   event Swapped(address indexed swapper, uint256 indexed indexIn, uint256 amountIn, uint256 indexed indexOut, uint256 amountOut);
 
-  constructor(address[3] memory _tokens, uint256 _feeNum, address _feeSetter) ERC20("MerionLP", "MRNLP") Ownable(_feeSetter) {
+  constructor(
+    address[3] memory _tokens,
+    uint256 _feeNum,
+    address _feeSetter,
+    uint256 _minFeeNum
+  ) ERC20("MerionLP", "MRNLP") Ownable(_feeSetter) {
     require(_feeNum <= MAX_FEE_NUM, FeeTooHigh());
     feeNum = _feeNum;
+    MIN_FEE_NUM = _minFeeNum;
     lastFeeUpdate = block.timestamp;
 
     token0 = _tokens[0];

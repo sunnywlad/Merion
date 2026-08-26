@@ -47,7 +47,7 @@ abstract contract PoolGasBase is Test {
     lbtc = new MockWrappedBTC("Lombard BTC", "lBTC");
 
     address[3] memory tokens = [address(wbtc), address(cbbtc), address(lbtc)];
-    pool = new Pool(tokens, FEE_NUM, address(this));
+    pool = new Pool(tokens, FEE_NUM, address(this), 1);
 
     // Marge large : aucun approve manquant ne doit fausser une mesure.
     uint256 funding = SEED * 100;

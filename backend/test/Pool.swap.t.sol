@@ -47,7 +47,7 @@ contract SwapFuzz is Test, PoolTestBase {
   //
   // La constante est verifiee par test_MaxInBandAmountIsExactlyTheBoundary,
   // qui echouera si l'amorcage, les frais ou les bandes changent.
-  uint256 constant MAX_IN_BAND_AMOUNT = 76_716_541_675;
+  uint256 constant MAX_IN_BAND_AMOUNT = 76_624_746_076;
 
   function test_FuzzSwapReturnsExpectedAmountOut(uint256 _indexIn, uint256 amount, uint256 _indexOut) public {
     (uint256 indexIn, uint256 indexOut) = boundIndices(_indexIn, _indexOut);

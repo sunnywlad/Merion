@@ -21,7 +21,7 @@ contract PoolTest is Test {
     uint256 feeNum = 5;
     address feeSetter = address(this);
 
-    pool = new Pool(tokens, feeNum, feeSetter);
+    pool = new Pool(tokens, feeNum, feeSetter, 1);
 
     wbtc.mint(address(this), 1000 * 10 ** 8);
     cbbtc.mint(address(this), 1000 * 10 ** 8);
