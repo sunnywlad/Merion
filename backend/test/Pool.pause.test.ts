@@ -423,7 +423,7 @@ describe("Pool.pause", async function () {
 
         await pool.write.setFee([NEW_FEE_NUM], { account: deployer.account });
 
-        const feeNum = await pool.read.feeNum();
+        const feeNum = BigInt(await pool.read.feeNum());
         assert.equal(
           feeNum,
           NEW_FEE_NUM,

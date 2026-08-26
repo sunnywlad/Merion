@@ -345,7 +345,9 @@ describe("Pool.constructor", async function () {
         // ensuite, par setFee ; ce test fixe son point de depart.
         const { pool } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
 
-        const feeNum = await pool.read.feeNum();
+        // feeNum est un uint16 depuis I.1.5 : viem le decode en number, pas en
+        // bigint (seuil a 48 bits). L'arithmetique ne bouge pas, seul le type lu.
+        const feeNum = BigInt(await pool.read.feeNum());
         assert.equal(
           feeNum,
           DEFAULT_FEE_NUM,
@@ -360,7 +362,7 @@ describe("Pool.constructor", async function () {
         // ensuite diverger.
         const { pool } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
 
-        const feeNum = await pool.read.feeNum();
+        const feeNum = BigInt(await pool.read.feeNum());
         const nominalFeeNum = await pool.read.NOMINAL_FEE_NUM();
         assert.equal(
           feeNum,
@@ -698,7 +700,7 @@ describe("Pool.constructor", async function () {
 
         const pool = await deployPoolWith(base, ZERO_FEE_NUM, ZERO_FEE_NUM);
 
-        const feeNum = await pool.read.feeNum();
+        const feeNum = BigInt(await pool.read.feeNum());
         assert.equal(
           feeNum,
           ZERO_FEE_NUM,

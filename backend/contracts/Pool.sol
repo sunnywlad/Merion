@@ -20,7 +20,17 @@ contract Pool is ERC20, Ownable, Pausable {
   uint8 public constant floor = 13;
   uint8 public constant ceiling = 53;
 
-  uint256 public feeNum;
+  // Slot packing : uint16 feeNum + uint32 lastSetFeeEpoch partagent 32 octets.
+  // Le compilateur aligne feeNum sur les bits bas (16 bits) puis lastSetFeeEpoch
+  // au-dessus (32 bits), soit feeNum | (lastSetFeeEpoch << 16). 2 octets couvrent
+  // MAX_FEE_NUM = 50 ; 4 octets couvrent 4,3 milliards d'epochs (~4 970 ans à
+  // 4 h/epoch). priorityBlock a quitté ce slot avec l'exclusivité qu'il servait
+  // (septième passe, item 3) et ne reviendra pas.
+  // Aucune fonction n'écrit ce slot au passage d'epoch : la lecture passe par le
+  // reset paresseux, feeInForce() rend NOMINAL_FEE_NUM dès que lastSetFeeEpoch
+  // diffère de currentEpoch().
+  uint16 public feeNum;
+  uint32 public lastSetFeeEpoch;
   uint256 constant public MAX_FEE_NUM = 50;
   uint256 constant public FEE_DEN = 10000;
   uint256 public immutable NOMINAL_FEE_NUM;
@@ -87,7 +97,7 @@ contract Pool is ERC20, Ownable, Pausable {
     NOMINAL_FEE_NUM = _nominalFeeNum;
     treasury = _treasury;
 
-    feeNum = _nominalFeeNum;
+    feeNum = uint16(_nominalFeeNum);
     lastFeeUpdate = block.timestamp;
 
     token0 = _tokens[0];
@@ -121,11 +131,15 @@ contract Pool is ERC20, Ownable, Pausable {
     emit ManagerSet(_epoch, _who);
   }
 
+  function feeInForce() public view returns (uint256) {
+    return lastSetFeeEpoch == currentEpoch() ? feeNum : NOMINAL_FEE_NUM;
+  }
+
   function setFee(uint256 _feeNum) external onlyOwner {
     require(_feeNum <= MAX_FEE_NUM, FeeTooHigh());
     require(block.timestamp - lastFeeUpdate >= MIN_SET_FEE_DELAY, FeeUpdateTooSoon());
     emit FeeSet(feeNum, _feeNum);
-    feeNum = _feeNum;
+    feeNum = uint16(_feeNum);
     lastFeeUpdate = block.timestamp;
   }
 
