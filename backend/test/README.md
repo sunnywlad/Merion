@@ -56,6 +56,16 @@ pour toutes, et les deux chemins de revert du constructeur sont derriere lui
 des qu'il a compile. C'est aussi la seule surface de la suite ou une erreur ne
 coute pas une transaction ratee mais un contrat immuable deploye de travers.
 
+Sur `currentEpoch`, ce qui est interroge n'est ni une valeur figee ni un
+mouvement de fonds mais une HORLOGE, lue par un tiers. Le front, et plus tard
+le bot d'enchere, appelleront `currentEpoch()` par `eth_call` a travers l'ABI
+generee, sans envoyer de transaction, seulement pour savoir quel mandat court.
+Ce que la suite TypeScript verifie est donc que cette lecture-la rend le bon
+numero a chaque instant du temps simule, `networkHelpers.time` posant chaque
+frontiere a la seconde. Un test Solidity poserait la meme question par
+`vm.warp` depuis l'interieur de l'EVM, ce qui verifie la formule mais pas le
+parcours de lecture.
+
 La couche Solidity (fuzz, invariants, forge d'etat par `vm.store`, tenue des
 bandes face a une decote) est une question distincte, traitee dans sa propre
 section plus bas.
@@ -74,7 +84,7 @@ Le panier est fige a trois wrappers de BTC a cibles EGALES, un tiers chacun :
 WBTC en indice 0, cbBTC en indice 1, LBTC en indice 2. Il n'y a plus ni
 quatrieme jeton ni poids cibles differencies.
 
-La suite compte 212 tests verts : 146 en TypeScript (5 fichiers `test/*.test.ts`)
+La suite compte 233 tests verts : 167 en TypeScript (6 fichiers `test/*.test.ts`)
 et 66 en Solidity (8 fichiers `test/*.t.sol`, 4 fichiers `contracts/*.t.sol`).
 
 ## Structure de la suite
@@ -92,9 +102,29 @@ Pool.constructor
     A) FeeTooHigh, la borne de _nominalFeeNum
     B) EmptyFeeBand, la borne de _minFeeNum
     C) Chaque garde sort SON erreur
-  III] Cas limites
+  III] Les deux gardes de l'horloge d'enchere
+    A) ZeroEpochDuration, la borne de _epochDuration
+    B) PriorityWindowTooLong, la borne de _priorityWindow
+    C) Chaque garde sort SON erreur, plusieurs arguments fautifs a la fois
+  IV] Cas limites
     A) Frais nuls, acceptes deliberement
     B) treasury et owner sont deux roles distincts
+```
+
+`Pool.currentEpoch.test.ts` :
+
+```
+Pool.currentEpoch
+  I] L'epoque de depart
+    A) Au deploiement
+  II] La frontiere du premier basculement
+    A) La derniere seconde de l'epoque 0 et la premiere de l'epoque 1
+    B) Les frontieres suivantes sont espacees d'exactement EPOCH_DURATION
+    C) Une epoque quelconque, loin du premier basculement
+  III] Proprietes de l'horloge
+    A) La lecture est monotone
+    B) L'horloge ne s'arrete pas quand le pool est en pause
+    C) La lecture n'a aucun effet de bord
 ```
 
 `Pool.addLiquidity.test.ts` :
@@ -438,9 +468,9 @@ aussi si la fonction ne fait rien : il faut assertion sur les montants
 reellement sortis et sur les reserves apres coup. C'est la promesse centrale de
 la pause, elle merite mieux qu'une double negation.
 
-`Pool.constructor.test.ts` appelle deux remarques.
+`Pool.constructor.test.ts` appelle trois remarques.
 
-La premiere porte sur la frontiere que testent ses deux gardes, et elle n'est
+La premiere porte sur la frontiere que testent ses deux gardes de frais, et elle n'est
 pas celle qu'on lit au premier coup d'oeil. Les deux `require` du constructeur
 (`Pool.sol:70-71`) ne bornent pas la base du frais mais le frais EFFECTIF :
 la surcharge de desequilibre multiplie la base par `UNBALANCE_FACTOR`, d'ou
@@ -456,7 +486,33 @@ mauvais parametre au deploiement. Les trois cas de `II.C` ferment cette
 confusion, dont celui ou les deux arguments sont fautifs : `FeeTooHigh` sort
 en premier, `_nominalFeeNum` etant verifie avant `_minFeeNum`.
 
-La seconde est un detail d'outillage qui pique, du meme genre que le
+La deuxieme porte sur les deux gardes d'horloge ajoutees a la section `III`
+(`Pool.sol:72-73`), et sur ce qui les distingue des deux precedentes. Elles ne
+bornent aucune valeur economique mais la coherence du decoupage du temps que
+`currentEpoch()` derivera ensuite, et les deux echecs qu'elles ferment ne sont
+pas de meme nature. `_epochDuration = 0` donne un contrat MORT :
+`EPOCH_DURATION` etant le denominateur de `currentEpoch()`, toute lecture
+reverterait en panic `0x12`, et le defaut ne se revelerait qu'au premier appel,
+sur un immuable qu'aucune fonction ne peut plus corriger.
+`_priorityWindow > _epochDuration` donne un contrat INCOHERENT plutot que mort :
+la fenetre de priorite du gestionnaire sortant couvrirait plus que le mandat
+lui-meme, donc la priorite ne s'eteindrait jamais et l'enchere ne changerait
+jamais de main. Les frontieres sont asymetriques et il faut les lire comme
+telles : `_epochDuration` est bornee par un `>` STRICT et par en bas seulement
+(zero refuse, `1` accepte, aucune borne haute), tandis que `_priorityWindow`
+est bornee par un `<=` (une fenetre egale a l'epoque entiere passe, une
+fenetre nulle aussi). La section `III.C` ne reprend pas les cas a un seul
+argument fautif, deja tenus par `III.A` et `III.B` qui decodent le nom de
+l'erreur ; elle ferme ce que ceux-la ne peuvent pas voir, le cas ou plusieurs
+arguments sont hors borne en meme temps. Deux cas y suffisent : les deux
+arguments d'horloge fautifs sortent `ZeroEpochDuration` (`Pool.sol:72` avant
+`73`), et une bande de frais fautive AVEC une horloge fautive sort
+`FeeTooHigh`, la paire des frais precedant celle de l'horloge dans le corps du
+constructeur (`Pool.sol:70-71` avant `72-73`). Ce second cas est le seul de
+tout le fichier a etablir l'ordre ENTRE les deux familles de gardes, et non
+entre deux gardes voisines.
+
+La troisieme est un detail d'outillage qui pique, du meme genre que le
 `vm.expectRevert` de `Pool.safeERC20.t.sol`. `viem.assertions.revertWithCustomError`
 ne fonctionne pas sur un DEPLOIEMENT : ce matcher lit un
 `ContractFunctionRevertedError`, que viem ne construit que pour un appel de
@@ -470,10 +526,52 @@ depuis un pool valide qu'il faudrait deployer pour ca seul. La route ecartee
 est la meme qu'a la section sur les panics : chercher le nom de l'erreur dans
 le TEXTE du message. Elle passerait, et pour la mauvaise raison.
 
+`Pool.currentEpoch.test.ts` appelle trois remarques.
+
+La premiere porte sur l'outil qui fait avancer le temps. Le fichier n'utilise
+pas `networkHelpers.time.increase(delta)` mais
+`time.setNextBlockTimestamp(cible)` suivi d'un `mine()`, encapsules dans un
+helper `warpTo`. La raison est la frontiere : elle se joue a la SECONDE, et un
+delta relatif deriverait de la seconde consommee par chaque transaction
+precedente du test (un `mint`, un `approve`, un `pause`). Une cible absolue,
+posee depuis `GENESIS` lu sur la chaine, fait porter l'assertion sur
+exactement la valeur que le commentaire annonce. `GENESIS` lui-meme n'est
+jamais recalcule depuis l'horloge du test : le recalculer reviendrait a
+reimplementer la ligne testee, exactement ce que le fichier `addLiquidity`
+refuse de faire sur `Math.ceilDiv`.
+
+La deuxieme porte sur la section `II`, qui est le coeur du fichier et pas une
+section parmi d'autres. Partout ailleurs dans une epoque, une division entiere
+par une constante ne peut se tromper que si elle est grossierement fausse, et
+le premier test venu le verrait. C'est a la seconde du basculement qu'une
+erreur d'un cran devient visible, et nulle part ailleurs : d'ou trois paires
+de cas plutot qu'une, autour du premier basculement (`GENESIS + 14399` vaut
+encore `0`, `GENESIS + 14400` vaut `1`), autour du deuxieme (`28799` -> `1`,
+`28800` -> `2`), puis huit epoques plus loin. Les deux `it` d'une paire se
+lisent ensemble : chacun seul prouve une valeur, la paire situe la frontiere.
+
+La troisieme est un risque assume du protocole, que la section `III.B` fige
+plutot qu'elle ne le signale. `currentEpoch()` ne lit que `block.timestamp`,
+`GENESIS` et `EPOCH_DURATION` (`Pool.sol:92-94`) : aucun des trois ne connait
+`Pausable`, donc l'horloge d'enchere continue de defiler pendant une pause. Un
+gestionnaire qui a remporte l'enchere voit son mandat s'ecouler sans pouvoir
+agir si l'owner met la pool en pause, et il ne recupere pas le temps perdu.
+Le choix inverse couterait plus qu'il ne rapporte : geler le compteur
+exigerait de stocker le cumul de temps pause, donc une ecriture a chaque
+bascule, et `currentEpoch()` cesserait d'etre derivable hors chaine par un
+simple calcul sur `GENESIS`. La section le verifie sous deux angles, parce
+qu'un seul ne suffit pas : que le compteur AVANCE en pause (trois epoques
+passees, il vaut `3`), et qu'il avance AUX MEMES INSTANTS (a
+`GENESIS + EPOCH_DURATION - 1` il vaut encore `0`, comme hors pause). Un
+contrat qui aurait tente de compenser la pause, meme partiellement,
+decalerait cette frontiere-la sans que la seule assertion "le compteur a
+bouge" ne le voie.
+
 ### Duplication des fixtures entre les fichiers de test
 
-`Pool.removeLiquidity.test.ts`, `Pool.swap.test.ts`, `Pool.pause.test.ts` et
-`Pool.constructor.test.ts` redefinissent chacun leurs propres fixtures et helpers
+`Pool.removeLiquidity.test.ts`, `Pool.swap.test.ts`, `Pool.pause.test.ts`,
+`Pool.constructor.test.ts` et `Pool.currentEpoch.test.ts`
+redefinissent chacun leurs propres fixtures et helpers
 (`deployTokensAndPool`, `mintAndApprove`, `readReserves`, `readBalances`,
 `assertPanic`, `deploySeededPoolFixture`, `deployImbalancedPoolFixture`...),
 identiques a ceux d'`addLiquidity`, plutot que de les importer d'un module
@@ -564,6 +662,26 @@ message, est ce qui rend le test fiable.
   decode depuis les quatre octets rendus, pas cherche dans le texte du message
 - ordre des gardes : les deux arguments hors borne echouent par `FeeTooHigh`,
   `_nominalFeeNum` etant verifie en premier (`Pool.sol:70` avant `71`)
+- `_epochDuration = 0` reverte : `ZeroEpochDuration` (`Pool.sol:72`). Sans
+  cette garde le deploiement passerait, et `currentEpoch()` reverterait en
+  panic `0x12` a la premiere lecture, sur un immuable non corrigeable
+- `_epochDuration = 1` passe : la garde est un `>` strict sans borne haute,
+  elle ne dit rien de la pertinence de la duree. Le test relit
+  `EPOCH_DURATION` plutot que de constater l'absence de revert, un ecretage
+  silencieux passerait sinon
+- `_priorityWindow == _epochDuration` passe : le `require` est un `<=`
+  (`Pool.sol:73`), la fenetre peut couvrir l'epoque entiere
+- `_priorityWindow = _epochDuration + 1` reverte : `PriorityWindowTooLong`.
+  Au-dela de cette borne la priorite du gestionnaire sortant ne s'eteindrait
+  jamais, et l'enchere ne changerait jamais de main
+- `_priorityWindow = 0` passe : aucune borne basse. C'est le deploiement ou le
+  gestionnaire sortant n'a aucune priorite, l'enchere etant ouverte a tous des
+  la premiere seconde de chaque epoque
+- ordre des gardes, deux cas : `_epochDuration = 0` avec un `_priorityWindow`
+  non nul rend les deux gardes d'horloge fautives et echoue par
+  `ZeroEpochDuration` (`Pool.sol:72` avant `73`) ; une bande de frais fautive
+  AVEC une horloge fautive echoue par `FeeTooHigh`, la paire des frais
+  precedant celle de l'horloge (`Pool.sol:70-71` avant `72-73`)
 
 **Cas limites**
 
@@ -579,6 +697,57 @@ message, est ce qui rend le test fiable.
   `other`). Sur un deploiement ou `treasury == owner`, une affectation croisee
   entre les deux passerait inapercue et le test de cablage ne prouverait plus
   rien
+
+### `currentEpoch`
+
+**L'epoque de depart**
+
+- `currentEpoch()` vaut `0` sur le bloc de deploiement : `(GENESIS - GENESIS) /
+  EPOCH_DURATION = 0`. L'epoque du deploiement est la `0`, la numerotation ne
+  commence pas a `1`, et tout le reste du fichier compte des basculements
+  depuis cette origine
+- `currentEpoch()` vaut encore `0` a `GENESIS + 1` : sans ce cas, un contrat
+  qui rendrait `block.timestamp - GENESIS` sans diviser passerait le
+  precedent (`0 - 0 = 0`) et n'echouerait que beaucoup plus loin
+
+**La frontiere**
+
+- a `GENESIS + EPOCH_DURATION - 1` le compteur vaut encore `0`
+  (`14399 / 14400 = 0`), a `GENESIS + EPOCH_DURATION` il vaut `1`
+  (`14400 / 14400 = 1`). La paire est le coeur du fichier : la borne est
+  inclusive cote epoque suivante, une epoque dure `EPOCH_DURATION` secondes
+  pleines, de son premier instant inclus au premier instant de la suivante
+  exclu
+- meme paire au deuxieme basculement (`28799` -> `1`, `28800` -> `2`) : ce
+  n'est pas `GENESIS` qui est un cas particulier, c'est la formule qui est
+  uniforme
+- au milieu de l'epoque `7` (`108000 / 14400 = 7,5` -> `7`) et a sa derniere
+  seconde (`115199 / 14400 = 7`) : la division tient au-dela du premier tour
+  de compteur, et l'ecart entre deux basculements ne derive pas
+
+**Proprietes de l'horloge**
+
+- la lecture est monotone : quatre lectures separees par des sauts INEGAUX
+  (une demi-epoque, une seconde, trois epoques) ne decroissent jamais.
+  `block.timestamp` ne recule pas et `GENESIS` est immuable, donc la division
+  entiere par une constante positive preserve l'ordre
+- deux lectures dans le MEME bloc rendent la meme valeur : un front peut lire
+  `currentEpoch()` plusieurs fois pour composer un affichage sans melanger
+  deux mandats
+- l'horloge ne s'arrete pas en pause, et c'est DELIBERE (voir la remarque
+  dediee plus haut) : sur un pool amorce puis mis en pause, le compteur vaut
+  `3` apres trois epoques passees, et la frontiere reste a la meme seconde
+  qu'hors pause
+- la lecture n'a aucun effet de bord : sur un pool amorce, les quatre valeurs
+  mutables du contrat (`reserves`, `feeNum`, `lastFeeUpdate`, `totalSupply`)
+  sont identiques avant et apres plusieurs appels. `currentEpoch()` est
+  `view`, donc l'appel part en `eth_call` et ne coute rien — sans quoi le bot
+  d'enchere paierait du gas pour lire l'heure
+- le compteur n'est pas stocke : cinq epoques plus tard, `GENESIS` et
+  `EPOCH_DURATION` sont inchanges, et ce sont les deux seuls termes de la
+  formule qui ne soient pas `block.timestamp`. C'est ce qui rend l'epoque
+  recalculable hors chaine sans jamais interroger le contrat, et ce qui
+  garantit qu'aucune epoque ne peut etre "sautee" faute d'appelant
 
 ### `addLiquidity` — pool vide
 

@@ -70,6 +70,22 @@ const ABOVE_MAX_BASE_FEE_NUM = MAX_BASE_FEE_NUM + 1n; // 26
 
 const ZERO_FEE_NUM = 0n;
 
+// Frontiere des deux gardes de l'horloge d'enchere (Pool.sol:72-73).
+//
+//   require(_epochDuration > 0, ZeroEpochDuration());
+//   require(_priorityWindow <= _epochDuration, PriorityWindowTooLong());
+//
+// La premiere est une inegalite STRICTE et n'a pas de borne haute : zero est
+// la seule valeur refusee, 1 la plus petite acceptee. La seconde est un <= :
+// la fenetre peut couvrir l'epoque entiere, elle ne peut pas la depasser.
+// Calcul a la main, sur la duree de production :
+//   14400 <= 14400  -> derniere fenetre acceptee
+//   14401 > 14400   -> premiere fenetre refusee
+const ZERO_EPOCH_DURATION = 0n;
+const MIN_EPOCH_DURATION = 1n; // plus petite duree acceptee par le require > 0
+const ABOVE_EPOCH_DURATION = EPOCH_DURATION + 1n; // 14401, premiere fenetre refusee
+const ZERO_PRIORITY_WINDOW = 0n;
+
 // ---------------------------------------------------------------------------
 // Fixtures et helpers
 //
@@ -99,18 +115,22 @@ async function deployTokensFixture() {
 type TokensFixture = Awaited<ReturnType<typeof deployTokensFixture>>;
 
 // Deploie un pool sur des jetons deja en place, en laissant chaque test
-// choisir _minFeeNum et _nominalFeeNum. Tous les autres arguments restent
-// ceux du deploiement reel : c'est la bande de frais, et elle seule, que les
-// gardes du constructeur regardent.
+// choisir _minFeeNum et _nominalFeeNum, et — pour la section III — la duree
+// d'epoque et la fenetre de priorite. Les deux derniers parametres portent
+// les valeurs du deploiement reel par defaut : les tests de la bande de frais
+// n'ont ainsi rien a changer, et seuls ceux qui eprouvent l'horloge les
+// nomment explicitement.
 function deployPoolWith(
   base: TokensFixture,
   minFeeNum: bigint,
   nominalFeeNum: bigint,
+  epochDuration: bigint = EPOCH_DURATION,
+  priorityWindow: bigint = PRIORITY_WINDOW,
 ) {
   return viem.deployContract("Pool", [
     [...base.tokenAddresses],
-    EPOCH_DURATION,
-    PRIORITY_WINDOW,
+    epochDuration,
+    priorityWindow,
     minFeeNum,
     nominalFeeNum,
     base.treasury.account.address,
@@ -492,10 +512,180 @@ describe("Pool.constructor", async function () {
   });
 
   // ---------------------------------------------------------------------------
-  // III] Cas limites
+  // III] Les deux gardes de l'horloge d'enchere
+  //
+  // Elles ne bornent pas une valeur economique mais la COHERENCE du decoupage
+  // du temps que currentEpoch() derivera ensuite (Pool.sol:92-94, couvert par
+  // test/Pool.currentEpoch.test.ts). Les deux echecs qu'elles ferment sont de
+  // nature differente, et c'est ce qui justifie deux erreurs distinctes.
+  //
+  // _epochDuration = 0 est un contrat MORT : EPOCH_DURATION etant le
+  // denominateur de currentEpoch(), toute lecture reverterait en panic 0x12,
+  // division par zero. Sans cette garde, le deploiement reussirait et le
+  // defaut ne se revelerait qu'au premier appel, sur un immuable qu'aucune
+  // fonction ne peut plus corriger.
+  //
+  // _priorityWindow > _epochDuration est un contrat INCOHERENT plutot que
+  // mort : la fenetre pendant laquelle le gestionnaire sortant garde la main
+  // couvrirait alors plus que le mandat lui-meme, donc la priorite ne
+  // s'eteindrait jamais et l'enchere ne changerait jamais de main. Le
+  // deploiement passerait, et le protocole serait fige.
   // ---------------------------------------------------------------------------
 
-  describe("III] Cas limites", function () {
+  describe("III] Les deux gardes de l'horloge d'enchere", function () {
+    describe("A) ZeroEpochDuration, la borne de _epochDuration", function () {
+      it("_epochDuration = 0 revert : ZeroEpochDuration", async function () {
+        // La fenetre est mise a zero elle aussi, pour que ce cas n'eprouve
+        // QUE la premiere garde : avec la fenetre de production (12), la
+        // seconde garde serait fautive en meme temps, et c'est le cas
+        // d'ordre de la section C, pas celui-ci.
+        const base = await networkHelpers.loadFixture(deployTokensFixture);
+
+        await assertDeployRevertsWithCustomError(
+          deployPoolWith(base, MIN_FEE_NUM, DEFAULT_FEE_NUM, ZERO_EPOCH_DURATION, ZERO_PRIORITY_WINDOW),
+          "ZeroEpochDuration",
+        );
+      });
+
+      it("_epochDuration = 1 passe : c'est un > 0, pas un seuil de duree", async function () {
+        // La garde ne dit rien de la PERTINENCE de la duree, seulement de sa
+        // non-nullite : une epoque d'une seconde est un deploiement legitime
+        // du point de vue du contrat. Le test relit EPOCH_DURATION plutot que
+        // de constater l'absence de revert, un constructeur qui remplacerait
+        // silencieusement la valeur par un plancher passerait sinon.
+        const base = await networkHelpers.loadFixture(deployTokensFixture);
+
+        const pool = await deployPoolWith(
+          base,
+          MIN_FEE_NUM,
+          DEFAULT_FEE_NUM,
+          MIN_EPOCH_DURATION,
+          MIN_EPOCH_DURATION, // 1 <= 1, la seconde garde passe de justesse
+        );
+
+        const epochDuration = await pool.read.EPOCH_DURATION();
+        assert.equal(
+          epochDuration,
+          MIN_EPOCH_DURATION,
+          `EPOCH_DURATION() vaut ${epochDuration}, attendu ${MIN_EPOCH_DURATION} (plus petite duree acceptee)`,
+        );
+      });
+    });
+
+    describe("B) PriorityWindowTooLong, la borne de _priorityWindow", function () {
+      it("_priorityWindow = EPOCH_DURATION passe : le require est un <=", async function () {
+        // La frontiere, et le seul cas ou les deux valeurs coincident. Une
+        // fenetre egale a l'epoque signifie que le gestionnaire sortant garde
+        // la priorite jusqu'a la derniere seconde de son mandat, ce que le
+        // contrat autorise. Calcul a la main : 14400 <= 14400.
+        // Le test relit PRIORITY_WINDOW : la seule absence de revert ne
+        // distinguerait pas ce deploiement d'un ecretage silencieux.
+        const base = await networkHelpers.loadFixture(deployTokensFixture);
+
+        const pool = await deployPoolWith(
+          base,
+          MIN_FEE_NUM,
+          DEFAULT_FEE_NUM,
+          EPOCH_DURATION,
+          EPOCH_DURATION,
+        );
+
+        const priorityWindow = await pool.read.PRIORITY_WINDOW();
+        assert.equal(
+          priorityWindow,
+          EPOCH_DURATION,
+          `PRIORITY_WINDOW() vaut ${priorityWindow}, attendu ${EPOCH_DURATION} (derniere fenetre acceptee)`,
+        );
+      });
+
+      it("_priorityWindow = EPOCH_DURATION + 1 revert : PriorityWindowTooLong", async function () {
+        // Une seconde au-dessus de la borne precedente. Les deux `it` pris
+        // ensemble situent la frontiere exactement, ce qu'aucun des deux ne
+        // fait seul. Calcul a la main : 14401 > 14400.
+        const base = await networkHelpers.loadFixture(deployTokensFixture);
+
+        await assertDeployRevertsWithCustomError(
+          deployPoolWith(base, MIN_FEE_NUM, DEFAULT_FEE_NUM, EPOCH_DURATION, ABOVE_EPOCH_DURATION),
+          "PriorityWindowTooLong",
+        );
+      });
+
+      it("_priorityWindow = 0 passe : la garde n'a pas de borne basse", async function () {
+        // Le pendant du cas precedent de l'autre cote. Une fenetre nulle est
+        // un deploiement legitime, celui ou le gestionnaire sortant n'a
+        // aucune priorite : l'enchere est alors ouverte a tous des la
+        // premiere seconde de chaque epoque. Calcul a la main : 0 <= 14400.
+        const base = await networkHelpers.loadFixture(deployTokensFixture);
+
+        const pool = await deployPoolWith(
+          base,
+          MIN_FEE_NUM,
+          DEFAULT_FEE_NUM,
+          EPOCH_DURATION,
+          ZERO_PRIORITY_WINDOW,
+        );
+
+        const priorityWindow = await pool.read.PRIORITY_WINDOW();
+        assert.equal(
+          priorityWindow,
+          ZERO_PRIORITY_WINDOW,
+          `PRIORITY_WINDOW() vaut ${priorityWindow}, attendu ${ZERO_PRIORITY_WINDOW} (fenetre nulle, autorisee)`,
+        );
+      });
+    });
+
+    describe("C) Chaque garde sort SON erreur, plusieurs arguments fautifs a la fois", function () {
+      // Meme argument qu'a la section II.C, et meme necessite. Les quatre
+      // require du constructeur se suivent (Pool.sol:70-73) et rendent quatre
+      // erreurs sans argument : rien, a la lecture seule, ne garantit que
+      // celle qui sort nomme le bon parametre. Une interversion compilerait,
+      // passerait des tests qui n'exigeraient qu'un revert, et enverrait
+      // l'operateur corriger la mauvaise valeur au deploiement — sur un
+      // contrat dont ces quatre valeurs sont immuables.
+      //
+      // Les cas a UN seul argument fautif sont deja tenus par les sections A
+      // et B : leurs deux `it` de revert decodent le nom de l'erreur, ils
+      // affirment donc bien "ZeroEpochDuration ET PAS autre chose". Les
+      // reprendre ici a l'identique n'ajouterait rien. Ce que cette section
+      // ferme est le cas ou PLUSIEURS arguments sont hors borne en meme
+      // temps, ou le nom rendu depend de l'ordre des require et de rien
+      // d'autre.
+      it("les deux arguments d'horloge fautifs echouent par ZeroEpochDuration, jamais PriorityWindowTooLong", async function () {
+        // _epochDuration = 0 avec _priorityWindow = 12 rend les DEUX gardes
+        // fautives a la fois : la duree est nulle, et 12 > 0 viole aussi la
+        // seconde. ZeroEpochDuration est verifiee en premier (Pool.sol:72
+        // avant 73), c'est donc elle que l'operateur voit — et c'est la bonne,
+        // corriger la fenetre ne sauverait pas un contrat dont currentEpoch()
+        // diviserait par zero.
+        const base = await networkHelpers.loadFixture(deployTokensFixture);
+
+        await assertDeployRevertsWithCustomError(
+          deployPoolWith(base, MIN_FEE_NUM, DEFAULT_FEE_NUM, ZERO_EPOCH_DURATION, PRIORITY_WINDOW),
+          "ZeroEpochDuration",
+        );
+      });
+
+      it("une bande de frais fautive ET une horloge fautive echouent par FeeTooHigh", async function () {
+        // Les deux gardes de frais precedent les deux gardes d'horloge dans
+        // le corps du constructeur (Pool.sol:70-71 avant 72-73). Ce cas
+        // etablit l'ordre ENTRE les deux paires, ce qu'aucun des tests de la
+        // section II.C ni des trois cas ci-dessus ne fait : eux comparent
+        // deux gardes voisines, celui-ci compare les deux familles.
+        const base = await networkHelpers.loadFixture(deployTokensFixture);
+
+        await assertDeployRevertsWithCustomError(
+          deployPoolWith(base, MIN_FEE_NUM, ABOVE_MAX_BASE_FEE_NUM, ZERO_EPOCH_DURATION, PRIORITY_WINDOW),
+          "FeeTooHigh",
+        );
+      });
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // IV] Cas limites
+  // ---------------------------------------------------------------------------
+
+  describe("IV] Cas limites", function () {
     describe("A) Frais nuls, acceptes deliberement", function () {
       // Ni l'une ni l'autre garde n'a de borne basse : 0 * 2 = 0 <= 50, les
       // deux passent. Ce n'est pas un oubli. Une partie de la suite existante
