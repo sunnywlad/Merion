@@ -40,6 +40,7 @@ contract Pool is ERC20, Ownable, Pausable {
   uint256 constant public MINIMUM_LIQUIDITY = 1000;
 
   error FeeTooHigh();
+  error EmptyFeeBand();
   error FeeUpdateTooSoon();
   error BadSlippage();
   error ReserveOverflow();
@@ -66,6 +67,9 @@ contract Pool is ERC20, Ownable, Pausable {
     GENESIS = block.timestamp;
     EPOCH_DURATION = _epochDuration;
     PRIORITY_WINDOW = _priorityWindow;
+    require(_nominalFeeNum * UNBALANCE_FACTOR <= MAX_FEE_NUM, FeeTooHigh());
+    require(_minFeeNum * UNBALANCE_FACTOR <= MAX_FEE_NUM, EmptyFeeBand());
+
     MIN_FEE_NUM = _minFeeNum;
     NOMINAL_FEE_NUM = _nominalFeeNum;
     treasury = _treasury;
