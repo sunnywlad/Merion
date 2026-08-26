@@ -47,7 +47,6 @@ const { viem, networkHelpers } = await network.create();
 
 const DEFAULT_FEE_NUM = 5n; // reprend la valeur du Pool.t.sol d'origine
 const MIN_FEE_NUM = 1n; // _minFeeNum passe au constructeur, cf. PoolTestBase.sol
-const MIN_SET_FEE_DELAY = 24n * 60n * 60n; // 1 days, Pool.sol:24
 const EPOCH_DURATION = 14400n; // 4h, cf. build-auction.md 5.0 bis
 const PRIORITY_WINDOW = 12n; // cf. build-auction.md 5.0 bis
 // Sur les fixtures de cette suite, les reserves valent au plus 1e10 : aucun
@@ -223,7 +222,8 @@ const NOMINAL_MINTED_SHARES = 3_000_000_000n;
 
 // Nouveau taux pose par le test de setFee en pause (section II.D),
 // different de DEFAULT_FEE_NUM pour que l'assertion ait quelque chose a
-// distinguer, et sous MAX_FEE_NUM (50).
+// distinguer, et dans la bande du gestionnaire, [MIN_FEE_NUM,
+// MAX_FEE_NUM / UNBALANCE_FACTOR] = [1, 25].
 const NEW_FEE_NUM = 7n;
 
 describe("Pool.pause", async function () {
@@ -404,24 +404,31 @@ describe("Pool.pause", async function () {
     });
 
     describe("D) setFee reste appelable", function () {
-      it("l'owner appelle setFee en pause : l'appel passe et feeNum prend la nouvelle valeur", async function () {
+      it("le gestionnaire du mandat courant appelle setFee en pause : l'appel passe et feeNum prend la nouvelle valeur", async function () {
         // Choix delibere : la pause sert a preparer la reprise, et bloquer
         // setFee forcerait a depauser d'abord puis fixer le taux ensuite,
         // laissant une fenetre ou la pool rouvre au taux que la crise a rendu
-        // inadapte.
+        // inadapte. La promesse testee ici est donc inchangee : en pause, le
+        // tarif reste modifiable.
         //
-        // Le delai de setFee (MIN_SET_FEE_DELAY, Pool.sol:28) court sur
-        // block.timestamp et lastFeeUpdate est initialise a la construction :
-        // il faut donc avancer le temps avant l'appel, sinon ce test echoue
-        // sur FeeUpdateTooSoon et ne prouve plus rien sur la pause. C'est
-        // aussi la contrepartie a connaitre de ce choix de conception : le
-        // delai tourne pendant la pause, donc consommer le droit la veille de
-        // la reprise le rend indisponible pour les vingt-quatre heures qui
-        // suivent la reouverture.
-        const { pool, deployer } = await networkHelpers.loadFixture(deployPausedSeededPoolFixture);
-        await networkHelpers.time.increase(Number(MIN_SET_FEE_DELAY));
+        // Ce qui a change est l'APPELANT. setFee n'est plus un pouvoir de
+        // l'owner, c'est le seul levier du gestionnaire du mandat courant,
+        // dans sa fenetre de priorite. La mise en situation en decoule :
+        // l'owner designe un gestionnaire pour l'epoch 1 (il le peut tant que
+        // `auction` est nulle, Pool.setManager), puis le temps est amene
+        // exactement sur la premiere seconde de ce mandat, ou l'offset dans
+        // l'epoch vaut 0, strictement sous PRIORITY_WINDOW.
+        //
+        // setNextBlockTimestamp plutot qu'un increase relatif : la fenetre
+        // vaut douze secondes et un delta relatif deriverait de la seconde
+        // consommee par la transaction de setManager.
+        const { pool, deployer, other } = await networkHelpers.loadFixture(deployPausedSeededPoolFixture);
+        const genesis = await pool.read.GENESIS();
 
-        await pool.write.setFee([NEW_FEE_NUM], { account: deployer.account });
+        await pool.write.setManager([1n, other.account.address], { account: deployer.account });
+        await networkHelpers.time.setNextBlockTimestamp(genesis + EPOCH_DURATION);
+
+        await pool.write.setFee([NEW_FEE_NUM], { account: other.account });
 
         const feeNum = BigInt(await pool.read.feeNum());
         assert.equal(

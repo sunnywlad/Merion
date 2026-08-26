@@ -11,8 +11,8 @@ import {Pool} from "../contracts/Pool.sol";
 // feeInForce() (Pool.sol:134-136) est INDISTINGUABLE d'un
 // `return NOMINAL_FEE_NUM` :
 //
-//   - lastSetFeeEpoch vaut 0 au deploiement et rien ne l'ecrit jamais (le
-//     setFee onlyOwner encore present, Pool.sol:138-144, n'y touche pas) ;
+//   - lastSetFeeEpoch vaut 0 au deploiement, et le seul organe qui l'ecrive
+//     est setFee, qu'aucun test de ce fichier n'appelle ;
 //   - pendant l'epoch 0, la seule epoch ou la comparaison peut donc etre
 //     vraie, feeNum vaut exactement NOMINAL_FEE_NUM, pose par le
 //     constructeur (Pool.sol:100).
@@ -27,10 +27,11 @@ import {Pool} from "../contracts/Pool.sol";
 // La route retenue est le forcage d'etat par vm.store, comme dans
 // test/Pool.forgedState.t.sol, et pour la meme raison de fond : un etat reel
 // du contrat, mais qu'aucune sequence d'appels legitime ne produit encore.
-// La route alternative — appeler le setFee onlyOwner pour deplacer feeNum —
-// est refusee deliberement : ce setFee est supprime a la sous-etape I.1.7,
-// avec lastFeeUpdate et MIN_SET_FEE_DELAY, et tout test bati dessus mourrait
-// avec lui. vm.store, lui, ne depend d'aucun organe condamne.
+// La route alternative — passer par setFee pour deplacer feeNum — a ete
+// refusee deliberement : le setFee onlyOwner d'alors etait condamne, et tout
+// test bati dessus serait mort avec lui. Il l'est aujourd'hui, et ce fichier a
+// survecu sans une ligne a changer. vm.store ne depend d'aucun organe
+// condamne, et cette independance-la reste vraie du setFee gestionnaire.
 //
 // La technique de recherche du slot est dupliquee depuis
 // test/Pool.forgedState.t.sol plutot que partagee (convention du projet, voir

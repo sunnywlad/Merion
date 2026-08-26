@@ -84,9 +84,13 @@ contract PoolGasSeededPool is PoolGasBase {
     pool.addLiquidity(0, SEED, 0);
     allShares = pool.balanceOf(address(this));
     halfShares = allShares / 2;
-    // Le délai de setFee court depuis le déploiement : on le purge ici pour
-    // que la mesure de setFee ne dépende pas de l'ordre des tests.
-    vm.warp(block.timestamp + 1 days);
+    // setFee est désormais le levier du gestionnaire du mandat courant, dans
+    // sa fenêtre de priorité : la mise en situation consiste donc à se faire
+    // désigner gestionnaire de l'epoch 1, puis à se placer sur sa première
+    // seconde. L'offset dans l'epoch vaut alors 0, strictement sous
+    // PRIORITY_WINDOW.
+    pool.setManager(1, address(this));
+    vm.warp(pool.GENESIS() + pool.EPOCH_DURATION());
   }
 
   function test_gas_AddLiquidity() public {

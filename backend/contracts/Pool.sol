@@ -20,7 +20,8 @@ contract Pool is ERC20, Ownable, Pausable {
   uint8 public constant floor = 13;
   uint8 public constant ceiling = 53;
 
-  // Slot packing : uint16 feeNum + uint32 lastSetFeeEpoch partagent 32 octets.
+  // Slot packing : uint16 feeNum + uint32 lastSetFeeEpoch partagent UN slot de
+  // 32 octets, dont ils n'occupent que 6 ; les 26 restants sont libres.
   // Le compilateur aligne feeNum sur les bits bas (16 bits) puis lastSetFeeEpoch
   // au-dessus (32 bits), soit feeNum | (lastSetFeeEpoch << 16). 2 octets couvrent
   // MAX_FEE_NUM = 50 ; 4 octets couvrent 4,3 milliards d'epochs (~4 970 ans à
@@ -36,9 +37,6 @@ contract Pool is ERC20, Ownable, Pausable {
   uint256 public immutable NOMINAL_FEE_NUM;
   uint256 constant public UNBALANCE_FACTOR = 2;
   uint256 constant public TOL_DEN = 10000;
-
-  uint256 public lastFeeUpdate;
-  uint256 constant public MIN_SET_FEE_DELAY = 1 days;
 
   uint256 public immutable MIN_FEE_NUM;
 
@@ -56,7 +54,6 @@ contract Pool is ERC20, Ownable, Pausable {
   error EmptyFeeBand();
   error ZeroEpochDuration();
   error PriorityWindowTooLong();
-  error FeeUpdateTooSoon();
   error BadSlippage();
   error ReserveOverflow();
   error InsufficientReserve();
@@ -69,8 +66,14 @@ contract Pool is ERC20, Ownable, Pausable {
   error ZeroManager();
   error ManagerAlreadySet();
   error AuctionAlreadySet();
+  error NotManager();
+  error OutsidePriorityWindow();
+  error FeeAlreadySetThisEpoch();
+  // Seule erreur de setFee à porter des arguments : c'est la seule dont
+  // l'appelant ne peut pas dériver la cause sans lire deux constantes.
+  error FeeOutOfBand(uint256 min, uint256 max);
 
-  event FeeSet(uint256 oldFee, uint256 newFee);
+  event FeeSet(uint256 indexed epoch, address indexed manager, uint256 oldFee, uint256 newFee);
   event AddedLiquidity(address indexed provider, uint256[3] amountsIn, uint256 mintedShares);
   event RemovedLiquidity(address indexed provider, uint256[3] amountsOut, uint256 burnedShares);
   event Swapped(address indexed swapper, uint256 indexed indexIn, uint256 amountIn, uint256 indexed indexOut, uint256 amountOut);
@@ -98,7 +101,6 @@ contract Pool is ERC20, Ownable, Pausable {
     treasury = _treasury;
 
     feeNum = uint16(_nominalFeeNum);
-    lastFeeUpdate = block.timestamp;
 
     token0 = _tokens[0];
     token1 = _tokens[1];
@@ -135,12 +137,41 @@ contract Pool is ERC20, Ownable, Pausable {
     return lastSetFeeEpoch == currentEpoch() ? feeNum : NOMINAL_FEE_NUM;
   }
 
-  function setFee(uint256 _feeNum) external onlyOwner {
-    require(_feeNum <= MAX_FEE_NUM, FeeTooHigh());
-    require(block.timestamp - lastFeeUpdate >= MIN_SET_FEE_DELAY, FeeUpdateTooSoon());
-    emit FeeSet(feeNum, _feeNum);
+  // Le seul levier du gestionnaire du mandat courant : il fixe la base de
+  // frais pour son epoch, une fois, au début de son mandat.
+  //
+  // La fenêtre de priorité borne setFee et SEULEMENT setFee. Elle n'accorde
+  // aucune exclusivité de swap : le design a retiré cette exclusivité, et le
+  // champ priorityBlock qui la servait, le 2026-08-25. La fenêtre n'est pas un
+  // droit d'échanger en premier, c'est le créneau pendant lequel le tarif de
+  // l'epoch se décide ; passé ce créneau, le tarif est figé pour tout le monde,
+  // gestionnaire compris.
+  //
+  // Pas de whenNotPaused, délibérément : la pause arrête ce qui déplace de la
+  // valeur entre les jambes du pool, et setFee n'en déplace pas.
+  function setFee(uint256 _feeNum) external {
+    require(msg.sender == manager(), NotManager());
+    require((block.timestamp - GENESIS) % EPOCH_DURATION < PRIORITY_WINDOW, OutsidePriorityWindow());
+    // L'accès gestionnaire passe EN PREMIER, et c'est ce qui rend cette garde
+    // correcte. Au mandat 0, lastSetFeeEpoch vaut 0 et currentEpoch() vaut 0 :
+    // la garde serait fausse d'emblée et laisserait passer une écriture. Mais
+    // le mandat 0 ne peut JAMAIS avoir de gestionnaire, setManager exigeant
+    // _epoch > currentEpoch() ; manager() y rend donc address(0) et la garde
+    // d'accès referme avant. L'amorçage est fermé par du code, pas par une
+    // coïncidence de valeurs.
+    require(lastSetFeeEpoch != currentEpoch(), FeeAlreadySetThisEpoch());
+    // Le plafond du gestionnaire est dérivé à la volée, jamais MAX_FEE_NUM et
+    // jamais une seconde constante stockée : personne ne paie jamais plus de
+    // 0,50 %, et le gestionnaire écrit une base entre 0,01 % et 0,25 %.
+    uint256 maxManagerFeeNum = MAX_FEE_NUM / UNBALANCE_FACTOR;
+    require(
+      _feeNum >= MIN_FEE_NUM && _feeNum <= maxManagerFeeNum,
+      FeeOutOfBand(MIN_FEE_NUM, maxManagerFeeNum)
+    );
+
+    emit FeeSet(currentEpoch(), msg.sender, feeNum, _feeNum);
     feeNum = uint16(_feeNum);
-    lastFeeUpdate = block.timestamp;
+    lastSetFeeEpoch = uint32(currentEpoch());
   }
 
   function pause() external onlyOwner {

@@ -1,7 +1,7 @@
 'use client';
 
 import {useReserves} from '@/hooks/useReserves';
-import { useFeeNum } from '@/hooks/useFeeNum';
+import { useFeeInForce } from '@/hooks/useFeeInForce';
 import { useConstants } from '@/hooks/useConstants';
 import { tokensInfo } from '@/constants/addresses';
 import AmountLine from '@/components/AmountLine';
@@ -9,15 +9,15 @@ import AmountLine from '@/components/AmountLine';
 export default function Reserves() {
   const { reserves, supply, isLoading, error } = useReserves();
 
-  const { data: feeNum, isLoading: isLoadingFee, error: errorFee } = useFeeNum();
+  const { data: feeInForce, isLoading: isLoadingFee, error: errorFee } = useFeeInForce();
   const { feeDen: feeDenEntry, isLoading: isLoadingDen, error: errorDen } = useConstants();
   const feeDen = feeDenEntry?.status === 'success' ? feeDenEntry.result : undefined;
 
   // Basis points, so decimals={2} below renders a percentage. `feeDen` is tested for truthiness
   // and not merely for definedness: a zero denominator would divide by zero, and the pool would
   // be broken anyway.
-  const feePercent = feeNum !== undefined && feeDen
-    ? feeNum * 10000n / feeDen
+  const feePercent = feeInForce !== undefined && feeDen
+    ? feeInForce * 10000n / feeDen
     : undefined;
 
   return (

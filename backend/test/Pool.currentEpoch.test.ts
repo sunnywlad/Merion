@@ -137,7 +137,7 @@ async function warpTo(timestamp: bigint) {
   await networkHelpers.mine();
 }
 
-// Lit reserves / feeNum / lastFeeUpdate / totalSupply, c'est-a-dire tout
+// Lit reserves / feeNum / lastSetFeeEpoch / totalSupply, c'est-a-dire tout
 // l'etat du pool qu'une ecriture clandestine dans currentEpoch() pourrait
 // deplacer. Sert a la section III.C.
 async function readMutableState(pool: PoolFixture["pool"]) {
@@ -148,7 +148,7 @@ async function readMutableState(pool: PoolFixture["pool"]) {
       await pool.read.reserves([2n]),
     ],
     feeNum: await pool.read.feeNum(),
-    lastFeeUpdate: await pool.read.lastFeeUpdate(),
+    lastSetFeeEpoch: await pool.read.lastSetFeeEpoch(),
     totalSupply: await pool.read.totalSupply(),
   };
 }

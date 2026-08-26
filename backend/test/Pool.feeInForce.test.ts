@@ -3,16 +3,20 @@
 // AVERTISSEMENT, a lire avant le reste du fichier : CETTE COUCHE NE PEUT PAS
 // DISTINGUER feeInForce() D'UNE CONSTANTE.
 //
-// La raison tient en deux faits sur l'etat actuel du contrat. D'une part,
-// lastSetFeeEpoch (Pool.sol:33) vaut 0 au deploiement et RIEN ne l'ecrit
-// jamais : le setFee onlyOwner encore present (Pool.sol:138-144) ne touche
-// que feeNum et lastFeeUpdate. D'autre part, pendant l'epoch 0 — la seule ou
-// la comparaison de Pool.sol:135 puisse etre vraie — feeNum vaut exactement
-// NOMINAL_FEE_NUM, pose par le constructeur (Pool.sol:100). La branche
-// "mandat courant" du ternaire n'est donc jamais prise avec une valeur qui la
-// distingue de l'autre branche, et aucune sequence d'appels ABI ne peut le
-// changer. Un contrat dont feeInForce() serait ecrit `return NOMINAL_FEE_NUM`
-// passerait ce fichier a l'identique, du premier au dernier `it`.
+// La raison tient en deux faits, et elle vaut pour CE FICHIER, qui n'appelle
+// jamais setFee. D'une part, lastSetFeeEpoch n'est ecrit que par setFee, que
+// rien ici ne declenche : il reste donc a 0 d'un bout a l'autre. D'autre part,
+// pendant l'epoch 0 — la seule ou la comparaison du ternaire puisse alors etre
+// vraie — feeNum vaut exactement NOMINAL_FEE_NUM, pose par le constructeur.
+// La branche "mandat courant" du ternaire n'est donc jamais prise ici avec une
+// valeur qui la distingue de l'autre branche. Un contrat dont feeInForce()
+// serait ecrit `return NOMINAL_FEE_NUM` passerait ce fichier a l'identique, du
+// premier au dernier `it`.
+//
+// Depuis que setFee est passe au gestionnaire du mandat courant, une route ABI
+// legitime existe pour ecrire lastSetFeeEpoch (setManager, puis setFee dans la
+// fenetre de priorite du mandat) ; elle appartient a la suite de setFee, pas a
+// celle-ci, dont le perimetre reste la LECTURE par un tiers.
 //
 // La preuve vit donc ailleurs, dans test/Pool.feeInForce.t.sol : elle y est
 // obtenue en forgeant le slot partage par vm.store, seul moyen d'exhiber un
@@ -33,8 +37,8 @@
 // deplace rien, meme en pause.
 //
 // Hors perimetre, explicitement : setFee sous toutes ses formes (le legacy
-// est supprime a I.1.7, le setFee gestionnaire est ecrit a I.1.6), et le
-// chemin de frais de swap(), qui lit aujourd'hui feeNum BRUT et non
+// onlyOwner a ete supprime, le setFee gestionnaire est couvert ailleurs), et
+// le chemin de frais de swap(), qui lit aujourd'hui feeNum BRUT et non
 // feeInForce() (Pool.sol:218). Cette divergence est connue et sa resolution
 // appartient a une etape ulterieure : aucun test de ce fichier ne l'epingle,
 // dans un sens ou dans l'autre.

@@ -15,12 +15,6 @@ export function useConstants() {
         abi: poolAbi,
         functionName: 'MAX_FEE_NUM',
         args: []
-      },
-      {
-        address: deployedPool,
-        abi: poolAbi,
-        functionName: 'MIN_SET_FEE_DELAY',
-        args: []
       }
     ] as const,
     query: { staleTime: Infinity }
@@ -28,7 +22,6 @@ export function useConstants() {
   return {
     feeDen: data?.[0],
     maxFeeNum: data?.[1],
-    minSetFeeDelay: data?.[2],
     isLoading,
     error
   }

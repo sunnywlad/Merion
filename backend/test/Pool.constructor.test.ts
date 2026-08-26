@@ -4,10 +4,10 @@
 // quatre suites existantes : le constructeur n'appartient a aucune des
 // fonctions qu'elles testent. Il fige les immuables que TOUTES lisent
 // ensuite (les trois adresses de jetons, la fenetre d'epoque, la bande de
-// frais, la tresorerie, l'owner) et pose l'etat mutable de depart (feeNum,
-// lastFeeUpdate). Loge dans Pool.addLiquidity.test.ts, comme il l'etait
-// jusqu'ici sous un "0] Constructeur" a un seul cas, il se lisait comme une
-// dependance d'addLiquidity, ce qu'il n'est pas.
+// frais, la tresorerie, l'owner) et pose l'etat mutable de depart (feeNum).
+// Loge dans Pool.addLiquidity.test.ts, comme il l'etait jusqu'ici sous un
+// "0] Constructeur" a un seul cas, il se lisait comme une dependance
+// d'addLiquidity, ce qu'il n'est pas.
 //
 // Pourquoi TypeScript/viem plutot que Solidity ici : ce que cette suite
 // interroge est le DEPLOIEMENT lui-meme, c'est-a-dire la transaction que
@@ -318,21 +318,6 @@ describe("Pool.constructor", async function () {
         assert.ok(
           genesis > 0n,
           `GENESIS() vaut ${genesis}, attendu une valeur strictement positive`,
-        );
-      });
-
-      it("lastFeeUpdate part du bloc de deploiement, pas de zero", async function () {
-        // Consequence directe (Pool.sol:78) : le delai de setFee court des le
-        // deploiement, il ne s'ouvre pas immediatement. C'est ce qui oblige
-        // Pool.pause.test.ts a avancer le temps avant son setFee, et c'est
-        // ici que la valeur de depart se verifie.
-        const { pool, deploymentTimestamp } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
-
-        const lastFeeUpdate = await pool.read.lastFeeUpdate();
-        assert.equal(
-          lastFeeUpdate,
-          deploymentTimestamp,
-          `lastFeeUpdate() vaut ${lastFeeUpdate}, attendu ${deploymentTimestamp} (timestamp du bloc de deploiement)`,
         );
       });
     });

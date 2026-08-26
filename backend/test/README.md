@@ -71,14 +71,15 @@ du dossier. La question du LECTEUR EXTERNE se pose comme pour `currentEpoch` —
 le front et le bot d'enchere liront le frais en vigueur par `eth_call` — mais
 la couche TypeScript ne peut pas, a elle seule, prouver que la fonction fait
 quoi que ce soit. En l'etat du contrat, `feeInForce()` est INDISTINGUABLE d'un
-`return NOMINAL_FEE_NUM` a travers l'ABI : `lastSetFeeEpoch` (`Pool.sol:33`)
-vaut `0` au deploiement et rien ne l'ecrit jamais — le `setFee` `onlyOwner`
-encore present ne touche que `feeNum` et `lastFeeUpdate` — et pendant l'epoch
-`0`, la seule ou la comparaison de `Pool.sol:135` puisse etre vraie, `feeNum`
-vaut exactement `NOMINAL_FEE_NUM`, pose par le constructeur (`Pool.sol:100`).
-La branche "mandat courant" du ternaire n'est donc jamais prise avec une valeur
-qui la distingue de l'autre branche, et aucune sequence d'appels ABI ne peut y
-changer quoi que ce soit.
+`return NOMINAL_FEE_NUM` a travers l'ABI, DANS CE FICHIER, qui n'appelle jamais
+`setFee` : `lastSetFeeEpoch` (`Pool.sol:33`) vaut `0` au deploiement et seul
+`setFee` l'ecrit, et pendant l'epoch `0`, la seule ou la comparaison du ternaire
+puisse alors etre vraie, `feeNum` vaut exactement `NOMINAL_FEE_NUM`, pose par le
+constructeur. La branche "mandat courant" du ternaire n'y est donc jamais prise
+avec une valeur qui la distingue de l'autre branche. Depuis que `setFee` est
+passe au gestionnaire du mandat courant, une route ABI legitime existe
+(`setManager`, puis `setFee` dans la fenetre de priorite) ; elle appartient a la
+suite de `setFee`, pas a celle-ci.
 
 `test/Pool.feeInForce.test.ts` couvre donc ce qu'il peut couvrir honnetement —
 la fonction est exposee et lisible sans transaction, elle suit le nominal du
@@ -110,8 +111,8 @@ Le panier est fige a trois wrappers de BTC a cibles EGALES, un tiers chacun :
 WBTC en indice 0, cbBTC en indice 1, LBTC en indice 2. Il n'y a plus ni
 quatrieme jeton ni poids cibles differencies.
 
-La suite compte 281 tests verts : 198 en TypeScript (8 fichiers `test/*.test.ts`)
-et 83 en Solidity (9 fichiers `test/*.t.sol`, 4 fichiers `contracts/*.t.sol`).
+La suite compte 275 tests verts : 197 en TypeScript (8 fichiers `test/*.test.ts`)
+et 78 en Solidity (8 fichiers `test/*.t.sol`, 4 fichiers `contracts/*.t.sol`).
 
 ## Structure de la suite
 
@@ -283,7 +284,6 @@ La couche Solidity, elle, se lit par fichier plutot que par arborescence :
 test/Pool.addLiquidity.t.sol     fuzz des deux branches (pool vide, pool amorce)
 test/Pool.removeLiquidity.t.sol  fuzz du pool vierge et du pool amorce
 test/Pool.swap.t.sol             fuzz, domaine partage par MAX_IN_BAND_AMOUNT
-test/Pool.setFee.t.sol           fuzz du delai, du plafond, du controle d'acces
 test/Pool.safeERC20.t.sol        les quatre sites d'appel de SafeERC20
 test/Pool.forgedState.t.sol      proprietes atteintes par forge d'etat (vm.store)
 test/Pool.feeInForce.t.sol       packing du slot + lecture paresseuse, par vm.store
@@ -455,8 +455,9 @@ propriete.
 
 Un seul test de la suite a besoin de DEUX pools vivants en meme temps, la
 comparaison `feeNum = 0` contre `feeNum = 5` (le `feeNum` est fixe a la
-construction, et `setFee` est `onlyOwner` avec un delai d'un jour). Les deux
-`loadFixture` y sont appeles avant toute ecriture, et ce n'est pas cosmetique :
+construction, et `setFee` n'est ouvert qu'au gestionnaire du mandat courant,
+dans sa fenetre de priorite). Les deux `loadFixture` y sont appeles avant toute
+ecriture, et ce n'est pas cosmetique :
 `loadFixture` restaure un instantane de la chaine, ce qui detruit tout ce qui a
 ete deploye apres sa prise. Charger la seconde fixture apres avoir mint sur la
 premiere effacerait ce mint, et charger la plus ancienne des deux en second
@@ -548,7 +549,7 @@ panneau `managerOf`/`setAuction`/`setManager` n'a pas d'analogue parmi les
 cinq autres fonctions TypeScript : `manager()` est un observateur pur sur
 `managerOf[currentEpoch()]`, `setAuction` est un single-shot, et `setManager`
 est la seule fonction du contrat a prendre une epoch en argument plutot qu'un
-montant. Eclatee entre la suite de pause et celle de setFee, la frontiere
+montant. Eclatee entre la suite de pause et celle de swap, la frontiere
 entre bootstrap et regime nominal disparaissait : on aurait vu "owner peut"
 et "tiers ne peut pas" sans voir le moment ou le droit bascule du premier au
 second. Le fichier est donc recentre sur la disjonction de `Pool.sol:116` :
@@ -743,10 +744,6 @@ message, est ce qui rend le test fiable.
   avec la premiere, exige `GENESIS > 0` : elle seule survit a l'hypothese ou
   la lecture du bloc rendrait zero, cas ou l'egalite passerait sur un
   constructeur qui n'affecterait rien
-- `lastFeeUpdate` part du meme timestamp (`Pool.sol:78`), pas de zero : le
-  delai de `setFee` court donc des le deploiement et ne s'ouvre pas
-  immediatement. C'est ce qui oblige `Pool.pause.test.ts` a avancer le temps
-  avant son `setFee`
 - `feeNum` vaut `_nominalFeeNum` au deploiement (`Pool.sol:77`) : le pool
   demarre au tarif nominal sans qu'aucun argument dedie ne le dise. Verifie
   deux fois, contre la valeur attendue puis contre `NOMINAL_FEE_NUM()`, cette
@@ -850,7 +847,7 @@ message, est ce qui rend le test fiable.
   `3` apres trois epoques passees, et la frontiere reste a la meme seconde
   qu'hors pause
 - la lecture n'a aucun effet de bord : sur un pool amorce, les quatre valeurs
-  mutables du contrat (`reserves`, `feeNum`, `lastFeeUpdate`, `totalSupply`)
+  mutables du contrat (`reserves`, `feeNum`, `lastSetFeeEpoch`, `totalSupply`)
   sont identiques avant et apres plusieurs appels. `currentEpoch()` est
   `view`, donc l'appel part en `eth_call` et ne coute rien — sans quoi le bot
   d'enchere paierait du gas pour lire l'heure
@@ -1146,10 +1143,12 @@ message, est ce qui rend le test fiable.
 - `setFee` reste appelable en pause. Choix delibere : la pause sert a preparer
   la reprise, et le bloquer forcerait a depauser d'abord puis fixer le taux
   ensuite, laissant une fenetre ou la pool rouvre au taux que la crise a rendu
-  inadapte. Contrepartie a connaitre : `MIN_SET_FEE_DELAY` court sur
-  `block.timestamp`, donc il tourne pendant la pause, et consommer le droit la
-  veille de la reprise le rend indisponible pour les vingt-quatre heures qui
-  suivent la reouverture
+  inadapte. L'appelant n'est plus l'owner mais le gestionnaire du mandat
+  courant : le test designe donc un gestionnaire pour l'epoch `1`, se pose sur
+  la premiere seconde de ce mandat par `setNextBlockTimestamp` (la fenetre vaut
+  douze secondes, un delta relatif deriverait), puis appelle. Contrepartie a
+  connaitre : le droit d'ecrire le tarif est consommable une fois par epoch, et
+  il l'est aussi pendant la pause
 
 **Retour a l'etat normal**
 
@@ -1326,10 +1325,11 @@ silence. Le commentaire de `Pool.sol:23-28` n'est jamais pris pour argent
 comptant : c'est lui que ce fichier verifie.
 
 Pourquoi pas le `setFee` `onlyOwner` pour deplacer `feeNum`, ce qui aurait
-evite tout `vm.store` : parce qu'il est supprime a la sous-etape I.1.7, avec
-`lastFeeUpdate` et `MIN_SET_FEE_DELAY`. Un test bati dessus mourrait avec lui
-dans deux sous-etapes. `vm.store` ne depend d'aucun organe condamne, et
-survivra au `setFee` gestionnaire qui arrive a I.1.6.
+evite tout `vm.store` : parce qu'il etait condamne, avec `lastFeeUpdate` et
+`MIN_SET_FEE_DELAY`. Un test bati dessus serait mort avec lui, ce qui est
+arrive depuis ; ce fichier, lui, a survecu sans une ligne a changer. `vm.store`
+ne depend d'aucun organe condamne, et cette independance vaut aussi pour le
+`setFee` gestionnaire.
 
 Le detail des six sections du fichier est dans la liste des cas limites
 ci-dessus, sous `feeInForce`.

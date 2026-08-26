@@ -22,6 +22,9 @@ export const getQuote = ({
       indexOut: 0 | 1 | 2,
       toleranceInput: string},
     poolState: {reserves: readonly bigint[],
+      // The fee numerator IN FORCE for the current mandate, i.e. `feeInForce()`, not the raw
+      // `feeNum` storage slot: outside the mandate that wrote it, the pool charges the nominal
+      // rate, and only the view accounts for that.
       feeNum: bigint,
       feeDen: bigint}
   }): QuoteResult<Quote> => {

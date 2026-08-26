@@ -1,7 +1,7 @@
 'use client';
 
 import { useReserves } from "@/hooks/useReserves";
-import { useFeeNum } from "@/hooks/useFeeNum";
+import { useFeeInForce } from "@/hooks/useFeeInForce";
 import { useConstants } from "@/hooks/useConstants";
 import { useUserBalances } from "@/hooks/useUserBalances";
 import { useState } from "react";
@@ -36,7 +36,7 @@ const Swap = () => {
   const balanceIn = balanceInData?.result;
 
   const {error: errorReserves, reserves: reserveEntries} = useReserves();
-  const {error: errorFeeNum, data: feeNum} = useFeeNum();
+  const {error: errorFeeInForce, data: feeInForce} = useFeeInForce();
   const {error: errorConstants, feeDen: feeDenData} = useConstants();
   const feeDen = feeDenData?.result;
   const failedReads = collectReadErrors([
@@ -45,18 +45,18 @@ const Swap = () => {
       message: `Erreur de lecture de la réserve du token ${tokensInfo[i].name}`,
       error: entry?.error
     })),
-    {message: "Erreur de lecture des fees (num)", error: errorFeeNum},
+    {message: "Erreur de lecture des fees (num)", error: errorFeeInForce},
     {message: "Erreur de lecture des constantes du pool", error: errorConstants},
     {message: "Erreur de lecture des fees (den)", error: feeDenData?.error},
   ]);
   if (failedReads.length > 0) return <ReadErrors sources={failedReads} />;
-  if (!reserveEntries || feeNum===undefined || !feeDen) return <Panel><p>Chargement...</p></Panel>;
+  if (!reserveEntries || feeInForce===undefined || !feeDen) return <Panel><p>Chargement...</p></Panel>;
 
   const reserves = reserveEntries.map((r) => r.result).filter((r) => r !== undefined);
 
   const {quote, reason} = getQuote({
   userAsk: {side, typedAmount, indexIn, indexOut, toleranceInput: tolerance},
-  poolState: {reserves, feeNum, feeDen}
+  poolState: {reserves, feeNum: feeInForce, feeDen}
   });
 
   const handleSwap = async () => {
