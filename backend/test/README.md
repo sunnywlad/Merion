@@ -511,10 +511,10 @@ message, est ce qui rend le test fiable.
 
 **Pool vierge**
 
-- `totalSupply() == 0` : la division par `totalSupply()` declenche un panic
-  de division par zero (`0x12`), pas une erreur nommee — branche inatteignable
-  une fois le pool amorce (`MINIMUM_LIQUIDITY` n'est jamais brulee), mais bien
-  reelle sur un contrat tout juste deploye
+- `totalSupply() == 0` : `NotBootstrapped`, garde placee avant la division
+  par `totalSupply()` — branche inatteignable une fois le pool amorce
+  (`MINIMUM_LIQUIDITY` n'est jamais brulee), mais bien reelle sur un contrat
+  tout juste deploye
 
 **Reverts**
 

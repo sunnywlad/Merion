@@ -36,7 +36,6 @@ const ZERO_FEE_NUM = 0n;
 
 // Codes de panic Solidity utilises dans cette suite (Panic(uint256)).
 const PANIC_ARITHMETIC_OVERFLOW = 17n; // 0x11 (couvre aussi bien un depassement qu'un sous-flow)
-const PANIC_DIVISION_BY_ZERO = 18n; // 0x12
 
 // ---------------------------------------------------------------------------
 // Fixtures et helpers
@@ -258,21 +257,20 @@ describe("Pool.removeLiquidity", async function () {
 
   describe("I] removeLiquidity sur pool vierge", function () {
     describe("A) Reverts", function () {
-      it("totalSupply() vaut 0 : la division declenche un panic 0x12 (division par zero)", async function () {
-        // Le build-plan du projet a verifie qu'une garde `totalSupply() == 0`
-        // n'est PAS necessaire dans removeLiquidity : MINIMUM_LIQUIDITY est
-        // mintee vers l'adresse morte des le premier depot (Pool.sol:98) et
-        // n'est jamais brulee (personne n'a la cle de l'adresse morte), donc
-        // supply == 0 est une branche inatteignable en pratique une fois le
-        // pool amorce. Sur un pool jamais amorce en revanche, elle est bien
-        // atteignable : ce test documente ce qui se passe alors (un panic,
-        // pas une erreur nommee), branche morte du point de vue du contrat
-        // amorce mais reelle du point de vue du contrat tout juste deploye.
+      it("totalSupply() vaut 0 sur un pool jamais amorce : NotBootstrapped, garde avant la division", async function () {
+        // Garde explicite sur totalSupply() == 0 dans removeLiquidity :
+        // le seul etat qui produit cette condition est un pool qui n'a
+        // jamais recu de depot (MINIMUM_LIQUIDITY est brulee vers
+        // l'adresse morte au premier depot, donc totalSupply() ne peut
+        // plus retomber a zero une fois le pool amorce). La garde
+        // remplace le panic 0x12 de division par zero qui se declenchait
+        // avant, pour aligner avec les autres chemins d'echec nommes.
         const { pool, depositor } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
 
-        await assertPanic(
+        await viem.assertions.revertWithCustomError(
           pool.write.removeLiquidity([SEED_AMOUNT / 10n, [0n, 0n, 0n]], { account: depositor.account }),
-          PANIC_DIVISION_BY_ZERO,
+          pool,
+          "NotBootstrapped",
         );
       });
     });

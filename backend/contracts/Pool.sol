@@ -35,6 +35,7 @@ contract Pool is ERC20, Ownable, Pausable {
   error ReserveOverflow();
   error InsufficientReserve();
   error ZeroOutput();
+  error NotBootstrapped();
   error FloorTouched(uint256 tokenIndex);
   error CeilingTouched(uint256 tokenIndex);
 
@@ -119,6 +120,7 @@ contract Pool is ERC20, Ownable, Pausable {
 
   function removeLiquidity(uint256 _burnedShares, uint256[3] calldata _minOut) external returns (uint256[3] memory amountsOut) {
     uint256 supply = totalSupply();
+    require(supply != 0, NotBootstrapped());
     uint72[3] memory cachedReserves = reserves;
 
     for (uint256 i; i < 3; i++) {

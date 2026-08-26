@@ -10,10 +10,10 @@ import {stdError} from 'forge-std/StdError.sol';
 
 contract RemoveLiquidityFuzzOnEmptyPool is Test, PoolTestBase {
 
-  function test_FuzzBurnedSharesOnEmptyPoolRevertsWithPanic(uint256 burnedShares) public {
+  function test_FuzzBurnedSharesOnEmptyPoolRevertsWithNotBootstrapped(uint256 burnedShares) public {
     uint256[3] memory minOut = [uint256(0), 0, 0];
 
-    vm.expectRevert(stdError.divisionError);
+    vm.expectRevert(Pool.NotBootstrapped.selector);
     pool.removeLiquidity(burnedShares, minOut);
   }
 }
