@@ -84,7 +84,7 @@ Le panier est fige a trois wrappers de BTC a cibles EGALES, un tiers chacun :
 WBTC en indice 0, cbBTC en indice 1, LBTC en indice 2. Il n'y a plus ni
 quatrieme jeton ni poids cibles differencies.
 
-La suite compte 233 tests verts : 167 en TypeScript (6 fichiers `test/*.test.ts`)
+La suite compte 256 tests verts : 190 en TypeScript (7 fichiers `test/*.test.ts`)
 et 66 en Solidity (8 fichiers `test/*.t.sol`, 4 fichiers `contracts/*.t.sol`).
 
 ## Structure de la suite
@@ -203,6 +203,36 @@ Pool.pause
     C) removeLiquidity accepte
     D) setFee reste appelable
   III] Retour a l'etat normal apres unpause
+```
+
+`Pool.manager.test.ts` :
+
+```
+Pool.manager
+  I] Lecture du mandat courant
+    A) Epoch 0, personne nomme
+    B) Epoch 0, managerOf[0] et manager() coincident
+    C) Epoch 1, managerOf[1] vide : manager() rend 0x0
+    D) Epoch 7, managerOf[7] sette
+  II] setAuction
+    A) onlyOwner
+    B) Premier set a une adresse non-nulle
+    C) Deuxieme set, quelle que soit l'adresse
+    D) Premier set a address(0) : no-op silencieux, voie bootstrap
+  III] setManager - appelant
+    A) auction non-nulle, msg.sender == auction : succes
+    B) auction non-nulle, msg.sender autre : revert NotAuctionOrOwner
+    C) auction nulle, msg.sender == owner : succes (voie bootstrap)
+    D) auction nulle, msg.sender autre : revert NotAuctionOrOwner
+    E) auction == msg.sender == owner : succes (cas degenere)
+  IV] setManager - gardes de fond
+    A) _who == address(0) : revert ZeroManager
+    B) _epoch <= currentEpoch() : revert EpochAlreadyStarted
+    C) _epoch == currentEpoch() + 1 : succes
+    D) Double nomination, memes epoch ou epochs distinctes
+  V] Evenement ManagerSet
+    A) Succes de setManager
+    B) Revert de setManager
 ```
 
 La couche Solidity, elle, se lit par fichier plutot que par arborescence :
@@ -468,6 +498,44 @@ aussi si la fonction ne fait rien : il faut assertion sur les montants
 reellement sortis et sur les reserves apres coup. C'est la promesse centrale de
 la pause, elle merite mieux qu'une double negation.
 
+`Pool.manager.test.ts` appelle trois remarques.
+
+La premiere tient a la specificite de la troisieme surface du contrat. Le
+panneau `managerOf`/`setAuction`/`setManager` n'a pas d'analogue parmi les
+cinq autres fonctions TypeScript : `manager()` est un observateur pur sur
+`managerOf[currentEpoch()]`, `setAuction` est un single-shot, et `setManager`
+est la seule fonction du contrat a prendre une epoch en argument plutot qu'un
+montant. Eclatee entre la suite de pause et celle de setFee, la frontiere
+entre bootstrap et regime nominal disparaissait : on aurait vu "owner peut"
+et "tiers ne peut pas" sans voir le moment ou le droit bascule du premier au
+second. Le fichier est donc recentre sur la disjonction de `Pool.sol:116` :
+`msg.sender == auction || (auction == 0x0 && msg.sender == owner)`, dont les
+deux branches n'ont pas la meme duree de vie.
+
+La deuxieme tient a ce que les cas impossibles par l'ABI revelent du code
+plutot que du test. La section I.B tient, non pas "managerOf[0] sette,
+manager() le rend", mais la portion atteignable de l'enonce : que `manager()`
+et la lecture directe de `managerOf[0]` par son getter public renvoient la
+meme valeur, condition strictement plus faible mais qui suffit a epingler un
+eventuel detournement d'indice. Meme demarche en I.C : `managerOf[0]` n'est
+pas settable par `setManager` (la garde `_epoch > currentEpoch()` de
+`Pool.sol:117` est stricte), donc le test tient la portion verifiable
+"managerOf[1] vide a l'epoch 1". Le commentaire le dit, pour que le lecteur
+sache que l'enonce du prompt etait plus ambitieux que le test ne l'est.
+
+La troisieme tient au no-op silencieux de `setAuction(0x0)` (section II.D),
+qui est un choix delibere, pas un oubli. La garde `Pool.sol:111` ne verifie
+que `auction == address(0)` : passer zero en argument satisfait la garde et
+fait `auction = 0x0`, identique a l'etat de depart. C'est ce qui maintient la
+voie bootstrap ouverte apres chaque `setAuction(0x0)`, donc ce qui permet a
+l'owner de nommer des gestionnaires epoch par epoch jusqu'a l'arrivee de
+l'encherisseur. Le test verifie les deux faces du no-op (pas de revert,
+`auction()` reste a `0x0`) puis la consequence : un `setManager` ulterieur
+par l'owner, sur une epoch future valide, reussit. La mention "no-op
+silencieux, voie bootstrap" dans le titre est ce qui empeche un lecteur
+ulterieur de prendre la section pour un test a supprimer au motif que la
+transaction n'ecrit rien.
+
 `Pool.constructor.test.ts` appelle trois remarques.
 
 La premiere porte sur la frontiere que testent ses deux gardes de frais, et elle n'est
@@ -570,7 +638,7 @@ bouge" ne le voie.
 ### Duplication des fixtures entre les fichiers de test
 
 `Pool.removeLiquidity.test.ts`, `Pool.swap.test.ts`, `Pool.pause.test.ts`,
-`Pool.constructor.test.ts` et `Pool.currentEpoch.test.ts`
+`Pool.manager.test.ts`, `Pool.constructor.test.ts` et `Pool.currentEpoch.test.ts`
 redefinissent chacun leurs propres fixtures et helpers
 (`deployTokensAndPool`, `mintAndApprove`, `readReserves`, `readBalances`,
 `assertPanic`, `deploySeededPoolFixture`, `deployImbalancedPoolFixture`...),
@@ -984,6 +1052,58 @@ message, est ce qui rend le test fiable.
 
 - apres `unpause()`, `addLiquidity` et `swap` repassent et rendent les memes
   montants qu'avant la pause : la pause ne laisse aucune trace dans l'etat
+
+### `manager()` / `setAuction` / `setManager`
+
+**Lecture du mandat courant (`manager`)**
+
+- epoch 0, personne nomme : `manager()` rend `0x0`
+- epoch 0, `managerOf[0]` et `manager()` coincident (les deux lectures passent
+  par le meme slot, et la portion "managerOf[0] sette" de l'enonce n'est pas
+  atteignable par `setManager` du fait de la garde `_epoch > currentEpoch()`)
+- epoch 1, `managerOf[1]` vide : `manager()` rend `0x0` (un mandat pour
+  l'epoch 0 ne survit pas au basculement a l'epoch 1, par construction de
+  `managerOf[currentEpoch()]`)
+- epoch 7, `managerOf[7]` sette : `manager()` rend cette adresse
+
+**`setAuction`**
+
+- un tiers appelle `setAuction` : `OwnableUnauthorizedAccount`
+- l'owner appelle `setAuction(X)` sur un pool frais : succes, `auction()` rend `X`
+- l'owner appelle `setAuction(Y)` apres un premier set : `AuctionAlreadySet`,
+  quelle que soit `Y` (y compris l'adresse nulle, qui aurait sinon pour effet
+  de bord de reouvrir la voie bootstrap)
+- l'owner appelle `setAuction(0x0)` sur un pool frais : no-op silencieux,
+  `auction()` reste a `0x0`. C'est la voie bootstrap, deliberee
+
+**`setManager` — appelant**
+
+- `auction` non-nulle, `msg.sender == auction` : succes
+- `auction` non-nulle, `msg.sender` autre : `NotAuctionOrOwner`
+- `auction` nulle, `msg.sender == owner` : succes (voie bootstrap)
+- `auction` nulle, `msg.sender` autre : `NotAuctionOrOwner`
+- `auction == msg.sender == owner` (owner s'auto-set comme auction) :
+  succes sur la branche `msg.sender == auction`, la voie bootstrap n'etant
+  plus empruntable
+
+**`setManager` — gardes de fond**
+
+- `_who == 0x0` : `ZeroManager`, garde posee avant celle sur `_epoch`
+- `_epoch == 0` au deploiement (`currentEpoch() == 0`) :
+  `EpochAlreadyStarted`, strict
+- `_epoch == 0` apres warp en epoch 1 : `EpochAlreadyStarted`, epoque passee
+- `_epoch == 1` au deploiement : succes, frontiere inclusive cote futur
+- `setManager(1, X)` puis `setManager(1, Y)` : la seconde reverte
+  `ManagerAlreadySet`, la premiere nomination tient
+- `setManager(1, X)` puis `setManager(2, Y)` : les deux reussissent, epoques
+  distinctes
+
+**Evenement `ManagerSet`**
+
+- succes de `setManager` : exactement un `ManagerSet(epoch, who)` emis, les
+  deux args indexes
+- revert de `setManager` : aucun `ManagerSet` emis, `managerOf[epoch]` reste
+  a sa valeur d'avant l'appel
 
 ## Couche Solidity : fuzz, invariants, forge d'etat
 
