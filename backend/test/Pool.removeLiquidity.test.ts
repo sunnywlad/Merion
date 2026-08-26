@@ -27,12 +27,9 @@ const { viem, networkHelpers } = await network.create();
 
 const DEAD_ADDRESS = "0x000000000000000000000000000000000000dEaD" as const;
 const MINIMUM_LIQUIDITY = 1000n;
-// Sur les fixtures de cette suite, les reserves valent au plus 4,5e10 : aucun
+// Sur les fixtures de cette suite, les reserves valent au plus 1,25e11 : aucun
 // amountsOut ne peut donc jamais atteindre UINT72_MAX, ce qui en fait un
-// _minOut insatisfaisable par construction. Portee volontairement restreinte
-// a cette suite : en general, Pool.sol:140 autorise une reserve strictement
-// egale a cette borne (le require y est un <=), sur un pool sature qui
-// n'existe pas dans nos fixtures.
+// _minOut insatisfaisable par construction.
 const UINT72_MAX = 2n ** 72n - 1n;
 const DEFAULT_FEE_NUM = 5n; // reprend la valeur du Pool.t.sol d'origine
 const ZERO_FEE_NUM = 0n;
@@ -94,12 +91,13 @@ async function mintAndApprove(
   }
 }
 
+function ceilDiv(numerator: bigint, denominator: bigint): bigint {
+  return (numerator + denominator - 1n) / denominator;
+}
+
 // Mint et approuve, jambe par jambe, exactement ce qu'un depot ancre sur
 // `anchor` va reellement tirer sur chacun des trois tokens : amounts[i] =
-// _amount * reservesBefore[i] / reservesBefore[anchor] (Pool.sol:139).
-// Necessaire des que le pool n'est plus egalement reparti entre les trois
-// reserves (poids cibles 10/45/45 des l'amorcage) : un `mintAndApprove` a
-// montant unique sous-dimensionne alors les jambes non ancrees.
+// ceilDiv(_amount * reservesBefore[i], reservesBefore[anchor]) (Pool.sol:108).
 async function mintAndApproveForAnchoredDeposit(
   tokens: PoolFixture["tokens"],
   pool: PoolFixture["pool"],
@@ -109,7 +107,7 @@ async function mintAndApproveForAnchoredDeposit(
   reservesBefore: [bigint, bigint, bigint],
 ) {
   for (let i = 0; i < 3; i++) {
-    const legAmount = (amount * reservesBefore[i]) / reservesBefore[Number(anchor)];
+    const legAmount = ceilDiv(amount * reservesBefore[i], reservesBefore[Number(anchor)]);
     await tokens[i].write.mint([account.account.address, legAmount]);
     await tokens[i].write.approve([pool.address, legAmount], { account: account.account });
   }
@@ -164,10 +162,6 @@ async function assertPanic(promise: Promise<unknown>, expectedCode: bigint) {
 }
 
 const SEED_AMOUNT = 100n * 10n ** 8n; // pool amorce a 100 (8 decimales) sur chaque reserve
-// Approuver SEED_AMOUNT a plat sur les trois tokens ne suffit plus pour un
-// premier depot ancre sur token0 : les jambes cbBTC et lBTC tirent chacune
-// 4.5 * SEED_AMOUNT (poids cibles 10/45/45, Pool.sol:118-121).
-const SEED_AMOUNT_HEADROOM = 45n * SEED_AMOUNT / 10n;
 
 async function deploySeededPoolFixture() {
   const base = await deployTokensAndPoolFixture();
@@ -175,7 +169,7 @@ async function deploySeededPoolFixture() {
 
   // Marge genereuse pour les depots/echanges additionnels effectues dans les
   // tests qui reutilisent cette fixture.
-  const headroom = SEED_AMOUNT_HEADROOM * 10n;
+  const headroom = SEED_AMOUNT * 10n;
   await mintAndApprove(tokens, pool, depositor, headroom);
 
   await pool.write.addLiquidity([0n, SEED_AMOUNT, 0n], { account: depositor.account });
@@ -183,45 +177,39 @@ async function deploySeededPoolFixture() {
   return { ...base, seedAmount: SEED_AMOUNT };
 }
 
-// Amorcage ancre sur token0, poids cibles 10/45/45 (Pool.sol:118-121) :
-// reserves = [1e10, 4.5e10, 4.5e10], totalSupply = 1e11 (somme des trois
-// jambes, part brulee vers l'adresse morte incluse).
+// Amorcage a montants egaux (Pool.sol:93) : reserves = [1e10, 1e10, 1e10],
+// totalSupply = 3e10 (somme des trois jambes, part brulee vers l'adresse
+// morte incluse).
 //
-// 10% du totalSupply du pool amorce (1e11 / 10 = 1e10). Choisi parce qu'il
+// 10% du totalSupply du pool amorce (3e10 / 10 = 3e9). Choisi parce qu'il
 // divise proprement les trois reserves : chaque amountsOut[i] vaut alors
-// exactement reserves[i] / 10, sans troncature qui polluerait les assertions
-// du cas nominal (section II.A).
-const BURN_AMOUNT = 1n * 10n ** 10n;
+// exactement reserves[i] / 10 = 1e9, sans troncature qui polluerait les
+// assertions du cas nominal (section II.A).
+const BURN_AMOUNT = 3n * 10n ** 9n; // 3 000 000 000
 const EXPECTED_NOMINAL_AMOUNTS_OUT: [bigint, bigint, bigint] = [
   SEED_AMOUNT / 10n,
-  45n * SEED_AMOUNT / 100n,
-  45n * SEED_AMOUNT / 100n,
+  SEED_AMOUNT / 10n,
+  SEED_AMOUNT / 10n,
 ];
 
 // Fixture dediee au pool desequilibre (section II.D). feeNum = 0, par choix
 // delibere : voir Pool.addLiquidity.test.ts pour la justification complete
 // (les depots/retraits "10% du pool" de cette section exigent des reserves
 // qui se divisent proprement, ce qu'un feeNum non nul ne garantirait pas).
+//
+// Calcul a la main : amorcage a egalite, _amount = 1000e8 => reserves =
+// [1000e8, 1000e8, 1000e8]. Swap de 250e8, token0 -> token2, feeNum = 0 :
+//   amountOut = 250e8 * 1000e8 / (250e8 + 1000e8) = 200e8 (division exacte)
+// Reserves apres le swap : [1250e8, 1000e8, 800e8]. token0 devient l'actif le
+// plus ABONDANT (il a recu le swap), token2 le plus RARE (il en est sorti).
 async function deployImbalancedPoolFixture() {
   const base = await deployZeroFeeTokensAndPoolFixture();
   const { depositor, tokens, pool } = base;
 
-  // Amorcage ancre sur token0, poids cibles 10/45/45 (Pool.sol:118-121) :
-  //   amounts = [1000e8, 4500e8, 4500e8]
-  // totalSupply apres l'amorcage : 1000e8 + 4500e8 + 4500e8 = 10000e8. Ce
-  // totalSupply ne bouge plus ensuite (le swap ci-dessous ne mint ni ne
-  // brule aucune part LP).
   const seedAmount = 1000n * 10n ** 8n;
   await mintAndApprove(tokens, pool, depositor, seedAmount * 10n);
   await pool.write.addLiquidity([0n, seedAmount, 0n], { account: depositor.account });
 
-  // Swap de 250e8 de token0 vers token2, feeNum = 0, sur les reserves qui
-  // sortent de l'amorcage ([1000e8, 4500e8, 4500e8]) :
-  //   amountOut = amountIn * reserveOut / (amountIn + reserveIn)
-  //             = 250e8 * 4500e8 / (250e8 + 1000e8)
-  //             = 250e8 * 4500e8 / 1250e8
-  //             = 900e8
-  // Reserves apres le swap : [1250e8, 4500e8, 3600e8]
   const swapAmount = 250n * 10n ** 8n;
   await pool.write.swap([0n, swapAmount, 2n, 0n], { account: depositor.account });
 
@@ -235,22 +223,19 @@ async function deployImbalancedPoolFixture() {
 // independante, donc un test et une assertion chacun (meme raisonnement que
 // assertCompositionPreservedWhenAnchoredOn dans le fichier addLiquidity).
 //
-// Sur ce pool precis (fraichement amorce, compose selon les poids cibles
-// 10/45/45), l'aller-retour se revele en pratique exactement sans perte :
-// totalSupply vaut alors exactement reserves[0] + reserves[1] + reserves[2],
-// ce qui annule la troncature entiere dans les deux sens (au depot comme au
-// retrait), quel que soit le montant depose. L'assertion ci-dessous reste un
-// <= et non un == : c'est la propriete generale qu'on veut garantir (ne
-// jamais creer de valeur), et l'egalite observee ici est un accident de
-// cette configuration precise : un pool deja desequilibre, ou porteur de
-// frais accumules, ne la presenterait pas necessairement.
+// Sur ce pool precis (fraichement amorce, reserves egales), l'aller-retour se
+// revele en pratique exactement sans perte : totalSupply vaut alors
+// exactement reserves[0] + reserves[1] + reserves[2], ce qui annule la
+// troncature entiere dans les deux sens (au depot comme au retrait), quel que
+// soit le montant depose. L'assertion ci-dessous reste un <= et non un == :
+// c'est la propriete generale qu'on veut garantir (ne jamais creer de
+// valeur), et l'egalite observee ici est un accident de cette configuration
+// precise.
 async function assertRoundTripNeverExceedsDeposit(tokenIndex: 0 | 1 | 2) {
   const { pool, tokens, other } = await networkHelpers.loadFixture(deploySeededPoolFixture);
   const reservesBefore = await readReserves(pool);
   const depositAmount = SEED_AMOUNT / 4n; // depot ancre sur token0
 
-  // reservesBefore = [1e10, 4.5e10, 4.5e10] : un montant flat sous-
-  // dimensionnerait les jambes cbBTC et lBTC (4.5x depositAmount chacune).
   await mintAndApproveForAnchoredDeposit(tokens, pool, other, 0n, depositAmount, reservesBefore);
   const mintedBalanceBeforeDeposit = await tokens[tokenIndex].read.balanceOf([other.account.address]);
 
@@ -276,7 +261,7 @@ describe("Pool.removeLiquidity", async function () {
       it("totalSupply() vaut 0 : la division declenche un panic 0x12 (division par zero)", async function () {
         // Le build-plan du projet a verifie qu'une garde `totalSupply() == 0`
         // n'est PAS necessaire dans removeLiquidity : MINIMUM_LIQUIDITY est
-        // mintee vers l'adresse morte des le premier depot (Pool.sol:129) et
+        // mintee vers l'adresse morte des le premier depot (Pool.sol:98) et
         // n'est jamais brulee (personne n'a la cle de l'adresse morte), donc
         // supply == 0 est une branche inatteignable en pratique une fois le
         // pool amorce. Sur un pool jamais amorce en revanche, elle est bien
@@ -317,7 +302,7 @@ describe("Pool.removeLiquidity", async function () {
       it("chaque reserve diminue exactement de ce que le retirant a recu", async function () {
         // Conservation : on compare deux lectures on-chain (le delta des
         // reserves et le delta du solde du retirant) sans reimplementer la
-        // formule interne (Pool.sol:156) en TS.
+        // formule interne (Pool.sol:125) en TS.
         const { pool, tokens, depositor } = await networkHelpers.loadFixture(deploySeededPoolFixture);
         const reservesBefore = await readReserves(pool);
         const balancesBefore = await readBalances(tokens, depositor.account.address);
@@ -388,26 +373,11 @@ describe("Pool.removeLiquidity", async function () {
         // (eth_call) sans envoyer de transaction, et renvoie { result,
         // request } ; result est la valeur de retour ABI-decodee de la
         // fonction, exactement ce que produirait le `write` correspondant.
-        // C'est l'API standard exposee par viem sur tout contrat qui a a la
-        // fois un client public et un client wallet (voir
-        // node_modules/viem/_types/actions/getContract.d.ts), donc valable
-        // ici sans configuration additionnelle.
-        //
-        // account: depositor.account.address (l'adresse brute), pas
-        // depositor.account (l'objet Account complet, qui passe pourtant tel
-        // quel a `write` juste au-dessus) : `npx tsc --noEmit` rejette
-        // l'objet complet ici avec "Two different types with this name
-        // exist, but they are unrelated". C'est un conflit de type propre a
-        // `simulate` (son parametre `account` est infere depuis le client
-        // wallet via un chemin de resolution ESM distinct de celui de
-        // `write`), pas une erreur d'usage : passer juste l'adresse le
-        // contourne sans rien perdre, `account` accepte les deux formes a
-        // l'execution.
         //
         // Valeurs posees en dur (calcul a la main) : cachedReserves =
-        // [1e10, 4,5e10, 4,5e10], supply = 1e11, _burnedShares = BURN_AMOUNT
-        // (1e10, 10% de supply) => amountsOut[i] = reserves[i] * 1e10 / 1e11
-        // = reserves[i] / 10, soit [1e9, 4,5e9, 4,5e9].
+        // [1e10, 1e10, 1e10], supply = 3e10, _burnedShares = BURN_AMOUNT
+        // (3e9, 10% de supply) => amountsOut[i] = reserves[i] * 3e9 / 3e10
+        // = reserves[i] / 10, soit [1e9, 1e9, 1e9].
         const { pool, depositor } = await networkHelpers.loadFixture(deploySeededPoolFixture);
 
         const { result: amountsOut } = await pool.simulate.removeLiquidity([BURN_AMOUNT, [0n, 0n, 0n]], {
@@ -482,7 +452,7 @@ describe("Pool.removeLiquidity", async function () {
       });
 
       it("_minOut[1] strictement superieur au montant sortant : BadSlippage", async function () {
-        // Le require vit dans la boucle (Pool.sol:155-159) : l'indice 1
+        // Le require vit dans la boucle (Pool.sol:124-127) : l'indice 1
         // n'est atteint qu'apres que l'indice 0 a deja passe son propre
         // require, donc _minOut[0] doit rester satisfaisable ici.
         const { pool, depositor } = await networkHelpers.loadFixture(deploySeededPoolFixture);
@@ -507,8 +477,8 @@ describe("Pool.removeLiquidity", async function () {
       });
 
       it("retrait trop grand ET _minOut trop exigeant : BadSlippage avant ERC20InsufficientBalance", async function () {
-        // La boucle de slippage (Pool.sol:155-159) s'execute entierement
-        // avant le _burn (Pool.sol:160) : un appel qui viole les deux gardes
+        // La boucle de slippage (Pool.sol:124-127) s'execute entierement
+        // avant le _burn (Pool.sol:129) : un appel qui viole les deux gardes
         // doit echouer par BadSlippage, jamais par ERC20InsufficientBalance.
         // UINT72_MAX en _minOut[0] est impossible a satisfaire quel que soit
         // _burnedShares, puisque les reserves sont des uint72 : amountsOut[0]
@@ -524,17 +494,17 @@ describe("Pool.removeLiquidity", async function () {
       });
 
       it("_burnedShares superieur au totalSupply : panic 0x11, le decrement des reserves sous-flow avant le _burn", async function () {
-        // La boucle de decrement des reserves (Pool.sol:155-159) s'execute
-        // avant le _burn (Pool.sol:160). Si _burnedShares depasse
+        // La boucle de decrement des reserves (Pool.sol:124-127) s'execute
+        // avant le _burn (Pool.sol:129). Si _burnedShares depasse
         // totalSupply(), amountsOut[i] = reserves[i] * _burnedShares / supply
         // depasse reserves[i] lui-meme, et reserves[i] -= uint72(amountsOut[i])
         // sous-flow avant que _burn n'ait la moindre chance de lever
         // ERC20InsufficientBalance. L'appel echoue donc par un panic
         // arithmetique (0x11), pas par l'erreur ERC-20 qu'on attendrait
         // intuitivement d'un solde insuffisant.
-        // Calcul a la main : reserves = [1e10, 4,5e10, 4,5e10], supply = 1e11,
-        // burned = 2 * supply = 2e11
-        //   amountsOut[0] = 1e10 * 2e11 / 1e11 = 2e10, superieur a
+        // Calcul a la main : reserves = [1e10, 1e10, 1e10], supply = 3e10,
+        // burned = 2 * supply = 6e10
+        //   amountsOut[0] = 1e10 * 6e10 / 3e10 = 2e10, superieur a
         //   reserves[0] = 1e10 : le decrement sous-flow des le premier indice.
         //
         // Pourquoi les deux tests voisins ne l'atteignent pas : le test
@@ -628,10 +598,9 @@ describe("Pool.removeLiquidity", async function () {
           // valeur residuelle reste acquise aux autres LP plutot que d'etre
           // arrondie au benefice du retirant.
           // Calcul a la main : reserves[i] * _burnedShares / supply, avec
-          // reserves = [1e10, 4,5e10, 4,5e10] et supply = 1e11 :
-          //   token0 : 1e10 * 1 / 1e11 = 0,1 -> 0
-          //   token1 et token2 : 4,5e10 * 1 / 1e11 = 0,45 -> 0
-          // Les trois tronquent a 0, quelle que soit leur taille relative.
+          // reserves = [1e10, 1e10, 1e10] et supply = 3e10 :
+          //   chaque jambe : 1e10 * 1 / 3e10 = 0,333... -> 0
+          // Les trois tronquent a 0.
           const { pool, tokens, depositor } = await networkHelpers.loadFixture(deploySeededPoolFixture);
           const balancesBefore = await readBalances(tokens, depositor.account.address);
 
@@ -667,22 +636,20 @@ describe("Pool.removeLiquidity", async function () {
           // ici : le pool ne se vide jamais completement, meme quand son
           // unique detenteur de parts "libres" (hors adresse morte) retire
           // tout ce qu'il possede.
-          // Calcul a la main : reserves = [1e10, 4,5e10, 4,5e10], totalSupply = 1e11
+          // Calcul a la main : reserves = [1e10, 1e10, 1e10], totalSupply = 3e10
           //   burned = totalSupply - MINIMUM_LIQUIDITY
-          //          = 100 000 000 000 - 1000 = 99 999 999 000
+          //          = 30 000 000 000 - 1000 = 29 999 999 000
           //   amountsOut[i] = reserves[i] * burned / totalSupply
-          //     token0 : 1e10 * 99 999 999 000 / 1e11 = 9 999 999 900 (tronque)
-          //     token1/2 : 4,5e10 * 99 999 999 000 / 1e11 = 44 999 999 550 (tronque)
+          //     chaque jambe : 1e10 * 29 999 999 000 / 3e10 = 9 999 999 666 (tronque)
           //   residu[i] = reserves[i] - amountsOut[i]
-          //     token0 : 1e10 - 9 999 999 900 = 100
-          //     token1/2 : 4,5e10 - 44 999 999 550 = 450
+          //     chaque jambe : 1e10 - 9 999 999 666 = 334
           const { pool, depositor } = await networkHelpers.loadFixture(deploySeededPoolFixture);
           const fullBalance = await pool.read.balanceOf([depositor.account.address]);
 
           await pool.write.removeLiquidity([fullBalance, [0n, 0n, 0n]], { account: depositor.account });
 
           const reservesAfter = await readReserves(pool);
-          const expectedResidual: [bigint, bigint, bigint] = [100n, 450n, 450n];
+          const expectedResidual: [bigint, bigint, bigint] = [334n, 334n, 334n];
           assert.deepEqual(
             reservesAfter,
             expectedResidual,
@@ -739,13 +706,12 @@ describe("Pool.removeLiquidity", async function () {
           // valeur d'une part ne bouge pas. Un retrait ne dilue ni n'enrichit
           // les porteurs restants ; deux retraits identiques doivent donc
           // rendre exactement les memes montants.
-          // Calcul a la main : reserves = [1e10, 4,5e10, 4,5e10], supply = 1e11.
-          //   1er retrait (BURN_AMOUNT = 1e10) :
-          //     amountsOut = [1e10 * 1e10/1e11, 4,5e10 * 1e10/1e11, ...]
-          //                = [1e9, 4,5e9, 4,5e9]
-          //   apres : reserves = [9e9, 40,5e9, 40,5e9], supply = 9e10
-          //   2e retrait : amountsOut[i] = reserves[i] * 1e10 / 9e10 = reserves[i] / 9
-          //              = [1e9, 4,5e9, 4,5e9] (identique)
+          // Calcul a la main : reserves = [1e10, 1e10, 1e10], supply = 3e10.
+          //   1er retrait (BURN_AMOUNT = 3e9) :
+          //     amountsOut = [1e10 * 3e9/3e10, ...] = [1e9, 1e9, 1e9]
+          //   apres : reserves = [9e9, 9e9, 9e9], supply = 2,7e10
+          //   2e retrait : amountsOut[i] = reserves[i] * 3e9 / 2,7e10 = reserves[i] / 9
+          //              = [1e9, 1e9, 1e9] (identique)
           const { pool, tokens, depositor } = await networkHelpers.loadFixture(deploySeededPoolFixture);
 
           const balancesBeforeFirst = await readBalances(tokens, depositor.account.address);
@@ -786,8 +752,8 @@ describe("Pool.removeLiquidity", async function () {
           const received = balancesBefore.map((before, i) => balancesAfter[i] - before);
           assert.deepEqual(
             received,
-            [12_500_000_000n, 45_000_000_000n, 36_000_000_000n],
-            `recu=[${received}], attendu 10% des reserves [1250e8, 4500e8, 3600e8]`,
+            [12_500_000_000n, 10_000_000_000n, 8_000_000_000n],
+            `recu=[${received}], attendu 10% des reserves [1250e8, 1000e8, 800e8]`,
           );
         });
 
@@ -796,7 +762,7 @@ describe("Pool.removeLiquidity", async function () {
           // du totalSupply doit faire baisser chaque reserve d'exactement
           // 10%, donc laisser le rapport entre les trois reserves inchange.
           // On compare deux lectures on-chain (reserves avant et apres),
-          // sans reimplementer Pool.sol:156.
+          // sans reimplementer Pool.sol:125.
           const { pool, depositor } = await networkHelpers.loadFixture(deployImbalancedPoolFixture);
           const supplyBefore = await pool.read.totalSupply();
           const reservesBefore = await readReserves(pool);
@@ -822,8 +788,8 @@ describe("Pool.removeLiquidity", async function () {
           await pool.write.removeLiquidity([burnedShares, [0n, 0n, 0n]], { account: depositor.account });
 
           const balancesAfter = await readBalances(tokens, depositor.account.address);
-          const receivedAbundant = balancesAfter[1] - balancesBefore[1]; // token1 = actif abondant (4500e8)
-          const receivedRare = balancesAfter[0] - balancesBefore[0]; // token0 = actif rare (1250e8)
+          const receivedAbundant = balancesAfter[0] - balancesBefore[0]; // token0 = actif abondant (1250e8)
+          const receivedRare = balancesAfter[2] - balancesBefore[2]; // token2 = actif rare (800e8)
           assert.ok(
             receivedAbundant > receivedRare,
             `token abondant devrait rendre plus : abondant=${receivedAbundant}, rare=${receivedRare}`,
@@ -833,13 +799,14 @@ describe("Pool.removeLiquidity", async function () {
 
       describe("2) Consequence chiffree du desequilibre (calcul a la main)", function () {
         it("bruler 7 000 000 003 parts rend trois montants tronques vers le bas", async function () {
-          // reserves = [1250e8, 4500e8, 3600e8] (cf. fixture)
-          // totalSupply = 1 000 000 000 000 (fixe depuis l'amorcage : le swap
-          // qui desequilibre la fixture ne mint ni ne brule aucune part LP)
-          // amountsOut[i] = reserves[i] * 7 000 000 003 / 1 000 000 000 000
-          //   token0 : 125 000 000 000 * 7 000 000 003 / 1e12 = 875 000 000,375   -> 875 000 000
-          //   token1 : 450 000 000 000 * 7 000 000 003 / 1e12 = 3 150 000 001,35  -> 3 150 000 001
-          //   token2 : 360 000 000 000 * 7 000 000 003 / 1e12 = 2 520 000 001,08  -> 2 520 000 001
+          // reserves = [1250e8, 1000e8, 800e8] (cf. fixture)
+          // totalSupply = 300 000 000 000 (= 3 * seedAmount, fixe depuis
+          // l'amorcage : le swap qui desequilibre la fixture ne mint ni ne
+          // brule aucune part LP)
+          // amountsOut[i] = reserves[i] * 7 000 000 003 / 300 000 000 000
+          //   token0 : 125 000 000 000 * 7 000 000 003 / 300 000 000 000 = 2 916 666 667 (tronque)
+          //   token1 : 100 000 000 000 * 7 000 000 003 / 300 000 000 000 = 2 333 333 334 (tronque)
+          //   token2 :  80 000 000 000 * 7 000 000 003 / 300 000 000 000 = 1 866 666 667 (tronque)
           const { pool, tokens, depositor } = await networkHelpers.loadFixture(deployImbalancedPoolFixture);
           const balancesBefore = await readBalances(tokens, depositor.account.address);
           const burnedShares = 7_000_000_003n;
@@ -850,18 +817,15 @@ describe("Pool.removeLiquidity", async function () {
           const received = balancesBefore.map((before, i) => balancesAfter[i] - before);
           assert.deepEqual(
             received,
-            [875_000_000n, 3_150_000_001n, 2_520_000_001n],
-            `recu=[${received}], attendu=[875000000n, 3150000001n, 2520000001n] (calcul a la main en commentaire)`,
+            [2_916_666_667n, 2_333_333_334n, 1_866_666_667n],
+            `recu=[${received}], attendu=[2916666667n, 2333333334n, 1866666667n] (calcul a la main en commentaire)`,
           );
         });
       });
 
       describe("3) Evenement avec des montants distincts", function () {
         it("RemovedLiquidity porte trois amountsOut distincts sur un pool desequilibre", async function () {
-          // Memes valeurs que le test hardcode ci-dessus. La verification sur
-          // pool equilibre, en II.A, ne peut montrer que trois montants
-          // egaux : celle-ci verifie que l'evenement transporte bien trois
-          // valeurs differentes quand les reserves le sont.
+          // Memes valeurs que le test hardcode ci-dessus.
           const { pool, depositor } = await networkHelpers.loadFixture(deployImbalancedPoolFixture);
           const burnedShares = 7_000_000_003n;
 
@@ -869,7 +833,7 @@ describe("Pool.removeLiquidity", async function () {
             pool.write.removeLiquidity([burnedShares, [0n, 0n, 0n]], { account: depositor.account }),
             pool,
             "RemovedLiquidity",
-            [depositor.account.address, [875_000_000n, 3_150_000_001n, 2_520_000_001n], burnedShares],
+            [depositor.account.address, [2_916_666_667n, 2_333_333_334n, 1_866_666_667n], burnedShares],
           );
         });
       });
@@ -905,7 +869,7 @@ describe("Pool.removeLiquidity", async function () {
 
         // `other` fait un aller-retour de swaps (token0 -> token1 puis
         // token1 -> token0). feeNum = 5 (0.5%) sur chaque swap : la portion
-        // non convertie du montant en entree (voir Pool.sol:121-122) reste
+        // non convertie du montant en entree (voir Pool.sol:139-140) reste
         // dans les reserves, au benefice des LP.
         const swapAmount = SEED_AMOUNT / 10n;
         await tokens[0].write.mint([other.account.address, swapAmount]);
@@ -929,10 +893,9 @@ describe("Pool.removeLiquidity", async function () {
         const balancesAfterWithdraw = await readBalances(tokens, depositor.account.address);
         const received = balancesBeforeWithdraw.map((before, i) => balancesAfterWithdraw[i] - before);
         const totalReceived = received[0] + received[1] + received[2];
-        // Somme des trois jambes deposees a l'amorcage (poids cibles
-        // 10/45/45) : SEED_AMOUNT + 4,5 * SEED_AMOUNT + 4,5 * SEED_AMOUNT
-        // = 10 * SEED_AMOUNT.
-        const totalDeposited = 10n * SEED_AMOUNT;
+        // Somme des trois jambes deposees a l'amorcage (montants egaux) :
+        // 3 * SEED_AMOUNT.
+        const totalDeposited = 3n * SEED_AMOUNT;
         assert.ok(
           totalReceived > totalDeposited,
           `total recu=${totalReceived} (somme des 3 tokens), devrait depasser le total depose=${totalDeposited} grace aux frais accumules par l'aller-retour de swaps`,

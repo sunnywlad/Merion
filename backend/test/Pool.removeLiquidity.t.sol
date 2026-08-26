@@ -68,7 +68,7 @@ contract RemoveLiquidityFuzzNotEmptyPool is Test, PoolTestBase {
 
   function test_FuzzBurnedSharesExceedingSupplyRevertsWithPanic(uint256 burnedShares) public {
     // Borne choisie pour faire deborder la multiplication reserves(0) *
-    // burnedShares elle-meme (Pool.sol:158), avant division ou troncature
+    // burnedShares elle-meme (Pool.sol:125), avant division ou troncature
     // uint72 : ce point-la panique par construction du contrele d'overflow
     // de Solidity, contrairement a un simple burnedShares > supply, qui
     // laisse une zone ou amountsOut[i] deborde son cast uint72 sans que la

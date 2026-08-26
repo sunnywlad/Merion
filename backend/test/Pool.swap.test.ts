@@ -187,63 +187,39 @@ async function deployZeroFeeSeededPoolFixture() {
 // _amount du cas nominal (II.A) : 10% de SEED_AMOUNT, choisi comme dans
 // removeLiquidity pour son calcul propre.
 const NOMINAL_SWAP_AMOUNT_IN = SEED_AMOUNT / 10n; // 1 000 000 000
-// deploySeededPoolFixture amorce desormais selon les poids cibles 10/45/45
-// (Pool.sol:118-121), pas sur trois reserves egales : reserves =
-// [1e10, 4,5e10, 4,5e10]. Calcul a la main (feeNum = 5, swap 0 -> 2) :
+// Amorcage a montants egaux (Pool.sol:93) : reserves = [1e10, 1e10, 1e10].
+// Calcul a la main (feeNum = 5, n'importe quelle paire, puisque les trois
+// reserves sont identiques) :
 //   amountAfterFee = 1e9 * (1000 - 5) / 1000 = 995 000 000
-//   amountOut = 995 000 000 * 4,5e10 / (995 000 000 + 1e10)
-//             = 44 775 000 000 000 000 000 / 10 995 000 000
-//             = 4 072 305 593 (tronque vers le bas)
-// Ne vaut PLUS pour les six paires indistinctement (reserves[1] == reserves[2]
-// mais reserves[0] differe) : voir les trois constantes par groupe de paires
-// juste apres (section II.B).
-const NOMINAL_SWAP_AMOUNT_OUT = 4_072_305_593n;
+//   amountOut = 995 000 000 * 1e10 / (995 000 000 + 1e10)
+//             = 9 950 000 000 000 000 000 / 10 995 000 000
+//             = 904 956 798 (tronque vers le bas)
+// Contrairement a l'amorcage pondere d'avant, cette valeur vaut desormais
+// pour les SIX paires indistinctement : les trois reserves de depart sont
+// identiques, donc reserveIn == reserveOut pour n'importe quel couple.
+const NOMINAL_SWAP_AMOUNT_OUT = 904_956_798n;
 
-// Bandes verifiees a la main pour ce swap (Pool.sol:182-187) : apres coup,
-// sum = 5,4927...e10, token0 = 11,34% (bornes 5-25), token1 = 46,42% (15-65),
-// token2 = 42,22% (22-55). Les trois passent.
-
-// II.B balaie les six paires (indexIn, indexOut) distinctes sur le meme pool
-// amorce. Sur des reserves [1e10, 4,5e10, 4,5e10], elles ne rendent plus
-// toutes le meme montant : seule la symetrie reserves[1] == reserves[2]
-// (memes poids cibles) survit. Trois valeurs, chacune calculee a la main
-// (feeNum = 5, _amount = NOMINAL_SWAP_AMOUNT_IN) :
-//   depuis token0 (0 -> 1 ou 0 -> 2) : amountOut = 4 072 305 593
-//     (identique a NOMINAL_SWAP_AMOUNT_OUT ci-dessus, meme calcul)
-//   vers token0 (1 -> 0 ou 2 -> 0) :
-//     amountAfterFee = 995 000 000
-//     amountOut = 995 000 000 * 1e10 / (995 000 000 + 4,5e10)
-//               = 9 950 000 000 000 000 000 / 45 995 000 000
-//               = 216 327 861 (tronque)
-//   entre token1 et token2 (1 -> 2 ou 2 -> 1) :
-//     amountOut = 995 000 000 * 4,5e10 / (995 000 000 + 4,5e10)
-//               = 44 775 000 000 000 000 000 / 45 995 000 000
-//               = 973 475 377 (tronque)
-const SWAP_AMOUNT_OUT_FROM_WBTC = 4_072_305_593n;
-const SWAP_AMOUNT_OUT_TO_WBTC = 216_327_861n;
-const SWAP_AMOUNT_OUT_BETWEEN_CBBTC_LBTC = 973_475_377n;
-
-// Fixture dediee au pool desequilibre (section II.E). feeNum = 0, par choix
-// delibere, comme dans les deux autres fichiers de la suite : les montants
-// poses en dur en II.E supposent des reserves exactes, qu'un feeNum non nul
-// ne garantirait pas.
+// Fixture dediee au pool desequilibre (section II.E et II.F). feeNum = 0, par
+// choix delibere, comme dans les deux autres fichiers de la suite : les
+// montants poses en dur en II.E/II.F supposent des reserves exactes, qu'un
+// feeNum non nul ne garantirait pas.
+//
+// Calcul a la main : amorcage a egalite, _amount = 1000e8 => reserves =
+// [1000e8, 1000e8, 1000e8]. Swap de 250e8, token0 -> token2, feeNum = 0 :
+//   amountOut = 250e8 * 1000e8 / (250e8 + 1000e8) = 200e8 (division exacte)
+// Reserves apres le swap : [1250e8, 1000e8, 800e8]. token0 devient l'actif le
+// plus ABONDANT (il a recu le swap), token2 le plus RARE (il en est sorti),
+// token1 reste l'intermediaire, inchange par le swap.
+// Bandes verifiees a la main (floor = 13, ceiling = 53, les trois passent) :
+// sum = 3050e8, token0 = 40,98 %, token1 = 32,79 %, token2 = 26,23 %.
 async function deployImbalancedPoolFixture() {
   const base = await deployZeroFeeTokensAndPoolFixture();
   const { depositor, tokens, pool } = base;
 
-  // Amorcage ancre sur token0, poids cibles 10/45/45 : amounts = [1000e8,
-  // 4500e8, 4500e8] (Pool.sol:118-121).
   const seedAmount = 1000n * 10n ** 8n;
   await mintAndApprove(tokens, pool, depositor, seedAmount * 10n);
   await pool.write.addLiquidity([0n, seedAmount, 0n], { account: depositor.account });
 
-  // Swap de 250e8 de token0 vers token2, feeNum = 0, sur les reserves qui
-  // sortent de l'amorcage ([1000e8, 4500e8, 4500e8]) :
-  //   amountOut = amountIn * reserveOut / (amountIn + reserveIn)
-  //             = 250e8 * 4500e8 / (250e8 + 1000e8)
-  //             = 250e8 * 4500e8 / 1250e8
-  //             = 900e8
-  // Reserves apres le swap : [1250e8, 4500e8, 3600e8]
   const swapAmount = 250n * 10n ** 8n;
   await pool.write.swap([0n, swapAmount, 2n, 0n], { account: depositor.account });
 
@@ -255,14 +231,10 @@ async function deployImbalancedPoolFixture() {
 // que le triplet des deltas de solde du swapper correspond exactement au
 // sens du swap : -_amount sur indexIn, +expectedOut sur indexOut, 0 sur le
 // troisieme token. Factorisee pour etre appelee depuis les six `it` de la
-// section II.B : chaque paire est une transaction distincte du point de vue
-// de l'ABI (un indexIn/indexOut different a chaque fois), donc un
-// comportement a verifier separement, et une seule assertion par test.
-// `expectedOut` est fourni par l'appelant (pas recalcule ici) : sur ce pool
-// desormais pondere 10/45/45, les six paires ne rendent plus toutes le meme
-// montant (seul reserves[1] == reserves[2] survit), voir les trois constantes
-// SWAP_AMOUNT_OUT_* plus haut.
-async function assertSwapYieldsExpectedDeltas(indexIn: 0 | 1 | 2, indexOut: 0 | 1 | 2, expectedOut: bigint) {
+// section II.B : chaque paire est une transaction ABI distincte (_indexIn et
+// _indexOut different a chaque fois), donc un comportement a verifier
+// separement, avec sa propre fixture fraiche et sa propre assertion.
+async function assertSwapYieldsExpectedDeltas(indexIn: 0 | 1 | 2, indexOut: 0 | 1 | 2) {
   const { pool, tokens, other } = await networkHelpers.loadFixture(deploySeededPoolFixture);
   await mintAndApproveSingleToken(tokens, pool, other, indexIn, NOMINAL_SWAP_AMOUNT_IN);
   const balancesBefore = await readBalances(tokens, other.account.address);
@@ -275,7 +247,7 @@ async function assertSwapYieldsExpectedDeltas(indexIn: 0 | 1 | 2, indexOut: 0 | 
   const delta = balancesBefore.map((before, i) => balancesAfter[i] - before) as [bigint, bigint, bigint];
   const expected: [bigint, bigint, bigint] = [0n, 0n, 0n];
   expected[indexIn] = -NOMINAL_SWAP_AMOUNT_IN;
-  expected[indexOut] = expectedOut;
+  expected[indexOut] = NOMINAL_SWAP_AMOUNT_OUT;
   assert.deepEqual(
     delta,
     expected,
@@ -297,7 +269,7 @@ describe("Pool.swap", async function () {
         // amountAfterFee * 0 / (amountAfterFee + 0) = 0 quel que soit
         // amountAfterFee, puisque cachedReserves[_indexOut] = 0.
         // Cette garde empeche ce qui se passait avant son ajout : le
-        // transferFrom entrant (Pool.sol:194) s'executait quand meme, et le
+        // transferFrom entrant (Pool.sol:161) s'executait quand meme, et le
         // swapper payait _amount pour ne rien recevoir en retour.
         const { pool, tokens, other } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
         const amount = 1_000_000_000n;
@@ -311,7 +283,7 @@ describe("Pool.swap", async function () {
       });
 
       it("_amount == 0 sur un pool vierge : panic 0x12 (division par zero)", async function () {
-        // Le denominateur de la division qui calcule amountOut (Pool.sol:171)
+        // Le denominateur de la division qui calcule amountOut (Pool.sol:140)
         // vaut amountAfterFee + cachedReserves[_indexIn] = 0 + 0 : cette
         // division precede tous les require de la fonction, donc cette
         // branche reste atteignable sur un contrat tout juste deploye, avant
@@ -326,7 +298,7 @@ describe("Pool.swap", async function () {
     });
 
     // B) InsufficientReserve : garde non atteignable par l'ABI, donc aucun test ici.
-    // La garde `cachedReserves[_indexOut] > amountOut` (Pool.sol:174) ne
+    // La garde `cachedReserves[_indexOut] > amountOut` (Pool.sol:143) ne
     // peut se declencher que si la reserve d'ENTREE est nulle : des que
     // cachedReserves[_indexIn] > 0, amountOut = amountAfterFee *
     // reserveOut / (amountAfterFee + reserveIn) est strictement inferieur
@@ -334,18 +306,14 @@ describe("Pool.swap", async function () {
     // toujours le numerateur d'au moins reserveIn > 0). Or, une fois
     // ZeroOutput en place (I.A ci-dessus), l'etat "reserve d'entree nulle,
     // reserve de sortie garnie" n'est plus atteignable par l'ABI :
-    // addLiquidity garnit les trois reserves ensemble (Pool.sol:82-83 ou
-    // 92-96), removeLiquidity laisse toujours un residu (les parts mortes
+    // addLiquidity garnit les trois reserves ensemble a l'amorcage,
+    // removeLiquidity laisse toujours un residu (les parts mortes
     // MINIMUM_LIQUIDITY ne sont jamais brulees), et swap lui-meme ne peut
     // plus vider une reserve jusqu'a zero (c'est precisement ce
-    // qu'empeche cette garde). La garde protege donc un invariant du
-    // contrat, pas un chemin courant : elle prend tout son sens en Phase 2,
-    // ou le solveur de Newton du futur StableSwap pourra ramener amountOut
-    // a reserveOut par un arrondi different de celui du produit constant.
-    // Le seul moyen de l'exercer aujourd'hui est de forger l'etat
-    // directement (vm.store sur le slot de reserves) dans un test
-    // Solidity : hors de portee d'un test fonctionnel TypeScript qui ne
-    // peut appeler le contrat qu'a travers son ABI publique.
+    // qu'empeche cette garde). Le seul moyen de l'exercer aujourd'hui est
+    // de forger l'etat directement (vm.store sur le slot de reserves) dans
+    // un test Solidity : voir test/Pool.invariant.t.sol,
+    // test_InsufficientReserveReachedViaForgedState.
   });
 
   // ---------------------------------------------------------------------------
@@ -390,7 +358,7 @@ describe("Pool.swap", async function () {
       it("reserves[0] (le token d'entree) augmente exactement de _amount, frais compris", async function () {
         // amountAfterFee (95% de _amount) est ce qui sert au calcul du prix,
         // mais c'est bien le montant PLEIN _amount qui entre en reserve
-        // (Pool.sol:191 : reserves[_indexIn] += uint72(_amount), pas
+        // (Pool.sol:158 : reserves[_indexIn] += uint72(_amount), pas
         // uint72(amountAfterFee)). C'est precisement la que les frais
         // s'accumulent, au benefice des LP plutot que d'etre extraits du
         // pool.
@@ -412,7 +380,7 @@ describe("Pool.swap", async function () {
       it("reserves[2] (le token de sortie) baisse exactement de ce que le swapper a recu", async function () {
         // Conservation : on compare deux lectures on-chain (le delta de la
         // reserve de sortie et ce que le swapper a effectivement recu) sans
-        // reimplementer la formule interne (Pool.sol:171) en TS.
+        // reimplementer la formule interne (Pool.sol:140) en TS.
         const { pool, tokens, other } = await networkHelpers.loadFixture(deploySeededPoolFixture);
         await mintAndApproveSingleToken(tokens, pool, other, 0, NOMINAL_SWAP_AMOUNT_IN);
         const reserveBefore = (await readReserves(pool))[2];
@@ -522,37 +490,37 @@ describe("Pool.swap", async function () {
     });
 
     describe("B) Balayage des six paires (indexIn, indexOut) distinctes", function () {
-      // Sur ce pool amorce pondere (10/45/45), les six paires ne donnent
-      // plus toutes le meme amountOut pour la meme entree : seule la
-      // symetrie reserves[1] == reserves[2] (memes poids cibles) survit,
-      // d'ou les trois constantes SWAP_AMOUNT_OUT_* passees a chaque appel.
-      // On les teste quand meme une par une, et non via une seule boucle
-      // englobee dans un `it` : chaque paire est une transaction ABI
-      // distincte (_indexIn et _indexOut different a chaque appel), donc un
+      // Sur ce pool amorce a montants egaux, les six paires rendent
+      // desormais TOUTES le meme amountOut pour la meme entree : les trois
+      // reserves de depart sont identiques (contrairement a l'amorcage
+      // pondere d'avant, ou seule la symetrie cbBTC/lBTC survivait). On les
+      // teste quand meme une par une, et non via une seule boucle englobee
+      // dans un `it` : chaque paire est une transaction ABI distincte
+      // (_indexIn et _indexOut different a chaque appel), donc un
       // comportement a verifier separement, avec sa propre fixture fraiche
       // et sa propre assertion.
       it("0 -> 1", async function () {
-        await assertSwapYieldsExpectedDeltas(0, 1, SWAP_AMOUNT_OUT_FROM_WBTC);
+        await assertSwapYieldsExpectedDeltas(0, 1);
       });
 
       it("0 -> 2", async function () {
-        await assertSwapYieldsExpectedDeltas(0, 2, SWAP_AMOUNT_OUT_FROM_WBTC);
+        await assertSwapYieldsExpectedDeltas(0, 2);
       });
 
       it("1 -> 0", async function () {
-        await assertSwapYieldsExpectedDeltas(1, 0, SWAP_AMOUNT_OUT_TO_WBTC);
+        await assertSwapYieldsExpectedDeltas(1, 0);
       });
 
       it("1 -> 2", async function () {
-        await assertSwapYieldsExpectedDeltas(1, 2, SWAP_AMOUNT_OUT_BETWEEN_CBBTC_LBTC);
+        await assertSwapYieldsExpectedDeltas(1, 2);
       });
 
       it("2 -> 0", async function () {
-        await assertSwapYieldsExpectedDeltas(2, 0, SWAP_AMOUNT_OUT_TO_WBTC);
+        await assertSwapYieldsExpectedDeltas(2, 0);
       });
 
       it("2 -> 1", async function () {
-        await assertSwapYieldsExpectedDeltas(2, 1, SWAP_AMOUNT_OUT_BETWEEN_CBBTC_LBTC);
+        await assertSwapYieldsExpectedDeltas(2, 1);
       });
     });
 
@@ -587,8 +555,8 @@ describe("Pool.swap", async function () {
         // Calcul a la main : amountAfterFee = 1 * (1000 - 5) / 1000 = 0
         // (division entiere), donc amountOut = 0. Avant la garde, le
         // swapper perdait purement et simplement son unite : le
-        // transferFrom entrant s'executait (Pool.sol:194), la reserve
-        // d'entree encaissait l'unite (Pool.sol:191), et rien ne repartait
+        // transferFrom entrant s'executait (Pool.sol:161), la reserve
+        // d'entree encaissait l'unite (Pool.sol:158), et rien ne repartait
         // en face.
         const { pool, tokens, other } = await networkHelpers.loadFixture(deploySeededPoolFixture);
         await mintAndApproveSingleToken(tokens, pool, other, 0, 1n);
@@ -632,7 +600,7 @@ describe("Pool.swap", async function () {
 
       it("_indexIn hors bornes (valeur 3) : panic 0x32", async function () {
         // Aucun mint/approve necessaire : cachedReserves[_indexIn] est
-        // indexe des Pool.sol:170-171, avant tout transferFrom (Pool.sol:194).
+        // indexe des Pool.sol:139-140, avant tout transferFrom (Pool.sol:161).
         // L'appel revert par un acces hors bornes d'un tableau MEMOIRE
         // (cachedReserves, la copie locale de `reserves`), pas storage.
         const { pool, other } = await networkHelpers.loadFixture(deploySeededPoolFixture);
@@ -659,9 +627,7 @@ describe("Pool.swap", async function () {
         // seuil exact. Les gardes ZeroOutput et InsufficientReserve passent
         // avant d'atteindre celle-ci : avec un amount aussi grand,
         // amountAfterFee ecrase largement reserves[_indexIn] au denominateur,
-        // donc amountOut tend vers reserves[_indexOut] sans jamais l'atteindre
-        // (verifie numeriquement : amountOut = 44 999 999 999, strictement
-        // sous reserves[2] = 4,5e10).
+        // donc amountOut tend vers reserves[_indexOut] sans jamais l'atteindre.
         const { pool, other } = await networkHelpers.loadFixture(deploySeededPoolFixture);
 
         await viem.assertions.revertWithCustomError(
@@ -672,9 +638,8 @@ describe("Pool.swap", async function () {
       });
 
       it("montant poussiere avec un _minOut inatteignable : ZeroOutput, jamais BadSlippage", async function () {
-        // Ordre des gardes dans Pool.sol (lignes 173-189) : ZeroOutput,
-        // InsufficientReserve, ReserveOverflow, la boucle de bandes, puis
-        // BadSlippage en dernier.
+        // Ordre des gardes dans Pool.sol : ZeroOutput, InsufficientReserve,
+        // ReserveOverflow, la boucle de bandes, puis BadSlippage en dernier.
         // _amount = 1 donne amountOut = 0 (voir le test voisin ci-dessus) :
         // meme avec un _minOut enorme et donc lui aussi insatisfaisable,
         // c'est ZeroOutput qui doit interrompre l'appel en premier, le
@@ -765,8 +730,8 @@ describe("Pool.swap", async function () {
       it("a entree identique, un pool a feeNum = 0 rend strictement plus qu'un pool a feeNum = 5", async function () {
         // Seul test de la suite qui a besoin de DEUX pools vivants en meme
         // temps : la propriete comparee est le feeNum, qui est fixe a la
-        // construction (Pool.sol:39-41) et ne peut pas etre change a la volee
-        // ici (setFee est onlyOwner et impose un delai de 1 jour).
+        // construction et ne peut pas etre change a la volee ici (setFee est
+        // onlyOwner et impose un delai de 1 jour).
         //
         // Les deux loadFixture se font donc AVANT tout appel ecrivant, et cet
         // ordre n'est pas cosmetique : loadFixture restaure un instantane de
@@ -794,31 +759,30 @@ describe("Pool.swap", async function () {
       });
 
       it("une entree tres superieure aux reserves echoue par CeilingTouched, pas par un amountOut proche de la reserve de sortie", async function () {
-        // Ancien enonce de ce test, perime par les bandes ajoutees le
-        // 2026-08-21 : "amountOut reste strictement sous reserves[_indexOut],
-        // meme sur une entree tres superieure aux reserves". La propriete en
-        // elle-meme reste vraie de la formule du produit constant seule
-        // (Pool.sol:170-171 ne peut structurellement pas rendre amountOut >=
+        // La propriete "amountOut reste strictement sous reserves[_indexOut]"
+        // tient toujours de la seule formule du produit constant
+        // (Pool.sol:139-140 ne peut structurellement pas rendre amountOut >=
         // reserveOut), mais elle n'est plus atteignable par l'ABI : la
-        // boucle de bandes (Pool.sol:182-187) bloque desormais bien avant
-        // que cette limite ne devienne visible.
-        // _amount = 1e12, tres au-dessus des reserves du pool ([1e10, 4,5e10,
-        // 4,5e10]) mais bien sous uint72.max (~4.7e21), passe ZeroOutput,
-        // InsufficientReserve et ReserveOverflow. Calcul a la main (feeNum = 5) :
-        //   afterSwapReserves = [1 010 000 000 000, 45 000 000 000, 447 761 195]
-        //   sum = 1 055 447 761 195
-        //   token0 : 95,69% de sum, au-dessus de son plafond (25%) : premier
-        //   indice de la boucle (i = 0), le require y revert avant que les
-        //   violations de token1 (plancher 15%) et token2 (plancher 22%),
-        //   toutes deux egalement hors bande a ce stade, ne soient atteintes.
+        // boucle de bandes (Pool.sol:151-154) bloque desormais bien avant.
+        // _amount = 2 * SEED_AMOUNT (2e10), sur reserves = [1e10, 1e10, 1e10],
+        // feeNum = 5. Calcul a la main :
+        //   amountAfterFee = 2e10 * 995 / 1000 = 19 900 000 000
+        //   amountOut = 19 900 000 000 * 1e10 / (19 900 000 000 + 1e10)
+        //             = 6 655 518 394 (tronque)
+        //   afterSwapReserves = [3e10, 1e10, 3 344 481 606], sum = 43 344 481 606
+        //   token0 (l'entrante) : 30e9 * 100 / 43 344 481 606 = 69,21 %,
+        //   au-dessus de son plafond (53 %) : premier indice de la boucle
+        //   (i = 0), le require y revert avant que token2 (10,29 % apres
+        //   coup) ne soit lui-meme examine.
         const { pool, tokens, other } = await networkHelpers.loadFixture(deploySeededPoolFixture);
-        const hugeAmount = 10n ** 12n;
+        const hugeAmount = 2n * SEED_AMOUNT;
         await mintAndApproveSingleToken(tokens, pool, other, 0, hugeAmount);
 
-        await viem.assertions.revertWithCustomError(
+        await viem.assertions.revertWithCustomErrorWithArgs(
           pool.write.swap([0n, hugeAmount, 2n, 0n], { account: other.account }),
           pool,
           "CeilingTouched",
+          [0n],
         );
       });
 
@@ -847,38 +811,23 @@ describe("Pool.swap", async function () {
     });
 
     describe("E) Pool desequilibre", function () {
-      // reserves = [1250e8, 4500e8, 3600e8] : depuis le token1 (la jambe la
-      // plus abondante), les deux destinations possibles sont token0 (la plus
-      // rare des trois, 1250e8) et token2 (intermediaire, 3600e8) — token1
+      // reserves = [1250e8, 1000e8, 800e8] : depuis le token0 (la jambe la
+      // plus abondante), les deux destinations possibles sont token1
+      // (l'intermediaire) et token2 (la plus rare des trois) — token0
       // lui-meme n'est evidemment pas une destination valide de son propre
       // swap. Calcul a la main (feeNum = 0, _amount = 10 000 000 000 depuis
-      // le token1) :
-      //   vers token0 (le plus rare)  : 1e10 * 1250e8 / (1e10 + 4500e8) = 2 717 391 304 (tronque)
-      //   vers token2 (l'intermediaire) : 1e10 * 3600e8 / (1e10 + 4500e8) = 7 826 086 956 (tronque)
+      // le token0) :
+      //   vers token1 (l'intermediaire) : 1e10 * 1000e8 / (1e10 + 1250e8) = 7 407 407 407 (tronque)
+      //   vers token2 (le plus rare)    : 1e10 *  800e8 / (1e10 + 1250e8) = 5 925 925 925 (tronque)
       const IMBALANCED_SWAP_AMOUNT_IN = 10_000_000_000n;
-      const AMOUNT_OUT_TOWARD_RARE = 2_717_391_304n;
-      const AMOUNT_OUT_TOWARD_INTERMEDIATE = 7_826_086_956n;
+      const AMOUNT_OUT_TOWARD_INTERMEDIATE = 7_407_407_407n;
+      const AMOUNT_OUT_TOWARD_RARE = 5_925_925_925n;
 
-      it("depuis le token1, acheter le token le plus rare (index 0) rend exactement 2 717 391 304", async function () {
+      it("depuis le token0, acheter le token intermediaire (index 1) rend exactement 7 407 407 407", async function () {
         const { pool, tokens, other } = await networkHelpers.loadFixture(deployImbalancedPoolFixture);
-        await mintAndApproveSingleToken(tokens, pool, other, 1, IMBALANCED_SWAP_AMOUNT_IN);
+        await mintAndApproveSingleToken(tokens, pool, other, 0, IMBALANCED_SWAP_AMOUNT_IN);
 
-        const { result: amountOut } = await pool.simulate.swap([1n, IMBALANCED_SWAP_AMOUNT_IN, 0n, 0n], {
-          account: other.account.address,
-        });
-
-        assert.equal(
-          amountOut,
-          AMOUNT_OUT_TOWARD_RARE,
-          `amountOut=${amountOut}, attendu=${AMOUNT_OUT_TOWARD_RARE} (calcul a la main en commentaire)`,
-        );
-      });
-
-      it("depuis le token1, acheter le token intermediaire (index 2) rend exactement 7 826 086 956", async function () {
-        const { pool, tokens, other } = await networkHelpers.loadFixture(deployImbalancedPoolFixture);
-        await mintAndApproveSingleToken(tokens, pool, other, 1, IMBALANCED_SWAP_AMOUNT_IN);
-
-        const { result: amountOut } = await pool.simulate.swap([1n, IMBALANCED_SWAP_AMOUNT_IN, 2n, 0n], {
+        const { result: amountOut } = await pool.simulate.swap([0n, IMBALANCED_SWAP_AMOUNT_IN, 1n, 0n], {
           account: other.account.address,
         });
 
@@ -889,29 +838,37 @@ describe("Pool.swap", async function () {
         );
       });
 
+      it("depuis le token0, acheter le token le plus rare (index 2) rend exactement 5 925 925 925", async function () {
+        const { pool, tokens, other } = await networkHelpers.loadFixture(deployImbalancedPoolFixture);
+        await mintAndApproveSingleToken(tokens, pool, other, 0, IMBALANCED_SWAP_AMOUNT_IN);
+
+        const { result: amountOut } = await pool.simulate.swap([0n, IMBALANCED_SWAP_AMOUNT_IN, 2n, 0n], {
+          account: other.account.address,
+        });
+
+        assert.equal(
+          amountOut,
+          AMOUNT_OUT_TOWARD_RARE,
+          `amountOut=${amountOut}, attendu=${AMOUNT_OUT_TOWARD_RARE} (calcul a la main en commentaire)`,
+        );
+      });
+
       // Un troisieme `it` plutot que de laisser les deux valeurs en dur
       // ci-dessus porter seules la comparaison : la propriete qualitative
       // ("l'actif le plus rare coute plus cher") est ce qu'on veut garantir
-      // dans le temps, independamment des deux montants exacts. Si l'un des
-      // deux tests de valeur venait a etre modifie par erreur (mauvais
-      // copier-coller, mauvaise reserve), ce test la protege separement, en
-      // comparant deux lectures on-chain entre elles sans dependre des
-      // constantes ci-dessus.
+      // dans le temps, independamment des deux montants exacts.
       //
       // Un SEUL chargement de fixture, et deux `simulate` sur le meme pool :
       // simulate n'ecrit rien (c'est un eth_call), les deux mesures sont donc
-      // bien prises sur des reserves identiques. Deux loadFixture successifs
-      // de la MEME fixture ne donneraient pas deux pools independants, mais
-      // deux fois le meme, le second appel se contentant de restaurer
-      // l'instantane deja pris.
+      // bien prises sur des reserves identiques.
       it("a entree identique, acheter le token le plus rare rend strictement moins qu'acheter l'intermediaire", async function () {
         const { pool, tokens, other } = await networkHelpers.loadFixture(deployImbalancedPoolFixture);
-        await mintAndApproveSingleToken(tokens, pool, other, 1, IMBALANCED_SWAP_AMOUNT_IN);
+        await mintAndApproveSingleToken(tokens, pool, other, 0, IMBALANCED_SWAP_AMOUNT_IN);
 
-        const { result: amountOutRare } = await pool.simulate.swap([1n, IMBALANCED_SWAP_AMOUNT_IN, 0n, 0n], {
+        const { result: amountOutRare } = await pool.simulate.swap([0n, IMBALANCED_SWAP_AMOUNT_IN, 2n, 0n], {
           account: other.account.address,
         });
-        const { result: amountOutIntermediate } = await pool.simulate.swap([1n, IMBALANCED_SWAP_AMOUNT_IN, 2n, 0n], {
+        const { result: amountOutIntermediate } = await pool.simulate.swap([0n, IMBALANCED_SWAP_AMOUNT_IN, 1n, 0n], {
           account: other.account.address,
         });
 
@@ -923,122 +880,73 @@ describe("Pool.swap", async function () {
 
       it("l'evenement Swapped porte les bons montants sur des reserves inegales", async function () {
         const { pool, tokens, other } = await networkHelpers.loadFixture(deployImbalancedPoolFixture);
-        await mintAndApproveSingleToken(tokens, pool, other, 1, IMBALANCED_SWAP_AMOUNT_IN);
+        await mintAndApproveSingleToken(tokens, pool, other, 0, IMBALANCED_SWAP_AMOUNT_IN);
 
         await viem.assertions.emitWithArgs(
-          pool.write.swap([1n, IMBALANCED_SWAP_AMOUNT_IN, 0n, 0n], { account: other.account }),
+          pool.write.swap([0n, IMBALANCED_SWAP_AMOUNT_IN, 2n, 0n], { account: other.account }),
           pool,
           "Swapped",
-          [other.account.address, 1n, IMBALANCED_SWAP_AMOUNT_IN, 0n, AMOUNT_OUT_TOWARD_RARE],
+          [other.account.address, 0n, IMBALANCED_SWAP_AMOUNT_IN, 2n, AMOUNT_OUT_TOWARD_RARE],
         );
       });
     });
 
-    describe("F) Bandes par actif (plancher/plafond)", function () {
-      // Nouvelle boucle ajoutee le 2026-08-21, apres le calcul d'amountOut et
-      // ses gardes existantes, avant BadSlippage (Pool.sol:182-187) : pour
-      // chacun des trois indices, l'etat d'arrivee du pool doit rester entre
-      // floorOf(i)% et ceilingOf(i)% de la somme des trois reserves, bornes
-      // strictes des deux cotes. Un swap qui viole une bande revert avant
-      // meme d'atteindre le require de slippage. Les quatre cas ci-dessous
-      // utilisent tous deployImbalancedPoolFixture (reserves = [1250e8,
-      // 4500e8, 3600e8], feeNum = 0) pour partir d'un etat deja documente
-      // ailleurs dans ce fichier plutot que d'une fixture dediee.
-      it("un swap qui pousse la jambe entrante au-dessus de son plafond : CeilingTouched", async function () {
-        // 0 -> 1, _amount = 1000e8. Calcul a la main (feeNum = 0) :
-        //   amountOut = 1000e8 * 4500e8 / (1000e8 + 1250e8) = 200 000 000 000
-        //   afterSwapReserves = [2250e8, 2500e8, 3600e8], sum = 8350e8
-        //   token0 (l'entrante) : 2250/8350 = 26,94% > son plafond (25%)
+    describe("F) Bandes par actif (plancher/plafond, subtask C)", function () {
+      // floor = 13, ceiling = 53 (Pool.sol:20-21), verifies en RATIOS (jamais
+      // en valeur absolue de reserve) sur la somme des trois : pour chaque
+      // indice i, la boucle exige afterSwapReserves[i] * 100 strictement
+      // entre floor * sum et ceiling * sum (Pool.sol:151-154), APRES avoir
+      // calcule amountOut et applique le swap, mais AVANT le require de
+      // slippage. Les trois premiers cas ci-dessous utilisent
+      // deployImbalancedPoolFixture (reserves = [1250e8, 1000e8, 800e8],
+      // feeNum = 0).
+      it("un swap qui pousse la jambe entrante au-dessus de son plafond : CeilingTouched(0)", async function () {
+        // 0 -> 2, _amount = 800e8. Calcul a la main (feeNum = 0) :
+        //   amountOut = 800e8 * 800e8 / (800e8 + 1250e8) = 31 219 512 195
+        //   afterSwapReserves = [2050e8, 1000e8, 48 780 487 805], sum = 353 780 487 805
+        //   token0 (l'entrante) : 205e9 * 100 / 353 780 487 805 = 57,94 %,
+        //   au-dessus de son plafond (53 %). C'est le premier indice de la
+        //   boucle (i = 0) : le require y revert avant que token1 (28,27 %,
+        //   conforme) ou token2 (13,79 %, conforme lui aussi de justesse) ne
+        //   soient meme examines.
         const { pool, tokens, other } = await networkHelpers.loadFixture(deployImbalancedPoolFixture);
-        const amount = 1000n * 10n ** 8n;
+        const amount = 800n * 10n ** 8n;
         await mintAndApproveSingleToken(tokens, pool, other, 0, amount);
 
         await viem.assertions.revertWithCustomErrorWithArgs(
-          pool.write.swap([0n, amount, 1n, 0n], { account: other.account }),
+          pool.write.swap([0n, amount, 2n, 0n], { account: other.account }),
           pool,
           "CeilingTouched",
           [0n],
         );
       });
 
-      it("un swap qui pousse la jambe sortante sous son plancher : FloorTouched", async function () {
-        // 1 -> 0, _amount = 5000e8. Calcul a la main (feeNum = 0) :
-        //   amountOut = 5000e8 * 1250e8 / (5000e8 + 4500e8) = 65 789 473 684
-        //   afterSwapReserves = [592 105 26316, 9500e8, 3600e8], sum ~ 13692e8
-        //   token0 (la sortante) : 592 105 26316 / 1369 105 26316 = 4,32% <
-        //   son plancher (5%). token1 viole aussi son propre plafond a cet
-        //   etat (69,38% > 65%), mais la boucle s'arrete au premier indice en
-        //   defaut (i = 0) : c'est FloorTouched(0) qui revert, jamais un
-        //   defaut sur l'indice 1.
+      it("un swap qui pousse la jambe sortante sous son plancher : FloorTouched(2)", async function () {
+        // 1 -> 2, _amount = 800e8. Calcul a la main (feeNum = 0) :
+        //   amountOut = 800e8 * 800e8 / (800e8 + 1000e8) = 35 555 555 555
+        //   afterSwapReserves = [1250e8, 1800e8, 44 444 444 445], sum = 349 444 444 445
+        //   token0 : 35,77 % (conforme), token1 (l'entrante) : 51,51 %
+        //   (conforme, sous son plafond), token2 (la sortante) : 12,71 %,
+        //   sous son plancher (13 %). Les indices 0 et 1 passent leurs deux
+        //   controles avant que la boucle n'atteigne l'indice 2 en defaut.
         const { pool, tokens, other } = await networkHelpers.loadFixture(deployImbalancedPoolFixture);
-        const amount = 5000n * 10n ** 8n;
+        const amount = 800n * 10n ** 8n;
         await mintAndApproveSingleToken(tokens, pool, other, 1, amount);
 
         await viem.assertions.revertWithCustomErrorWithArgs(
-          pool.write.swap([1n, amount, 0n, 0n], { account: other.account }),
+          pool.write.swap([1n, amount, 2n, 0n], { account: other.account }),
           pool,
           "FloorTouched",
-          [0n],
+          [2n],
         );
       });
-
-      it("un swap qui ne fait sortir de bande QUE la jambe non impliquee : FloorTouched(0)", async function () {
-        // LE cas qui justifie que la boucle de Pool.sol passe sur les TROIS
-        // indices et pas seulement sur _indexIn et _indexOut. Le swap final
-        // est un 1 -> 2 : la reserve de token0 ne bouge pas d'un satoshi, et
-        // c'est le DENOMINATEUR qui la sort de sa bande, sum montant de
-        // (_amount - amountOut). Les deux jambes actives, elles, restent
-        // chacune dans la leur.
-        //
-        // Il faut d'abord garer token0 pres de son plancher, ce que deux
-        // swaps 1 -> 0 font sans jamais faire sortir personne de sa bande :
-        // une seule preparation ne suffit pas, la dilution requise ferait
-        // alors franchir a token1 son propre plafond avant que token0
-        // n'atteigne son plancher. Pool a feeNum = 0, amorcage 10/45/45,
-        // reserves de depart [100e8, 450e8, 450e8].
-        //
-        // Preparation 1, swap 1 -> 0 de 250e8 :
-        //   amountOut = 250e8 * 100e8 / (250e8 + 450e8) = 3 571 428 571
-        //   reserves = [6 428 571 429, 700e8, 450e8], sum = 121 428 571 429
-        //   parts : token0 5,29% (5-25), token1 57,65% (15-65),
-        //           token2 37,06% (22-55) : les trois passent
-        // Preparation 2, swap 1 -> 0 de 15e8 :
-        //   amountOut = 15e8 * 6 428 571 429 / (15e8 + 700e8) = 134 864 435
-        //   reserves = [6 293 706 994, 715e8, 450e8], sum = 122 793 706 994
-        //   parts : token0 5,13%, token1 58,23%, token2 36,65% : passent
-        // Swap final, 1 -> 2 de 75e8 :
-        //   amountOut = 75e8 * 450e8 / (75e8 + 715e8) = 4 272 151 898
-        //   reserves = [6 293 706 994, 790e8, 40 727 848 102],
-        //   sum = 126 021 555 096
-        //   token1 62,69% < 65 et token2 32,32% > 22 : les deux jambes du
-        //   swap sont conformes. token0, intouche, tombe a 4,994% < 5.
-        //   Test entier du contrat : 6 293 706 994 * 100 = 629 370 699 400,
-        //   contre 5 * sum = 630 107 775 480, donc FloorTouched(0).
-        const { pool, tokens, other } = await networkHelpers.loadFixture(deployZeroFeeSeededPoolFixture);
-        const prepare1 = 250n * 10n ** 8n;
-        const prepare2 = 15n * 10n ** 8n;
-        const dilute = 75n * 10n ** 8n;
-        await mintAndApproveSingleToken(tokens, pool, other, 1, prepare1 + prepare2 + dilute);
-
-        await pool.write.swap([1n, prepare1, 0n, 0n], { account: other.account });
-        await pool.write.swap([1n, prepare2, 0n, 0n], { account: other.account });
-
-        await viem.assertions.revertWithCustomErrorWithArgs(
-          pool.write.swap([1n, dilute, 2n, 0n], { account: other.account }),
-          pool,
-          "FloorTouched",
-          [0n],
-        );
-      });
-
 
       it("un swap nominal laisse les trois jambes dans leurs bandes", async function () {
-        // 0 -> 2, _amount = 100e8 (10% de IMBALANCED_SWAP_AMOUNT_IN). Calcul
-        // a la main (feeNum = 0) :
-        //   amountOut = 100e8 * 3600e8 / (100e8 + 1250e8) = 26 666 666 666
-        //   afterSwapReserves = [1350e8, 4500e8, 3333333334e2], sum ~ 9183e8
-        //   token0 = 14,70% (5-25), token1 = 49,00% (15-65),
-        //   token2 = 36,29% (22-55) : les trois passent.
+        // 0 -> 2, _amount = 100e8. Calcul a la main (feeNum = 0) :
+        //   amountOut = 100e8 * 800e8 / (100e8 + 1250e8) = 5 925 925 925
+        //   afterSwapReserves = [1350e8, 1000e8, 74 074 074 075], sum = 309 074 074 075
+        //   token0 = 43,68 % (13-53 OK), token1 = 32,35 % (OK),
+        //   token2 = 23,96 % (OK) : les trois passent.
         const { pool, tokens, other } = await networkHelpers.loadFixture(deployImbalancedPoolFixture);
         const amount = 100n * 10n ** 8n;
         await mintAndApproveSingleToken(tokens, pool, other, 0, amount);
@@ -1048,8 +956,58 @@ describe("Pool.swap", async function () {
         const reserves = await readReserves(pool);
         assert.deepEqual(
           reserves,
-          [135_000_000_000n, 450_000_000_000n, 333_333_333_334n],
+          [135_000_000_000n, 100_000_000_000n, 74_074_074_075n],
           `le swap a passe les bandes mais laisse des reserves inattendues : ${reserves}`,
+        );
+      });
+
+      it("un swap qui ne fait sortir de bande QUE la jambe non impliquee : FloorTouched(0)", async function () {
+        // LE cas qui justifie que la boucle de Pool.sol passe sur les TROIS
+        // indices et pas seulement sur _indexIn et _indexOut. Pool a
+        // feeNum = 0, amorcage a egalite, reserves de depart [100e8, 100e8,
+        // 100e8] (deployZeroFeeSeededPoolFixture). Les deux preparations
+        // touchent token0 pour le garer juste au-dessus de son plancher ;
+        // c'est le TROISIEME swap, le 1 -> 2, qui porte la demonstration :
+        // token0 n'y intervient pas, sa reserve ne bouge pas d'un satoshi,
+        // et c'est pourtant le DENOMINATEUR (la somme des trois) qui l'a
+        // sorti de sa bande, a mesure que les deux autres jambes
+        // s'echangent entre elles.
+        //
+        // Preparation 1, swap 1 -> 0 de 50e8 :
+        //   amountOut = 50e8 * 100e8 / (50e8 + 100e8) = 3 333 333 333
+        //   reserves = [6 666 666 667, 15 000 000 000, 10 000 000 000]
+        //   sum = 31 666 666 667
+        //   parts : token0 21,05 %, token1 47,37 %, token2 31,58 % : passent
+        // Preparation 2, swap 2 -> 0 de 47e8 :
+        //   amountOut = 47e8 * 6 666 666 667 / (47e8 + 6 666 666 667) = 2 131 519 274
+        //   reserves = [4 535 147 393, 15 000 000 000, 14 700 000 000]
+        //   sum = 34 235 147 393
+        //   parts : token0 13,247 % (attention : deja proche du plancher,
+        //   mais encore au-dessus), token1 43,815 %, token2 42,938 % (toutes
+        //   deux OK) : passe.
+        // Swap final, 1 -> 2 de 35e8 :
+        //   amountOut = 35e8 * 14 700 000 000 / (35e8 + 15 000 000 000) = 2 781 081 081
+        //   reserves = [4 535 147 393, 18 500 000 000, 11 918 918 919]
+        //   sum = 34 954 066 312
+        //   token1 52,93 % (conforme, sous son plafond) et token2 34,10 %
+        //   (conforme) : les deux jambes du swap restent chacune dans leur
+        //   bande. token0, intouche, tombe a 12,97 % < 13 % : verifie en
+        //   entiers, 453 514 739 300 <= 13 * 34 954 066 312 (454 402 862 056).
+        const { pool, tokens, other } = await networkHelpers.loadFixture(deployZeroFeeSeededPoolFixture);
+        const prepare1 = 50n * 10n ** 8n;
+        const prepare2 = 47n * 10n ** 8n;
+        const dilute = 35n * 10n ** 8n;
+        await mintAndApproveSingleToken(tokens, pool, other, 1, prepare1 + dilute);
+        await mintAndApproveSingleToken(tokens, pool, other, 2, prepare2);
+
+        await pool.write.swap([1n, prepare1, 0n, 0n], { account: other.account });
+        await pool.write.swap([2n, prepare2, 0n, 0n], { account: other.account });
+
+        await viem.assertions.revertWithCustomErrorWithArgs(
+          pool.write.swap([1n, dilute, 2n, 0n], { account: other.account }),
+          pool,
+          "FloorTouched",
+          [0n],
         );
       });
     });
@@ -1062,7 +1020,7 @@ describe("Pool.swap", async function () {
   describe("III] Proprietes de conservation", function () {
     describe("A) Aucune valeur creee ex nihilo", function () {
       it("aller-retour 0 -> 1 puis 1 -> 0 (feeNum = 5) : le swapper recupere strictement moins qu'il n'a mis", async function () {
-        // Deux passages par la formule a frais (Pool.sol:170-171) : le
+        // Deux passages par la formule a frais (Pool.sol:139-140) : le
         // swapper paie deux fois le prelevement de feeNum, plus le slippage de
         // chaque jambe (la reserve bouge entre les deux appels). Aucune valeur
         // n'est creee ex nihilo, ce qui se verifie ici en comparant le solde
