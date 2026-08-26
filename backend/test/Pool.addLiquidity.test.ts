@@ -272,22 +272,6 @@ async function assertCompositionPreservedWhenAnchoredOn(anchor: 0n | 1n | 2n) {
 describe("Pool.addLiquidity", async function () {
 
   // ---------------------------------------------------------------------------
-  // 0] Constructeur
-  //
-  // N'appartient a aucune fonction en particulier ; verifie ici plutot que
-  // dans un fichier dedie, ce depot etant le premier a exercer la fixture.
-  // ---------------------------------------------------------------------------
-
-  describe("0] Constructeur", function () {
-    it("MIN_FEE_NUM lit bien _minFeeNum passe au constructeur", async function () {
-      const { pool } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
-
-      const minFeeNum = await pool.read.MIN_FEE_NUM();
-      assert.equal(minFeeNum, MIN_FEE_NUM, `MIN_FEE_NUM() vaut ${minFeeNum}, attendu ${MIN_FEE_NUM}`);
-    });
-  });
-
-  // ---------------------------------------------------------------------------
   // I] addLiquidity sur pool vide
   // ---------------------------------------------------------------------------
 

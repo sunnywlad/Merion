@@ -1,0 +1,573 @@
+// Suite fonctionnelle TypeScript pour le constructeur de Pool.
+//
+// Pourquoi un fichier a part plutot qu'un describe greffe sur l'une des
+// quatre suites existantes : le constructeur n'appartient a aucune des
+// fonctions qu'elles testent. Il fige les immuables que TOUTES lisent
+// ensuite (les trois adresses de jetons, la fenetre d'epoque, la bande de
+// frais, la tresorerie, l'owner) et pose l'etat mutable de depart (feeNum,
+// lastFeeUpdate). Loge dans Pool.addLiquidity.test.ts, comme il l'etait
+// jusqu'ici sous un "0] Constructeur" a un seul cas, il se lisait comme une
+// dependance d'addLiquidity, ce qu'il n'est pas.
+//
+// Pourquoi TypeScript/viem plutot que Solidity ici : ce que cette suite
+// interroge est le DEPLOIEMENT lui-meme, c'est-a-dire la transaction que
+// l'equipe enverra en production et que le front lira ensuite par ses
+// getters publics. Un test Solidity deploie le pool depuis un contrat de
+// test, avec ses propres arguments figes dans PoolTestBase.sol ; un test
+// TypeScript reproduit le parcours reel, sept arguments passes a travers
+// l'ABI generee, puis relus un a un par les memes getters que le front
+// appelle. Les deux chemins de revert du constructeur ne sont d'ailleurs
+// atteignables que la : une fois PoolTestBase.sol deploye, ils sont derriere
+// nous.
+//
+// Perimetre : on teste ce que Pool.sol DECIDE. Ownable(_owner) reverte sur
+// l'adresse nulle avec OwnableInvalidOwner, mais c'est OZ qui le decide, pas
+// une ligne de Pool.sol ; ce cas est donc absent, comme le sont les noms
+// ERC-20 ("MerionLP" / "MRNLP"), poses en dur dans l'entete du constructeur
+// et sans argument a verifier.
+//
+// Voir test/README.md pour la demarche complete, la liste des cas limites
+// groupee par fonction, et pourquoi les fixtures ci-dessous sont dupliquees
+// depuis les quatre autres fichiers plutot que partagees.
+
+import { artifacts, network } from "hardhat";
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import { decodeErrorResult, type Abi } from "viem";
+
+const { viem, networkHelpers } = await network.create();
+
+// L'ABI de Pool, lue depuis l'artefact de compilation. Elle sert a decoder la
+// donnee de revert d'un DEPLOIEMENT, que viem ne decode pas lui-meme (voir le
+// helper plus bas) : il faut donc une ABI sous la main sans avoir a deployer
+// au prealable un pool valide dont on n'aurait besoin que pour ca.
+const POOL_ABI = (await artifacts.readArtifact("Pool")).abi as Abi;
+
+// ---------------------------------------------------------------------------
+// Constantes du contrat (dupliquees ici en dur : Pool.sol est fige pour cette
+// tache, on ne lit pas ces valeurs depuis le contrat).
+// ---------------------------------------------------------------------------
+
+const MAX_FEE_NUM = 50n; // Pool.sol:24
+const UNBALANCE_FACTOR = 2n; // Pool.sol:27
+
+// Valeurs de deploiement, celles que porte le reste de la suite.
+const DEFAULT_FEE_NUM = 5n; // _nominalFeeNum
+const MIN_FEE_NUM = 1n; // _minFeeNum, cf. PoolTestBase.sol
+const EPOCH_DURATION = 14400n; // 4h, cf. build-auction.md 5.0 bis
+const PRIORITY_WINDOW = 12n; // cf. build-auction.md 5.0 bis
+
+// Frontiere des deux gardes du constructeur (Pool.sol:70-71). Les deux
+// bornent le frais EFFECTIF, pas le frais de base : la surcharge de
+// desequilibre multiplie la base par UNBALANCE_FACTOR, donc la condition
+// s'ecrit `base * UNBALANCE_FACTOR <= MAX_FEE_NUM`. Calcul a la main :
+//   MAX_FEE_NUM / UNBALANCE_FACTOR = 50 / 2 = 25   -> derniere base acceptee
+//   26 * 2 = 52 > 50                               -> premiere base refusee
+// La frontiere est donc la meme pour les deux arguments, _minFeeNum comme
+// _nominalFeeNum, les deux require etant litteralement la meme inegalite.
+const MAX_BASE_FEE_NUM = MAX_FEE_NUM / UNBALANCE_FACTOR; // 25
+const ABOVE_MAX_BASE_FEE_NUM = MAX_BASE_FEE_NUM + 1n; // 26
+
+const ZERO_FEE_NUM = 0n;
+
+// ---------------------------------------------------------------------------
+// Fixtures et helpers
+//
+// Dupliques depuis Pool.addLiquidity.test.ts, deliberement. Ce fichier ouvre
+// sa propre connexion reseau via network.create() : la partager avec les
+// autres fichiers reviendrait a partager l'etat blockchain et le cache de
+// loadFixture entre des suites qui doivent pouvoir tourner, echouer et
+// evoluer separement (voir test/README.md).
+// ---------------------------------------------------------------------------
+
+// Deploie les trois ERC-20 seuls. Les tests de gardes deploient ensuite leur
+// pool a la main, avec les arguments de frais qu'ils veulent eprouver : c'est
+// le constructeur lui-meme qui est sous test, il ne peut donc pas etre cache
+// dans la fixture.
+async function deployTokensFixture() {
+  const [deployer, depositor, other, treasury] = await viem.getWalletClients();
+
+  const wbtc = await viem.deployContract("MockWrappedBTC", ["Wrapped BTC", "wBTC"]);
+  const cbbtc = await viem.deployContract("MockWrappedBTC", ["Coinbase BTC", "cbBTC"]);
+  const lbtc = await viem.deployContract("MockWrappedBTC", ["Lombard BTC", "lBTC"]);
+
+  const tokenAddresses = [wbtc.address, cbbtc.address, lbtc.address] as const;
+
+  return { deployer, depositor, other, treasury, wbtc, cbbtc, lbtc, tokenAddresses };
+}
+
+type TokensFixture = Awaited<ReturnType<typeof deployTokensFixture>>;
+
+// Deploie un pool sur des jetons deja en place, en laissant chaque test
+// choisir _minFeeNum et _nominalFeeNum. Tous les autres arguments restent
+// ceux du deploiement reel : c'est la bande de frais, et elle seule, que les
+// gardes du constructeur regardent.
+function deployPoolWith(
+  base: TokensFixture,
+  minFeeNum: bigint,
+  nominalFeeNum: bigint,
+) {
+  return viem.deployContract("Pool", [
+    [...base.tokenAddresses],
+    EPOCH_DURATION,
+    PRIORITY_WINDOW,
+    minFeeNum,
+    nominalFeeNum,
+    base.treasury.account.address,
+    base.deployer.account.address,
+  ]);
+}
+
+// Fixture nominale : les trois jetons plus un pool deploye avec les valeurs
+// de production, et le timestamp du bloc qui l'a porte. Sous automine, une
+// transaction fait un bloc : le bloc `latest` lu juste apres le deploiement
+// est donc exactement celui du deploiement, ce qui donne la valeur attendue
+// de GENESIS sans jamais la recalculer depuis l'horloge du test.
+async function deployTokensAndPoolFixture() {
+  const base = await deployTokensFixture();
+  const pool = await deployPoolWith(base, MIN_FEE_NUM, DEFAULT_FEE_NUM);
+
+  const publicClient = await viem.getPublicClient();
+  const deploymentBlock = await publicClient.getBlock();
+
+  return { ...base, pool, deploymentTimestamp: deploymentBlock.timestamp };
+}
+
+// Attrape le revert d'un DEPLOIEMENT et compare le nom de l'erreur decodee a
+// celui attendu.
+//
+// Deux raisons de ne pas passer par viem.assertions.revertWithCustomError.
+// La premiere est technique et decide a elle seule : ce matcher lit un
+// ContractFunctionRevertedError, que viem ne construit que pour un APPEL de
+// fonction. Un deploiement qui reverte remonte en TransactionExecutionError,
+// et la donnee de revert n'y est jamais decodee ; le selecteur brut vit plus
+// bas dans la chaine `cause`, sur l'erreur que le simulateur Hardhat y greffe.
+// La seconde rejoint ce que test/README.md dit des panics : plutot que de
+// chercher le nom de l'erreur dans le TEXTE du message, ce helper decode les
+// quatre octets contre l'ABI reelle du contrat, puis compare deux noms dans
+// une seule assertion. C'est ce qui permet a la section II.C d'affirmer
+// "FeeTooHigh ET PAS EmptyFeeBand" en nommant, en cas d'echec, l'erreur
+// reellement sortie.
+async function assertDeployRevertsWithCustomError(
+  promise: Promise<unknown>,
+  expectedErrorName: string,
+) {
+  try {
+    await promise;
+  } catch (error) {
+    let current: unknown = error;
+    while (current !== undefined && current !== null) {
+      const data = (current as { data?: unknown }).data;
+      if (typeof data === "string" && data.startsWith("0x")) {
+        const decoded = decodeErrorResult({ abi: POOL_ABI, data: data as `0x${string}` });
+        assert.equal(
+          decoded.errorName,
+          expectedErrorName,
+          `le deploiement a reverte avec ${decoded.errorName}, attendu ${expectedErrorName}`,
+        );
+        return;
+      }
+      current = (current as { cause?: unknown }).cause;
+    }
+    assert.fail(
+      `aucune donnee de revert trouvee dans la chaine d'erreurs ; erreur recue : ${String(error)}`,
+    );
+    return;
+  }
+  assert.fail(
+    `le deploiement aurait du revert avec ${expectedErrorName}, mais il a reussi`,
+  );
+}
+
+describe("Pool.constructor", async function () {
+
+  // ---------------------------------------------------------------------------
+  // I] Valeurs figees a la construction
+  //
+  // Une assertion par valeur, et un `it` par valeur : chacune est un getter
+  // distinct, et un test qui les grouperait masquerait laquelle a devie.
+  // ---------------------------------------------------------------------------
+
+  describe("I] Valeurs figees a la construction", function () {
+    describe("A) Immuables relus par leur getter", function () {
+      it("EPOCH_DURATION lit bien _epochDuration", async function () {
+        const { pool } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
+
+        const epochDuration = await pool.read.EPOCH_DURATION();
+        assert.equal(
+          epochDuration,
+          EPOCH_DURATION,
+          `EPOCH_DURATION() vaut ${epochDuration}, attendu ${EPOCH_DURATION}`,
+        );
+      });
+
+      it("PRIORITY_WINDOW lit bien _priorityWindow", async function () {
+        // La fenetre de priorite et la duree d'epoque sont deux uint256
+        // consecutifs dans la signature (Pool.sol:60-61) : les verifier
+        // separement, avec deux valeurs volontairement tres differentes
+        // (14400 contre 12), est ce qui prouve qu'aucune n'a ete affectee a
+        // la place de l'autre.
+        const { pool } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
+
+        const priorityWindow = await pool.read.PRIORITY_WINDOW();
+        assert.equal(
+          priorityWindow,
+          PRIORITY_WINDOW,
+          `PRIORITY_WINDOW() vaut ${priorityWindow}, attendu ${PRIORITY_WINDOW}`,
+        );
+      });
+
+      it("MIN_FEE_NUM lit bien _minFeeNum", async function () {
+        const { pool } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
+
+        const minFeeNum = await pool.read.MIN_FEE_NUM();
+        assert.equal(
+          minFeeNum,
+          MIN_FEE_NUM,
+          `MIN_FEE_NUM() vaut ${minFeeNum}, attendu ${MIN_FEE_NUM}`,
+        );
+      });
+
+      it("NOMINAL_FEE_NUM lit bien _nominalFeeNum", async function () {
+        // Meme argument que pour la paire epoque / fenetre : _minFeeNum et
+        // _nominalFeeNum se suivent dans la signature (Pool.sol:62-63) et
+        // valent ici 1 et 5. Les intervertir ferait echouer ce test et le
+        // precedent, pas seulement l'un des deux.
+        const { pool } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
+
+        const nominalFeeNum = await pool.read.NOMINAL_FEE_NUM();
+        assert.equal(
+          nominalFeeNum,
+          DEFAULT_FEE_NUM,
+          `NOMINAL_FEE_NUM() vaut ${nominalFeeNum}, attendu ${DEFAULT_FEE_NUM}`,
+        );
+      });
+
+      it("treasury lit bien _treasury", async function () {
+        const { pool, treasury } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
+
+        const storedTreasury = await pool.read.treasury();
+        assert.equal(
+          storedTreasury.toLowerCase(),
+          treasury.account.address.toLowerCase(),
+          `treasury() vaut ${storedTreasury}, attendu ${treasury.account.address}`,
+        );
+      });
+
+      it("owner() vaut _owner, l'adresse passee a Ownable", async function () {
+        // L'owner n'est pas stocke par une ligne de Pool.sol mais par
+        // Ownable(_owner) dans l'entete du constructeur (Pool.sol:66). Ce que
+        // ce test verifie n'est donc pas le fonctionnement d'Ownable, hors
+        // perimetre, mais le cablage : que c'est bien le SEPTIEME argument
+        // qui y arrive, et pas msg.sender par defaut ni un autre des sept.
+        const { pool, deployer } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
+
+        const owner = await pool.read.owner();
+        assert.equal(
+          owner.toLowerCase(),
+          deployer.account.address.toLowerCase(),
+          `owner() vaut ${owner}, attendu ${deployer.account.address}`,
+        );
+      });
+    });
+
+    describe("B) Valeurs prises sur le bloc de deploiement", function () {
+      it("GENESIS vaut le timestamp du bloc de deploiement", async function () {
+        // GENESIS ancre le decoupage en epoques de l'enchere (Pool.sol:67) :
+        // une valeur nulle ou arbitraire y decalerait toutes les epoques a
+        // venir. La valeur attendue est lue sur la chaine, dans le bloc qui a
+        // porte le deploiement, et non calculee depuis l'horloge du test.
+        const { pool, deploymentTimestamp } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
+
+        const genesis = await pool.read.GENESIS();
+        assert.equal(
+          genesis,
+          deploymentTimestamp,
+          `GENESIS() vaut ${genesis}, attendu ${deploymentTimestamp} (timestamp du bloc de deploiement)`,
+        );
+      });
+
+      it("GENESIS n'est pas nul", async function () {
+        // Assertion volontairement redondante avec la precedente : elle seule
+        // survit a l'hypothese ou la lecture du bloc rendrait zero. Sans
+        // elle, `GENESIS == deploymentTimestamp` passerait aussi sur un
+        // constructeur qui n'affecterait rien du tout.
+        const { pool } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
+
+        const genesis = await pool.read.GENESIS();
+        assert.ok(
+          genesis > 0n,
+          `GENESIS() vaut ${genesis}, attendu une valeur strictement positive`,
+        );
+      });
+
+      it("lastFeeUpdate part du bloc de deploiement, pas de zero", async function () {
+        // Consequence directe (Pool.sol:78) : le delai de setFee court des le
+        // deploiement, il ne s'ouvre pas immediatement. C'est ce qui oblige
+        // Pool.pause.test.ts a avancer le temps avant son setFee, et c'est
+        // ici que la valeur de depart se verifie.
+        const { pool, deploymentTimestamp } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
+
+        const lastFeeUpdate = await pool.read.lastFeeUpdate();
+        assert.equal(
+          lastFeeUpdate,
+          deploymentTimestamp,
+          `lastFeeUpdate() vaut ${lastFeeUpdate}, attendu ${deploymentTimestamp} (timestamp du bloc de deploiement)`,
+        );
+      });
+    });
+
+    describe("C) Etat mutable de depart", function () {
+      it("feeNum vaut _nominalFeeNum au deploiement", async function () {
+        // Le pool demarre au tarif nominal sans qu'aucun argument dedie ne le
+        // dise : feeNum est initialise depuis _nominalFeeNum (Pool.sol:77).
+        // C'est la seule des valeurs de cette section qui soit mutable
+        // ensuite, par setFee ; ce test fixe son point de depart.
+        const { pool } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
+
+        const feeNum = await pool.read.feeNum();
+        assert.equal(
+          feeNum,
+          DEFAULT_FEE_NUM,
+          `feeNum() vaut ${feeNum} au deploiement, attendu ${DEFAULT_FEE_NUM} (_nominalFeeNum)`,
+        );
+      });
+
+      it("feeNum et NOMINAL_FEE_NUM partent egaux", async function () {
+        // Formule autrement, sans reference a la constante du test : quelle
+        // que soit la valeur passee, le tarif courant part sur le tarif
+        // nominal. C'est cette egalite, et non la valeur 5, que setFee fera
+        // ensuite diverger.
+        const { pool } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
+
+        const feeNum = await pool.read.feeNum();
+        const nominalFeeNum = await pool.read.NOMINAL_FEE_NUM();
+        assert.equal(
+          feeNum,
+          nominalFeeNum,
+          `feeNum()=${feeNum} et NOMINAL_FEE_NUM()=${nominalFeeNum} devraient partir egaux`,
+        );
+      });
+    });
+
+    describe("D) Le panier de jetons", function () {
+      it("token0, token1 et token2 reprennent _tokens dans l'ordre", async function () {
+        // Une seule assertion, sur les trois adresses ensemble : ce qui est
+        // affirme ici est un ORDRE (indice 0 = WBTC, 1 = cbBTC, 2 = LBTC),
+        // et un ordre ne se decompose pas en trois tests independants sans
+        // perdre ce qu'il affirme. Toute la suite en depend : les indices
+        // passes a swap et a addLiquidity n'ont de sens que par lui.
+        const { pool, tokenAddresses } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
+
+        const stored = [
+          await pool.read.token0(),
+          await pool.read.token1(),
+          await pool.read.token2(),
+        ].map((address) => address.toLowerCase());
+        const expected = tokenAddresses.map((address) => address.toLowerCase());
+        assert.deepEqual(
+          stored,
+          expected,
+          `panier lu=[${stored}], attendu=[${expected}] (indice 0 = WBTC, 1 = cbBTC, 2 = LBTC)`,
+        );
+      });
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // II] Les deux gardes de la bande de frais
+  //
+  // Les deux require du constructeur (Pool.sol:70-71) bornent le frais
+  // EFFECTIF, jamais la base : `base * UNBALANCE_FACTOR <= MAX_FEE_NUM`. Avec
+  // MAX_FEE_NUM = 50 et UNBALANCE_FACTOR = 2, la borne des DEUX arguments
+  // tombe donc sur 25, pas sur 50. C'est la seule chose que ces gardes
+  // disent, et c'est ce que cette section epingle des deux cotes de la
+  // frontiere.
+  // ---------------------------------------------------------------------------
+
+  describe("II] Les deux gardes de la bande de frais", function () {
+    describe("A) FeeTooHigh, la borne de _nominalFeeNum", function () {
+      it("_nominalFeeNum = 25 passe : 25 * 2 = 50, exactement MAX_FEE_NUM", async function () {
+        // Le require est un <=, pas un < : la base qui touche exactement le
+        // plafond une fois doublee est acceptee. Le test ne se contente pas
+        // de l'absence de revert, il relit NOMINAL_FEE_NUM : un constructeur
+        // qui ecreterait silencieusement la valeur passerait sinon.
+        const base = await networkHelpers.loadFixture(deployTokensFixture);
+
+        const pool = await deployPoolWith(base, MIN_FEE_NUM, MAX_BASE_FEE_NUM);
+
+        const nominalFeeNum = await pool.read.NOMINAL_FEE_NUM();
+        assert.equal(
+          nominalFeeNum,
+          MAX_BASE_FEE_NUM,
+          `NOMINAL_FEE_NUM() vaut ${nominalFeeNum}, attendu ${MAX_BASE_FEE_NUM} (derniere base acceptee)`,
+        );
+      });
+
+      it("_nominalFeeNum = 26 revert : 26 * 2 = 52 > MAX_FEE_NUM", async function () {
+        // Un satoshi de base au-dessus de la borne precedente. Les deux `it`
+        // pris ensemble situent la frontiere exactement, ce qu'aucun des deux
+        // ne fait seul.
+        const base = await networkHelpers.loadFixture(deployTokensFixture);
+
+        await assertDeployRevertsWithCustomError(
+          deployPoolWith(base, MIN_FEE_NUM, ABOVE_MAX_BASE_FEE_NUM),
+          "FeeTooHigh",
+        );
+      });
+    });
+
+    describe("B) EmptyFeeBand, la borne de _minFeeNum", function () {
+      it("_minFeeNum = 25 passe : 25 * 2 = 50, exactement MAX_FEE_NUM", async function () {
+        // _nominalFeeNum est laisse a la meme valeur, la seule qui satisfasse
+        // aussi la premiere garde a cette hauteur : la borne etant commune
+        // aux deux arguments, un _nominalFeeNum nominal en dessous ferait ici
+        // une bande a l'envers (plancher au-dessus du nominal), etat que le
+        // constructeur ne refuse pas mais que ce test n'a aucune raison de
+        // fabriquer.
+        const base = await networkHelpers.loadFixture(deployTokensFixture);
+
+        const pool = await deployPoolWith(base, MAX_BASE_FEE_NUM, MAX_BASE_FEE_NUM);
+
+        const minFeeNum = await pool.read.MIN_FEE_NUM();
+        assert.equal(
+          minFeeNum,
+          MAX_BASE_FEE_NUM,
+          `MIN_FEE_NUM() vaut ${minFeeNum}, attendu ${MAX_BASE_FEE_NUM} (derniere base acceptee)`,
+        );
+      });
+
+      it("_minFeeNum = 26 revert : 26 * 2 = 52 > MAX_FEE_NUM", async function () {
+        const base = await networkHelpers.loadFixture(deployTokensFixture);
+
+        await assertDeployRevertsWithCustomError(
+          deployPoolWith(base, ABOVE_MAX_BASE_FEE_NUM, MAX_BASE_FEE_NUM),
+          "EmptyFeeBand",
+        );
+      });
+    });
+
+    describe("C) Chaque garde sort SON erreur", function () {
+      // Les deux require sont litteralement la meme inegalite sur deux
+      // arguments differents (Pool.sol:70-71). Rien dans le code ne garantit
+      // donc, a la lecture seule, que l'erreur rendue nomme le bon argument :
+      // une interversion des deux noms d'erreur compilerait, passerait les
+      // sections A et B si elles n'exigeaient qu'un revert, et enverrait
+      // l'operateur corriger le mauvais parametre au deploiement. C'est ce
+      // que ces trois cas ferment.
+      it("_nominalFeeNum hors borne, _minFeeNum en borne : FeeTooHigh, jamais EmptyFeeBand", async function () {
+        const base = await networkHelpers.loadFixture(deployTokensFixture);
+
+        await assertDeployRevertsWithCustomError(
+          deployPoolWith(base, MIN_FEE_NUM, ABOVE_MAX_BASE_FEE_NUM),
+          "FeeTooHigh",
+        );
+      });
+
+      it("_minFeeNum hors borne, _nominalFeeNum en borne : EmptyFeeBand, jamais FeeTooHigh", async function () {
+        const base = await networkHelpers.loadFixture(deployTokensFixture);
+
+        await assertDeployRevertsWithCustomError(
+          deployPoolWith(base, ABOVE_MAX_BASE_FEE_NUM, DEFAULT_FEE_NUM),
+          "EmptyFeeBand",
+        );
+      });
+
+      it("ordre des gardes : les deux arguments hors borne echouent par FeeTooHigh", async function () {
+        // FeeTooHigh est verifie en premier (Pool.sol:70), EmptyFeeBand
+        // ensuite (Pool.sol:71) : quand les deux arguments sont fautifs,
+        // c'est donc le nominal que l'operateur voit signale. Meme genre de
+        // cas que les tests d'ordre des gardes des trois autres suites, et
+        // meme utilite : il documente ce que le deploiement rendra
+        // reellement, plutot que de laisser croire que les deux erreurs sont
+        // interchangeables.
+        const base = await networkHelpers.loadFixture(deployTokensFixture);
+
+        await assertDeployRevertsWithCustomError(
+          deployPoolWith(base, ABOVE_MAX_BASE_FEE_NUM, ABOVE_MAX_BASE_FEE_NUM),
+          "FeeTooHigh",
+        );
+      });
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // III] Cas limites
+  // ---------------------------------------------------------------------------
+
+  describe("III] Cas limites", function () {
+    describe("A) Frais nuls, acceptes deliberement", function () {
+      // Ni l'une ni l'autre garde n'a de borne basse : 0 * 2 = 0 <= 50, les
+      // deux passent. Ce n'est pas un oubli. Une partie de la suite existante
+      // (deployZeroFeeTokensAndPoolFixture dans trois des quatre fichiers)
+      // deploie a frais nul pour isoler l'arithmetique du produit constant du
+      // bruit du frais : sans ce zero, les valeurs posees a la main dans ces
+      // tests devraient toutes absorber une troncature supplementaire.
+      it("_nominalFeeNum = 0 deploie, et feeNum part a zero", async function () {
+        const base = await networkHelpers.loadFixture(deployTokensFixture);
+
+        const pool = await deployPoolWith(base, ZERO_FEE_NUM, ZERO_FEE_NUM);
+
+        const feeNum = await pool.read.feeNum();
+        assert.equal(
+          feeNum,
+          ZERO_FEE_NUM,
+          `feeNum() vaut ${feeNum} sur un pool deploye a frais nul, attendu ${ZERO_FEE_NUM}`,
+        );
+      });
+
+      it("_minFeeNum = 0 deploie, et MIN_FEE_NUM vaut zero", async function () {
+        // Le plancher de la bande peut donc etre nul tout en laissant un
+        // nominal strictement positif : la bande [0, 5] est un etat legitime
+        // du contrat, et c'est celui qu'exercent les fixtures a frais nul
+        // apres un setFee.
+        const base = await networkHelpers.loadFixture(deployTokensFixture);
+
+        const pool = await deployPoolWith(base, ZERO_FEE_NUM, DEFAULT_FEE_NUM);
+
+        const minFeeNum = await pool.read.MIN_FEE_NUM();
+        assert.equal(
+          minFeeNum,
+          ZERO_FEE_NUM,
+          `MIN_FEE_NUM() vaut ${minFeeNum} sur un pool deploye a plancher nul, attendu ${ZERO_FEE_NUM}`,
+        );
+      });
+    });
+
+    describe("B) treasury et owner sont deux roles distincts", function () {
+      // Le constructeur prend les deux separement (Pool.sol:64-65). Rien ne
+      // les empeche d'etre confondus en production, mais la fixture les
+      // separe exactement pour que les tests ci-dessus prouvent quelque
+      // chose : sur un deploiement ou treasury == owner, une affectation
+      // croisee entre les deux passerait inapercue.
+      it("la fixture donne bien deux adresses differentes a treasury et a owner", async function () {
+        const { pool } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
+
+        const storedTreasury = (await pool.read.treasury()).toLowerCase();
+        const owner = (await pool.read.owner()).toLowerCase();
+        assert.notEqual(
+          storedTreasury,
+          owner,
+          `treasury()=${storedTreasury} et owner()=${owner} sont confondus : le test de cablage ne prouverait plus rien`,
+        );
+      });
+
+      it("treasury n'est aucune des autres adresses de la fixture", async function () {
+        // Les quatre comptes de la fixture sont deployer, depositor, other et
+        // treasury, dans cet ordre. Verifier que treasury() n'est aucun des
+        // trois premiers ferme les affectations croisees que la seule
+        // comparaison a l'owner laisserait passer.
+        const { pool, deployer, depositor, other } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
+
+        const storedTreasury = (await pool.read.treasury()).toLowerCase();
+        const forbidden = [deployer, depositor, other].map((client) =>
+          client.account.address.toLowerCase(),
+        );
+        assert.ok(
+          !forbidden.includes(storedTreasury),
+          `treasury()=${storedTreasury} coincide avec l'un des trois autres comptes de la fixture [${forbidden}]`,
+        );
+      });
+    });
+  });
+});

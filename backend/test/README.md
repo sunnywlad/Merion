@@ -47,6 +47,15 @@ phrase et non comme une formule, "en pause on n'entre plus et on sort
 toujours", ce qui justifie un fichier a elle plutot que des sections ajoutees
 aux trois autres : eclatee en trois, cette promesse devient invisible.
 
+Sur le constructeur, ce qui est interroge n'est plus une fonction mais le
+DEPLOIEMENT lui-meme : la transaction que l'equipe enverra en production, avec
+ses sept arguments passes a travers l'ABI generee, puis relus un a un par les
+memes getters publics que le front appelle. Un test Solidity ne peut pas
+vraiment poser cette question : `PoolTestBase.sol` fige ses arguments une fois
+pour toutes, et les deux chemins de revert du constructeur sont derriere lui
+des qu'il a compile. C'est aussi la seule surface de la suite ou une erreur ne
+coute pas une transaction ratee mais un contrat immuable deploye de travers.
+
 La couche Solidity (fuzz, invariants, forge d'etat par `vm.store`, tenue des
 bandes face a une decote) est une question distincte, traitee dans sa propre
 section plus bas.
@@ -65,10 +74,28 @@ Le panier est fige a trois wrappers de BTC a cibles EGALES, un tiers chacun :
 WBTC en indice 0, cbBTC en indice 1, LBTC en indice 2. Il n'y a plus ni
 quatrieme jeton ni poids cibles differencies.
 
-La suite compte 189 tests verts : 123 en TypeScript (4 fichiers `test/*.test.ts`)
+La suite compte 212 tests verts : 146 en TypeScript (5 fichiers `test/*.test.ts`)
 et 66 en Solidity (8 fichiers `test/*.t.sol`, 4 fichiers `contracts/*.t.sol`).
 
 ## Structure de la suite
+
+`Pool.constructor.test.ts` :
+
+```
+Pool.constructor
+  I] Valeurs figees a la construction
+    A) Immuables relus par leur getter
+    B) Valeurs prises sur le bloc de deploiement
+    C) Etat mutable de depart
+    D) Le panier de jetons
+  II] Les deux gardes de la bande de frais
+    A) FeeTooHigh, la borne de _nominalFeeNum
+    B) EmptyFeeBand, la borne de _minFeeNum
+    C) Chaque garde sort SON erreur
+  III] Cas limites
+    A) Frais nuls, acceptes deliberement
+    B) treasury et owner sont deux roles distincts
+```
 
 `Pool.addLiquidity.test.ts` :
 
@@ -411,10 +438,42 @@ aussi si la fonction ne fait rien : il faut assertion sur les montants
 reellement sortis et sur les reserves apres coup. C'est la promesse centrale de
 la pause, elle merite mieux qu'une double negation.
 
+`Pool.constructor.test.ts` appelle deux remarques.
+
+La premiere porte sur la frontiere que testent ses deux gardes, et elle n'est
+pas celle qu'on lit au premier coup d'oeil. Les deux `require` du constructeur
+(`Pool.sol:70-71`) ne bornent pas la base du frais mais le frais EFFECTIF :
+la surcharge de desequilibre multiplie la base par `UNBALANCE_FACTOR`, d'ou
+`base * UNBALANCE_FACTOR <= MAX_FEE_NUM`. Avec `MAX_FEE_NUM = 50` et
+`UNBALANCE_FACTOR = 2`, la borne des deux arguments tombe donc sur `25`, pas
+sur `50` : `25 * 2 = 50` passe, `26 * 2 = 52` reverte. C'est la meme inegalite
+ecrite deux fois, sur `_nominalFeeNum` puis sur `_minFeeNum`, et c'est
+precisement ce qui rend la section `II.C` necessaire. Rien dans le code ne
+garantit, a la lecture seule, que l'erreur rendue nomme le bon argument : une
+interversion de `FeeTooHigh` et d'`EmptyFeeBand` compilerait, passerait des
+tests qui n'exigeraient qu'un revert, et enverrait l'operateur corriger le
+mauvais parametre au deploiement. Les trois cas de `II.C` ferment cette
+confusion, dont celui ou les deux arguments sont fautifs : `FeeTooHigh` sort
+en premier, `_nominalFeeNum` etant verifie avant `_minFeeNum`.
+
+La seconde est un detail d'outillage qui pique, du meme genre que le
+`vm.expectRevert` de `Pool.safeERC20.t.sol`. `viem.assertions.revertWithCustomError`
+ne fonctionne pas sur un DEPLOIEMENT : ce matcher lit un
+`ContractFunctionRevertedError`, que viem ne construit que pour un appel de
+fonction. Un deploiement qui reverte remonte en `TransactionExecutionError`,
+et la donnee de revert n'y est jamais decodee ; le selecteur brut vit plus bas
+dans la chaine `cause`, sur l'erreur que le simulateur Hardhat y greffe. Le
+fichier remonte donc cette chaine jusqu'a la premiere donnee hexadecimale,
+puis la decode avec `decodeErrorResult` contre l'ABI reelle du contrat, lue
+depuis l'artefact de compilation (`artifacts.readArtifact("Pool")`) et non
+depuis un pool valide qu'il faudrait deployer pour ca seul. La route ecartee
+est la meme qu'a la section sur les panics : chercher le nom de l'erreur dans
+le TEXTE du message. Elle passerait, et pour la mauvaise raison.
+
 ### Duplication des fixtures entre les fichiers de test
 
-`Pool.removeLiquidity.test.ts`, `Pool.swap.test.ts` et `Pool.pause.test.ts`
-redefinissent chacun leurs propres fixtures et helpers
+`Pool.removeLiquidity.test.ts`, `Pool.swap.test.ts`, `Pool.pause.test.ts` et
+`Pool.constructor.test.ts` redefinissent chacun leurs propres fixtures et helpers
 (`deployTokensAndPool`, `mintAndApprove`, `readReserves`, `readBalances`,
 `assertPanic`, `deploySeededPoolFixture`, `deployImbalancedPoolFixture`...),
 identiques a ceux d'`addLiquidity`, plutot que de les importer d'un module
@@ -454,6 +513,72 @@ raison, sans avoir verifie la structure reelle de l'erreur. Verifier
 message, est ce qui rend le test fiable.
 
 ## Cas limites couverts, par fonction
+
+### `constructor`
+
+**Valeurs figees a la construction**
+
+- `EPOCH_DURATION`, `PRIORITY_WINDOW`, `MIN_FEE_NUM`, `NOMINAL_FEE_NUM`,
+  `treasury` et `owner()` relus un a un par leur getter, une assertion par
+  valeur. Les deux paires d'arguments consecutifs de meme type (`14400` /
+  `12`, puis `1` / `5`) portent des valeurs volontairement tres differentes :
+  une interversion fait echouer les deux tests de la paire, pas un seul
+- `owner()` n'est pas pose par une ligne de `Pool.sol` mais par
+  `Ownable(_owner)` dans l'entete du constructeur (`Pool.sol:66`). Ce qui est
+  teste n'est donc pas OZ, hors perimetre, mais le cablage : que c'est bien le
+  SEPTIEME argument qui y arrive, et pas `msg.sender` par defaut
+- `GENESIS` vaut le timestamp du BLOC de deploiement (`Pool.sol:67`), lu sur
+  la chaine et jamais recalcule depuis l'horloge du test — sous automine une
+  transaction fait un bloc, donc le bloc `latest` lu juste apres le
+  deploiement est celui du deploiement. Une seconde assertion, redondante
+  avec la premiere, exige `GENESIS > 0` : elle seule survit a l'hypothese ou
+  la lecture du bloc rendrait zero, cas ou l'egalite passerait sur un
+  constructeur qui n'affecterait rien
+- `lastFeeUpdate` part du meme timestamp (`Pool.sol:78`), pas de zero : le
+  delai de `setFee` court donc des le deploiement et ne s'ouvre pas
+  immediatement. C'est ce qui oblige `Pool.pause.test.ts` a avancer le temps
+  avant son `setFee`
+- `feeNum` vaut `_nominalFeeNum` au deploiement (`Pool.sol:77`) : le pool
+  demarre au tarif nominal sans qu'aucun argument dedie ne le dise. Verifie
+  deux fois, contre la valeur attendue puis contre `NOMINAL_FEE_NUM()`, cette
+  seconde forme affirmant l'egalite de depart independamment de la valeur
+- `token0` / `token1` / `token2` reprennent `_tokens` dans l'ordre, en une
+  seule assertion sur les trois : ce qui est affirme est un ORDRE (indice 0 =
+  WBTC, 1 = cbBTC, 2 = LBTC), et un ordre ne se decompose pas en trois tests
+  independants sans perdre ce qu'il affirme
+- NON teste, hors perimetre : `OwnableInvalidOwner` sur `_owner == address(0)`
+  (decide par OZ, pas par `Pool.sol`) et les noms ERC-20 `"MerionLP"` /
+  `"MRNLP"`, poses en dur dans l'entete du constructeur et sans argument a
+  verifier
+
+**Reverts**
+
+- `_nominalFeeNum = 25` passe (`25 * 2 = 50`, exactement `MAX_FEE_NUM`), et le
+  test relit `NOMINAL_FEE_NUM` plutot que de constater l'absence de revert :
+  un constructeur qui ecreterait silencieusement la valeur passerait sinon
+- `_nominalFeeNum = 26` reverte (`26 * 2 = 52 > 50`) : `FeeTooHigh`
+- `_minFeeNum = 25` passe, `_minFeeNum = 26` reverte : `EmptyFeeBand`. Meme
+  frontiere que pour `_nominalFeeNum`, les deux `require` etant litteralement
+  la meme inegalite
+- chaque garde sort SON erreur, et pas celle de l'autre argument : le nom est
+  decode depuis les quatre octets rendus, pas cherche dans le texte du message
+- ordre des gardes : les deux arguments hors borne echouent par `FeeTooHigh`,
+  `_nominalFeeNum` etant verifie en premier (`Pool.sol:70` avant `71`)
+
+**Cas limites**
+
+- `_nominalFeeNum = 0` et `_minFeeNum = 0` deploient sans revert : aucune des
+  deux gardes n'a de borne basse (`0 * 2 = 0 <= 50`). Ce n'est pas un oubli.
+  Trois des cinq fichiers TypeScript deploient a frais nul
+  (`deployZeroFeeTokensAndPoolFixture`) pour isoler l'arithmetique du produit
+  constant du bruit du frais : sans ce zero, toutes leurs valeurs posees a la
+  main devraient absorber une troncature supplementaire. La bande `[0, 5]` est
+  donc un etat legitime du contrat
+- `treasury` et `owner()` sont deux roles distincts dans la fixture, et
+  `treasury()` n'est aucun des trois autres comptes (`deployer`, `depositor`,
+  `other`). Sur un deploiement ou `treasury == owner`, une affectation croisee
+  entre les deux passerait inapercue et le test de cablage ne prouverait plus
+  rien
 
 ### `addLiquidity` — pool vide
 
