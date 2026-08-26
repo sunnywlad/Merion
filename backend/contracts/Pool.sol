@@ -23,7 +23,7 @@ contract Pool is ERC20, Ownable, Pausable {
   uint256 public feeNum;
   uint256 constant public MAX_FEE_NUM = 50;
   uint256 constant public FEE_DEN = 10000;
-  uint256 constant public NOMINAL_FEE_NUM = 5;
+  uint256 public immutable NOMINAL_FEE_NUM;
   uint256 constant public UNBALANCE_FACTOR = 2;
   uint256 constant public TOL_DEN = 10000;
 
@@ -31,6 +31,11 @@ contract Pool is ERC20, Ownable, Pausable {
   uint256 constant public MIN_SET_FEE_DELAY = 1 days;
 
   uint256 public immutable MIN_FEE_NUM;
+
+  uint256 public immutable GENESIS;
+  uint256 public immutable EPOCH_DURATION;
+  uint256 public immutable PRIORITY_WINDOW;
+  address public immutable treasury;
 
   uint256 constant public MINIMUM_LIQUIDITY = 1000;
 
@@ -51,13 +56,21 @@ contract Pool is ERC20, Ownable, Pausable {
 
   constructor(
     address[3] memory _tokens,
-    uint256 _feeNum,
-    address _feeSetter,
-    uint256 _minFeeNum
-  ) ERC20("MerionLP", "MRNLP") Ownable(_feeSetter) {
-    require(_feeNum <= MAX_FEE_NUM, FeeTooHigh());
-    feeNum = _feeNum;
+    uint256 _epochDuration,
+    uint256 _priorityWindow,
+    uint256 _minFeeNum,
+    uint256 _nominalFeeNum,
+    address _treasury,
+    address _owner
+  ) ERC20("MerionLP", "MRNLP") Ownable(_owner) {
+    GENESIS = block.timestamp;
+    EPOCH_DURATION = _epochDuration;
+    PRIORITY_WINDOW = _priorityWindow;
     MIN_FEE_NUM = _minFeeNum;
+    NOMINAL_FEE_NUM = _nominalFeeNum;
+    treasury = _treasury;
+
+    feeNum = _nominalFeeNum;
     lastFeeUpdate = block.timestamp;
 
     token0 = _tokens[0];

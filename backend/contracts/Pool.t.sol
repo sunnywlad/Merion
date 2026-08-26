@@ -20,8 +20,9 @@ contract PoolTest is Test {
     address[3] memory tokens = [address(wbtc), address(cbbtc), address(lbtc)];
     uint256 feeNum = 5;
     address feeSetter = address(this);
+    address treasury = address(0xBEEF);
 
-    pool = new Pool(tokens, feeNum, feeSetter, 1);
+    pool = new Pool(tokens, 14400, 12, 1, feeNum, treasury, feeSetter);
 
     wbtc.mint(address(this), 1000 * 10 ** 8);
     cbbtc.mint(address(this), 1000 * 10 ** 8);

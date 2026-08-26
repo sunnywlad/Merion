@@ -38,7 +38,7 @@ contract PoolSafeERC20Test is Test {
     lbtc = new MockWrappedBTC("Lombard BTC", "lBTC");
 
     address[3] memory tokens = [address(misbehaving), address(cbbtc), address(lbtc)];
-    pool = new Pool(tokens, 5, address(this), 1);
+    pool = new Pool(tokens, 14400, 12, 1, 5, address(0xBEEF), address(this));
 
     misbehaving.mint(address(this), MINT_HEADROOM);
     cbbtc.mint(address(this), MINT_HEADROOM);

@@ -34,6 +34,8 @@ const UINT72_MAX = 2n ** 72n - 1n;
 const DEFAULT_FEE_NUM = 5n; // reprend la valeur du Pool.t.sol d'origine
 const MIN_FEE_NUM = 1n; // _minFeeNum passe au constructeur, cf. PoolTestBase.sol
 const ZERO_FEE_NUM = 0n;
+const EPOCH_DURATION = 14400n; // 4h, cf. build-auction.md 5.0 bis
+const PRIORITY_WINDOW = 12n; // cf. build-auction.md 5.0 bis
 
 // Codes de panic Solidity utilises dans cette suite (Panic(uint256)).
 const PANIC_ARITHMETIC_OVERFLOW = 17n; // 0x11 (couvre aussi bien un depassement qu'un sous-flow)
@@ -49,7 +51,7 @@ const PANIC_ARITHMETIC_OVERFLOW = 17n; // 0x11 (couvre aussi bien un depassement
 // ---------------------------------------------------------------------------
 
 async function deployTokensAndPool(feeNum: bigint) {
-  const [deployer, depositor, other] = await viem.getWalletClients();
+  const [deployer, depositor, other, treasury] = await viem.getWalletClients();
 
   const wbtc = await viem.deployContract("MockWrappedBTC", ["Wrapped BTC", "wBTC"]);
   const cbbtc = await viem.deployContract("MockWrappedBTC", ["Coinbase BTC", "cbBTC"]);
@@ -58,9 +60,12 @@ async function deployTokensAndPool(feeNum: bigint) {
 
   const pool = await viem.deployContract("Pool", [
     [wbtc.address, cbbtc.address, lbtc.address],
-    feeNum,
-    deployer.account.address,
+    EPOCH_DURATION,
+    PRIORITY_WINDOW,
     MIN_FEE_NUM,
+    feeNum,
+    treasury.account.address,
+    deployer.account.address,
   ]);
 
   return { deployer, depositor, other, wbtc, cbbtc, lbtc, tokens, pool };

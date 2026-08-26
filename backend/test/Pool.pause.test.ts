@@ -48,6 +48,8 @@ const { viem, networkHelpers } = await network.create();
 const DEFAULT_FEE_NUM = 5n; // reprend la valeur du Pool.t.sol d'origine
 const MIN_FEE_NUM = 1n; // _minFeeNum passe au constructeur, cf. PoolTestBase.sol
 const MIN_SET_FEE_DELAY = 24n * 60n * 60n; // 1 days, Pool.sol:24
+const EPOCH_DURATION = 14400n; // 4h, cf. build-auction.md 5.0 bis
+const PRIORITY_WINDOW = 12n; // cf. build-auction.md 5.0 bis
 // Sur les fixtures de cette suite, les reserves valent au plus 1e10 : aucun
 // amountOut ne peut donc jamais atteindre UINT72_MAX, ce qui en fait un
 // _minOut insatisfaisable par construction. C'est ce qui rend le test
@@ -66,21 +68,24 @@ const UINT72_MAX = 2n ** 72n - 1n;
 // ---------------------------------------------------------------------------
 
 async function deployTokensAndPool(feeNum: bigint) {
-  const [deployer, depositor, other] = await viem.getWalletClients();
+  const [deployer, depositor, other, treasury] = await viem.getWalletClients();
 
   const wbtc = await viem.deployContract("MockWrappedBTC", ["Wrapped BTC", "wBTC"]);
   const cbbtc = await viem.deployContract("MockWrappedBTC", ["Coinbase BTC", "cbBTC"]);
   const lbtc = await viem.deployContract("MockWrappedBTC", ["Lombard BTC", "lBTC"]);
   const tokens = [wbtc, cbbtc, lbtc] as const;
 
-  // Le troisieme argument du constructeur est le _feeSetter, qui devient
-  // l'owner (Ownable(_feeSetter), Pool.sol:42) : dans toute cette suite,
-  // `deployer` est donc l'owner, et `other` le tiers non autorise.
+  // Le dernier argument du constructeur est le _owner (Ownable(_owner),
+  // Pool.sol:42) : dans toute cette suite, `deployer` est donc l'owner, et
+  // `other` le tiers non autorise.
   const pool = await viem.deployContract("Pool", [
     [wbtc.address, cbbtc.address, lbtc.address],
-    feeNum,
-    deployer.account.address,
+    EPOCH_DURATION,
+    PRIORITY_WINDOW,
     MIN_FEE_NUM,
+    feeNum,
+    treasury.account.address,
+    deployer.account.address,
   ]);
 
   return { deployer, depositor, other, wbtc, cbbtc, lbtc, tokens, pool };
