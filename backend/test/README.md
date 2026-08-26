@@ -93,6 +93,33 @@ formule") tient toujours ; ce qui est nouveau ici, c'est qu'un fichier
 TypeScript vert ne vaut rien sans son jumeau Solidity, et qu'il vaut mieux
 l'ecrire dans le fichier que le laisser deviner.
 
+Sur `setFee`, la reponse redevient franche, et les deux couches se partagent le
+travail proprement. La fonction n'a ni token a approuver ni montant a
+transferer : elle a un APPELANT, un INSTANT et un ARGUMENT, et ses quatre
+gardes (`Pool.sol:153-170`) portent exactement sur ces trois choses. Le bot
+d'enchere enverra cette transaction depuis un compte reel, quelques secondes
+apres le basculement d'epoch, et le front relira `feeInForce()` par `eth_call`
+juste apres : c'est ce parcours que `test/Pool.setFee.test.ts` interroge, avec
+ses quatre roles distincts (l'owner du deploiement, le gestionnaire du mandat,
+le gestionnaire d'un AUTRE mandat, un tiers quelconque) et son horloge posee a
+la seconde par `setNextBlockTimestamp`. La fenetre de priorite vaut douze
+secondes : un `time.increase` relatif y deriverait de la seconde consommee par
+le `setManager` qui precede, et c'est le piege numero un de cette suite.
+
+Ce que la couche TypeScript ne peut pas faire sur `setFee`, c'est balayer un
+domaine — chaque tirage y couterait une transaction et un aller-retour RPC.
+`test/Pool.setFee.t.sol` le fait, sur les cinq axes de la fonction, et il porte
+en particulier la seule formulation honnete de la fenetre : une EQUIVALENCE,
+ou le meme tirage decide de la branche attendue. Deux tests unilateraux
+seraient satisfaits par une fenetre placee ailleurs.
+
+`setFee` est aussi la fonction qui a rendu vivante la suite de `feeInForce` :
+c'est le seul organe qui ecrive `lastSetFeeEpoch`, donc le seul par qui une
+route ABI legitime mene a la branche "mandat courant" du ternaire. La suite de
+`setFee` s'en sert comme OBSERVABLE — `feeInForce()` est la seule lecture qui
+dise ce que le protocole facture — sans la re-tester : elle a son propre
+fichier, et sa propre preuve par `vm.store`.
+
 La couche Solidity (fuzz, invariants, forge d'etat par `vm.store`, tenue des
 bandes face a une decote) est une question distincte, traitee dans sa propre
 section plus bas.
@@ -111,8 +138,8 @@ Le panier est fige a trois wrappers de BTC a cibles EGALES, un tiers chacun :
 WBTC en indice 0, cbBTC en indice 1, LBTC en indice 2. Il n'y a plus ni
 quatrieme jeton ni poids cibles differencies.
 
-La suite compte 275 tests verts : 197 en TypeScript (8 fichiers `test/*.test.ts`)
-et 78 en Solidity (8 fichiers `test/*.t.sol`, 4 fichiers `contracts/*.t.sol`).
+La suite compte 319 tests verts : 227 en TypeScript (9 fichiers `test/*.test.ts`)
+et 92 en Solidity (9 fichiers `test/*.t.sol`, 4 fichiers `contracts/*.t.sol`).
 
 ## Structure de la suite
 
@@ -278,6 +305,32 @@ Pool.manager
     B) Revert de setManager
 ```
 
+`Pool.setFee.test.ts` :
+
+```
+Pool.setFee
+  I] Le chemin nominal
+    A) Le tarif pose par le gestionnaire du mandat courant
+    B) L'evenement FeeSet
+  II] Les quatre gardes
+    A) NotManager - l'appelant n'est pas le gestionnaire du mandat courant
+    B) OutsidePriorityWindow - la fenetre est fermee
+    C) FeeAlreadySetThisEpoch - une seule ecriture par mandat
+    D) FeeOutOfBand - la bande du gestionnaire est
+       [MIN_FEE_NUM, MAX_FEE_NUM / UNBALANCE_FACTOR]
+  III] L'ordre des gardes
+    A) L'acces passe avant la fenetre
+    B) La fenetre passe avant l'unicite
+    C) L'unicite passe avant la bande
+  IV] Le mandat 0
+    A) La nomination y est impossible
+    B) Le tarif y est donc ferme a tout le monde
+  V] Le mandat suivant retombe au nominal
+    A) Sans reelection
+    B) Avec reelection
+  VI] La pause ne bloque pas setFee
+```
+
 La couche Solidity, elle, se lit par fichier plutot que par arborescence :
 
 ```
@@ -287,6 +340,7 @@ test/Pool.swap.t.sol             fuzz, domaine partage par MAX_IN_BAND_AMOUNT
 test/Pool.safeERC20.t.sol        les quatre sites d'appel de SafeERC20
 test/Pool.forgedState.t.sol      proprietes atteintes par forge d'etat (vm.store)
 test/Pool.feeInForce.t.sol       packing du slot + lecture paresseuse, par vm.store
+test/Pool.setFee.t.sol           fuzz des cinq axes de setFee (bande, appelant, instant, epoch)
 test/Pool.depeg.t.sol            les bandes face a une decote reelle d'un wrapper
 test/Pool.invariant.t.sol        handler + quatre invariants + un test cible
 contracts/Pool.gas.t.sol         mesures de gas (rapport dans GAS.md)
@@ -682,7 +736,8 @@ bouge" ne le voie.
 ### Duplication des fixtures entre les fichiers de test
 
 `Pool.removeLiquidity.test.ts`, `Pool.swap.test.ts`, `Pool.pause.test.ts`,
-`Pool.manager.test.ts`, `Pool.constructor.test.ts` et `Pool.currentEpoch.test.ts`
+`Pool.manager.test.ts`, `Pool.setFee.test.ts`, `Pool.constructor.test.ts` et
+`Pool.currentEpoch.test.ts`
 redefinissent chacun leurs propres fixtures et helpers
 (`deployTokensAndPool`, `mintAndApprove`, `readReserves`, `readBalances`,
 `assertPanic`, `deploySeededPoolFixture`, `deployImbalancedPoolFixture`...),
@@ -1207,6 +1262,127 @@ message, est ce qui rend le test fiable.
 - revert de `setManager` : aucun `ManagerSet` emis, `managerOf[epoch]` reste
   a sa valeur d'avant l'appel
 
+### `setFee`
+
+**Chemin nominal (`Pool.setFee.test.ts`)**
+
+- le gestionnaire de l'epoch `1`, nomme par l'owner, appelle a l'offset `0` de
+  son mandat : `feeNum` prend la valeur, `lastSetFeeEpoch` prend `1`, et
+  `feeInForce()` rend la nouvelle base. Trois lectures distinctes du meme
+  effet, et aucune ne remplace les deux autres — un `setFee` qui ecrirait
+  `feeNum` sans estampiller `lastSetFeeEpoch` passerait la premiere et
+  rendrait le tarif invisible pour `feeInForce()`
+- `FeeSet(epoch, manager, oldFee, newFee)` : les deux premiers arguments
+  indexes, verifies avec leurs quatre valeurs
+
+**Le troisieme argument de `FeeSet` est le champ BRUT, pas le frais en vigueur**
+
+- au second mandat, le pool facture `NOMINAL_FEE_NUM` — le tarif de l'epoch
+  precedente est perime — mais `feeNum` brut porte encore `20`, aucune
+  ecriture ne l'ayant remis a zero au passage d'epoch. `FeeSet` emet ce champ
+  brut (`Pool.sol:172`) : son `oldFee` vaut donc `20` alors que le protocole
+  facturait `5` a la seconde precedente. Un indexeur qui reconstruirait
+  l'historique des frais a partir de cet argument se tromperait. La suite fige
+  le comportement REEL, l'ecart est signale, pas corrige
+
+**Les quatre gardes, une par une**
+
+- `NotManager` : l'owner du pool, un tiers quelconque, et le gestionnaire d'un
+  AUTRE mandat (nomme pour l'epoch `2`, appelant pendant l'epoch `1`) sont
+  tous refuses. Le troisieme cas est celui qui distingue "gestionnaire" de
+  "gestionnaire DU MANDAT COURANT" : la garde compare a `manager()`,
+  c'est-a-dire `managerOf[currentEpoch()]`, pas a "figure quelque part dans le
+  mapping". `setFee` n'est PLUS un pouvoir de l'owner
+- `OutsidePriorityWindow` : la frontiere est epinglee a la seconde. A l'offset
+  `PRIORITY_WINDOW - 1` (soit `11`) l'appel passe et pose le tarif, a l'offset
+  `PRIORITY_WINDOW` (soit `12`) il reverte. Borne exclusive, douze secondes
+  ouvertes de l'offset `0` a l'offset `11`. Le cas grossier — le milieu de
+  l'epoch — est teste aussi
+- `FeeAlreadySetThisEpoch` : deux appels dans la meme fenetre, offsets `0` et
+  `1` poses explicitement, le second reverte et le premier tarif tient. Le
+  droit est CONSOMMABLE, pas corrigeable. Contrepartie : le MEME gestionnaire,
+  reelu pour l'epoch `2`, rappelle `setFee` dans la fenetre de ce nouveau
+  mandat — la garde borne le droit a un mandat, pas a une adresse
+- `FeeOutOfBand` : `MIN_FEE_NUM - 1` (soit `0`) et
+  `MAX_FEE_NUM / UNBALANCE_FACTOR + 1` (soit `26`) revertent avec les DEUX
+  arguments de l'erreur verifies ; les bornes `1` et `25` passent, inclusives
+  des deux cotes
+- `MAX_FEE_NUM` lui-meme (soit `50`) reverte. C'est le point de soutenance de
+  la section : deux plafonds coexistent et ne disent pas la meme chose.
+  `MAX_FEE_NUM` borne ce qu'un PRENEUR peut payer et sert au constructeur a
+  valider `_nominalFeeNum` et `_minFeeNum` ; `MAX_FEE_NUM / UNBALANCE_FACTOR`
+  borne ce qu'un GESTIONNAIRE peut ecrire. Un `setFee` qui aurait borne sur le
+  premier passerait tous les autres tests du fichier
+
+**L'ordre des gardes est celui qui est ecrit**
+
+- l'owner appelle HORS fenetre : `NotManager`, et non `OutsidePriorityWindow`.
+  Le cas de soutenance : c'est parce que la garde d'acces est evaluee en
+  PREMIER que la garde d'unicite est correcte au mandat `0`, ou
+  `lastSetFeeEpoch` et `currentEpoch()` valent tous deux `0` et ou la
+  comparaison serait donc fausse d'emblee
+- le gestionnaire rappelle `setFee` hors fenetre apres avoir deja tarife :
+  `OutsidePriorityWindow`, et non `FeeAlreadySetThisEpoch`
+- le gestionnaire rappelle `setFee` DANS la fenetre avec une valeur hors
+  bande : `FeeAlreadySetThisEpoch`, et non `FeeOutOfBand`
+
+**Le mandat `0` n'a pas de tarif, et ne peut pas en avoir**
+
+- consequence STRUCTURELLE de `setManager`, pas d'une garde de `setFee` : la
+  nomination exige `_epoch > currentEpoch()` (`Pool.sol:129`), un strict, et
+  `currentEpoch()` vaut deja `0` au bloc de deploiement. La chaine est etablie
+  par les faits, maillon par maillon : `setManager(0, X)` reverte
+  `EpochAlreadyStarted`, `manager()` rend `0x0` pendant l'epoch `0`, et
+  `setFee` y reverte `NotManager` depuis l'owner comme depuis un tiers
+- le pool traverse donc sa premiere epoch au tarif nominal du constructeur, et
+  c'est irrattrapable par conception. A cet instant la fenetre est GRANDE
+  OUVERTE et la garde d'unicite est fausse : seule la garde d'acces ferme le
+  passage
+
+**Un tarif ne se reporte jamais au mandat suivant (regle `E1`)**
+
+- un gestionnaire tarife l'epoch `1` a `20` ; a l'epoch `2`, atteinte par un
+  bloc VIDE, `feeInForce()` rend `NOMINAL_FEE_NUM` alors que `feeNum` brut
+  vaut toujours `20`. Les deux faces sont testees separement : c'est leur
+  conjonction qui decrit le reset paresseux — la vue retombe, le champ brut
+  reste, et personne ne paie de `SSTORE`
+- la reelection n'y change rien : le meme compte, gestionnaire des epochs `1`
+  et `2`, trouve le pool au nominal au debut de son second mandat tant qu'il
+  n'a pas rappele `setFee`. Gagner deux mandats d'affilee n'evite pas d'envoyer
+  deux transactions
+
+**Pause**
+
+- `setFee` reste appelable sur un pool en pause : pas de `whenNotPaused`,
+  delibere (`Pool.sol:150-151`). Un seul `it` ici, qui verifie que la garde n'a
+  pas ete ajoutee depuis ; la promesse elle-meme, avec son argument complet,
+  est portee par `Pool.pause.test.ts` II.D et n'est pas dupliquee
+
+**Ce que seule la couche Solidity peut dire (`Pool.setFee.t.sol`)**
+
+- toute valeur de la bande `[MIN_FEE_NUM, MAX_FEE_NUM / UNBALANCE_FACTOR]` est
+  ecrite telle quelle ET estampille l'epoch courante
+- toute valeur strictement au-dessus du plafond du gestionnaire reverte
+  `FeeOutOfBand`, jusqu'a `type(uint256).max`, et ne laisse aucune trace dans
+  `feeNum`. Sous `MIN_FEE_NUM` le domaine ne contient qu'UNE valeur, `0`, donc
+  ce cas est ecrit SANS fuzz : un `bound(x, 0, MIN_FEE_NUM - 1)` y serait un
+  fuzz de facade, et il produirait un intervalle VIDE sur une fixture ou
+  `MIN_FEE_NUM` vaudrait `0`
+- toute adresse autre que le gestionnaire du mandat courant reverte
+  `NotManager`, l'owner et le contrat de test inclus ; et toute adresse tiree
+  qui recoit un vrai mandat pour l'epoch SUIVANTE est refusee pendant celle-ci
+- la fenetre laisse passer si et SEULEMENT si l'offset est strictement sous
+  `PRIORITY_WINDOW`, exprime comme une equivalence sur `[0, 2 * PRIORITY_WINDOW]`
+  — domaine etroit et delibere, voir la section du fichier plus bas — puis
+  balaye unilateralement sur tout le reste de l'epoch
+- la fenetre se mesure depuis le debut de l'EPOCH, pas depuis `GENESIS` : a
+  n'importe quelle epoch tiree entre `1` et `1000`, l'offset
+  `PRIORITY_WINDOW - 1` passe. Une garde ecrite sans modulo n'ouvrirait la
+  fenetre qu'une fois dans la vie du contrat
+- le mecanisme ne tient a aucune epoch particuliere : a une epoch quelconque,
+  un tarif de la bande different du nominal s'impose pendant son mandat,
+  disparait de `feeInForce()` a l'epoch suivante, et survit dans `feeNum` brut
+
 ## Couche Solidity : fuzz, invariants, forge d'etat
 
 Les fichiers ci-dessous portent ce que la couche TypeScript ne peut pas
@@ -1333,6 +1509,45 @@ ne depend d'aucun organe condamne, et cette independance vaut aussi pour le
 
 Le detail des six sections du fichier est dans la liste des cas limites
 ci-dessus, sous `feeInForce`.
+
+### `Pool.setFee.t.sol` : cinq axes, et un domaine qu'on ne fuzze pas au hasard
+
+`setFee` a trois parametres implicites — QUI appelle, QUAND il appelle, AVEC
+QUOI — et le fichier consacre un contrat a chacun, plus un contrat a la bande
+hors norme et un a l'independance vis-a-vis de l'epoch. Rien d'exotique dans la
+technique : `PoolTestBase`, `vm.warp`, `vm.prank`, `bound`. Ce qui merite un mot
+est le choix des DOMAINES, parce que deux pieges y guettent et qu'ils
+produisent tous les deux un test vert qui n'eprouve rien.
+
+Le premier est le domaine VIDE. Sous `MIN_FEE_NUM`, il n'existe qu'une seule
+valeur sur cette fixture, `0`, et il n'en existerait aucune si `MIN_FEE_NUM`
+valait `0` : `bound(x, 0, MIN_FEE_NUM - 1)` sortirait alors en sous-flow, ou
+pire, retournerait toujours la meme valeur en se faisant passer pour un
+balayage. Ce cas est donc ecrit en dur, avec un `require` de mise en place qui
+fait echouer franchement le jour ou la fixture changerait de `MIN_FEE_NUM`.
+
+Le second est le domaine DESEQUILIBRE, et il est plus insidieux. Fuzzer
+l'offset dans l'epoch sur `[0, EPOCH_DURATION - 1]` pour exprimer "l'appel
+passe si et seulement si l'offset est sous `PRIORITY_WINDOW`" donnerait douze
+tirages favorables sur quatorze mille : la branche "l'appel passe" ne serait
+presque jamais executee, et le test dirait "ca reverte partout" en se croyant
+une equivalence. Un fuzz dont une branche n'est atteinte qu'avec une
+probabilite negligeable ne vaut pas mieux qu'un fuzz au domaine vide.
+L'equivalence est donc posee sur `[0, 2 * PRIORITY_WINDOW]`, ou les deux
+branches sont echantillonnees a peu pres egalement et ou chaque tirage voisin
+de `11` ou `12` eprouve reellement le `<` de `Pool.sol:154` ; le reste de
+l'epoch est balaye separement, par un test unilateral qui n'a rien a prouver
+sur la frontiere.
+
+Un troisieme piege, purement mecanique celui-la, a coute un echec pendant
+l'ecriture : `vm.expectRevert` porte sur le PROCHAIN appel, et
+`pool.setFee(pool.MAX_FEE_NUM())` le fait porter sur le staticcall du getter,
+qui ne reverte pas. Le getter est donc lu dans une variable AVANT d'armer le
+cheatcode. Meme discipline que `Pool.safeERC20.t.sol`, qui lit `burnedShares`
+avant d'armer.
+
+Le detail des cinq sections est dans la liste des cas limites ci-dessus, sous
+`setFee`.
 
 ### `Pool.depeg.t.sol` : ce que les bandes valent face a une decote reelle
 
