@@ -38,7 +38,7 @@ abstract contract PoolGasBase is Test {
   // Montants figés du banc. NE PAS MODIFIER.
   uint256 constant SEED = 1000 * 10 ** 8;      // amorçage du pool
   uint256 constant DEPOSIT = 100 * 10 ** 8;    // dépôt de référence
-  uint256 constant SWAP_IN = 250 * 10 ** 8;    // échange de référence
+  uint256 constant SWAP_IN = 50 * 10 ** 8;     // échange de référence (recalibré jalon 3)
   uint256 constant FEE_NUM = 5;                // 0,5 %
 
   function setUp() public virtual {

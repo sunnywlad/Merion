@@ -162,3 +162,81 @@ Référence rafraîchie dans le commit qui pose les gardes.
   comme attendu : aucune des trois gardes ne les touche. Une dérive sur ces
   lignes aurait signalé un effet de bord, par exemple un décalage
   d'emplacements de stockage.
+
+---
+
+## Jalon 3 — 2026-08-26 — bandes élargies (13/53) et SWAP_IN recalibré (50 BTC)
+
+Deux changements localisés. `Pool.sol` : `floor` passe de 27 à 13 et `ceiling`
+de 40 à 53 (constantes `uint8` en tête du contrat, déclarées en place, la
+boucle de vérification des bandes dans `swap` reste correcte : à 33,33 %,
+`33,33 * 100 = 3333` reste largement à l'intérieur de `[13, 53] * 100`,
+donc aucun risque d'invariant cassé). `Pool.gas.t.sol` : `SWAP_IN` passe
+de `250 * 10 ** 8` à `50 * 10 ** 8`, **explicitement recalibré dans ce
+jalon** (la règle d'or préserve `SEED` et `DEPOSIT`, inchangés à `1000e8`
+et `100e8`). Référence rafraîchie dans le commit qui pose les deux
+changements, `git add .` et message explicite.
+
+Base `40e3982`. Solidity 0.8.36, profil `production` (optimiseur, 200 runs).
+
+| Scénario | Gaz | Δ jalon 2 |
+|---|---|---|
+| `addLiquidity` — pool vide | 222 726 | +4 164 |
+| `addLiquidity` — pool amorcé | 98 848 | +2 312 |
+| `addLiquidity` — pool déséquilibré | 98 870 | +2 312 |
+| `removeLiquidity` — partiel | 81 258 | −3 |
+| `removeLiquidity` — total | 76 524 | −3 |
+| `swap` — pool équilibré | 60 456 | +4 674 |
+| `swap` — pool déséquilibré | 60 434 | +4 674 |
+| `setFee` | 19 185 | +22 |
+
+### Lectures
+
+- **L'élargissement des bandes ne débloque aucun scénario du banc, mais
+  ouvre la porte à des swaps plus grands que le banc actuel.** Avec
+  `SWAP_IN = 250e8` et les anciennes bandes `27/40`, un swap de token 0
+  vers token 2 menait déjà le réservoir 0 à ~38,7 % (sous le plafond 40 %)
+  et le réservoir 2 à ~30,3 % (au-dessus du plancher 27 %) : le banc
+  restait donc à l'intérieur de la fenêtre. Avec les nouvelles bandes
+  `13/53`, l'intervalle `[13 %, 53 %]` permet des déséquilibres cinq fois
+  plus marqués avant revert. La calibration `SWAP_IN = 50e8` est
+  délibérément **conservatrice** : à 50 BTC d'entrée, le réservoir 0 ne
+  monte qu'à ~34,5 % et le réservoir 2 ne descend qu'à ~32,7 %, les deux
+  loin des nouvelles limites. Le banc reste représentatif d'un usage
+  nominal, et un futur scénario « swap stress » trouvera ici la marge
+  pour tester les bords sans reverter.
+
+- **La réduction de `SWAP_IN` de 250 à 50 BTC explique l'essentiel du
+  delta de `swap` (+4 674)**, pas l'élargissement des bandes. Le code de
+  `swap` n'a pas changé ; seules les valeurs manipulées sont plus petites,
+  et l'arithmétique sur des entiers plus petits peut emprunter des chemins
+  différents dans l'optimiseur, en plus de l'effet attendu sur la
+  position du code déployé (les opcodes immédiats des constantes `13` et
+  `53` restent des `PUSH1` de même taille que `27` et `40`, mais
+  l'arrangement du bytecode peut varier, et la lecture de code par l'EVM
+  dépend de la position). Le doublement exact entre `swap` équilibré et
+  `swap` déséquilibré (+4 674 dans les deux) confirme l'observation du
+  jalon 1 : le déséquilibre n'ajoute rien, le coût dépend des opérations
+  effectuées, pas des valeurs manipulées.
+
+- **Les fonctions qui ne touchent pas les bandes sont au gaz près
+  inchangées** : `setFee` à +22, `removeLiquidity` (partiel et total)
+  à −3. Ces écarts sont dans la marge de bruit du mesureur hardhat
+  (±10 à ±20 typiquement), et **surtout** dans la direction opposée
+  (`removeLiquidity` descend légèrement) : c'est la signature d'un
+  effet nul, pas d'une dérive systématique. `addLiquidity` ne lit
+  jamais les bandes non plus, mais montre +2 312/+4 164 : voir la
+  lecture suivante.
+
+- **`addLiquidity` ne touche pas les bandes mais bouge quand même** :
+  +4 164 sur pool vide, +2 312 sur pool amorcé et déséquilibré. Le delta
+  ne vient donc pas du code d'`addLiquidity` lui-même, mais du bytecode
+  déployé. Le changement de valeurs des deux constantes `uint8` (13, 53
+  vs 27, 40) ne change pas la taille des `PUSH1` qui les portent, mais
+  l'optimiseur peut réarranger le code en aval, et la position absolue
+  de chaque opcode dans le runtime se décale. Le delta supérieur sur le
+  pool vide (+4 164 contre +2 312) reflète un chemin d'exécution plus
+  court dans la branche `supply == 0`, donc plus sensible à ce
+  décalage. C'est le prix à payer pour mesurer sur un seul profil
+  optimisé : aucune fuite ne distingue un effet sémantique d'un effet
+  de disposition.

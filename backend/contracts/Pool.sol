@@ -17,8 +17,8 @@ contract Pool is ERC20, Ownable, Pausable {
   address public immutable token2;
 
   uint72[3] public reserves;
-  uint8 public constant floor = 27;
-  uint8 public constant ceiling = 40;
+  uint8 public constant floor = 13;
+  uint8 public constant ceiling = 53;
 
   uint256 public feeNum;
   uint256 constant public MAX_FEE_NUM = 10;
