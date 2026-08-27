@@ -146,7 +146,12 @@ contract PoolHandler is CommonBase, StdUtils, StdAssertions {
     uint256 amount = bound(_amount, 1, 21_000_000e8);
     uint256 minOut = bound(_minOut, 0, expectedSwapAmountOut(indexIn, amount, indexOut));
 
-    uint256 kBefore = pool.reserves(indexIn) * pool.reserves(indexOut);
+    // uint256() explicite : reserves() rend uint72, et uint72 * uint72
+    // panique (Solidity 0.8, overflow) des que les reserves depassent
+    // ~6,8e10 sats. Sans le cast, swapWrapper revert avant
+    // assertGe(kAfter, kBefore) et le controle local de non-decroissance
+    // de k ne tourne jamais sur les gros etats.
+    uint256 kBefore = uint256(pool.reserves(indexIn)) * uint256(pool.reserves(indexOut));
     address mgrAtSwap = pool.manager();
     uint256[3] memory owedBefore = feeRegistrySnapshot(mgrAtSwap);
     (uint256[3] memory reservesBefore, uint256[3] memory balancesBefore) = poolState();
@@ -196,7 +201,7 @@ contract PoolHandler is CommonBase, StdUtils, StdAssertions {
       swapsUnderManager++;
     }
 
-    uint256 kAfter = pool.reserves(indexIn) * pool.reserves(indexOut);
+    uint256 kAfter = uint256(pool.reserves(indexIn)) * uint256(pool.reserves(indexOut));
     assertGe(kAfter, kBefore);
   }
 
