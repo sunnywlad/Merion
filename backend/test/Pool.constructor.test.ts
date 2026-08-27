@@ -643,92 +643,6 @@ describe("Pool.constructor", async function () {
       });
     });
 
-  // ---------------------------------------------------------------------------
-  // V] I.7 #3 — Garde d'adresse nulle sur les jetons du panier
-  //
-  // La garde de deploiement `token0 != address(0) && token1 != address(0)
-  // && token2 != address(0)` (Pool.sol, en amont de la garde de doublons
-  // et de decimales) sort `InvalidTokenAddress` : sans elle, `decimals()`
-  // reverterait en panic 0x21 (appel sur adresse nulle ERC-20), et le
-  // deployer verrait un revert sans cause lisible. L'ordre des trois
-  // gardes d'adresse nulle (token0/1/2) -> doublons -> MRN -> decimales
-  // tient : un panier a zeros ne traverse pas la garde de doublons.
-  // ---------------------------------------------------------------------------
-
-  describe("V] I.7 #3 — garde d'adresse nulle sur les jetons", function () {
-    describe("A) Un token nul parmi trois : InvalidTokenAddress", function () {
-      it("token0 = address(0) revert : InvalidTokenAddress", async function () {
-        const base = await networkHelpers.loadFixture(deployTokensFixture);
-        await assertDeployRevertsWithCustomError(
-          viem.deployContract("Pool", [
-            ["0x0000000000000000000000000000000000000000", base.tokenAddresses[1], base.tokenAddresses[2]],
-            EPOCH_DURATION,
-            PRIORITY_WINDOW,
-            MIN_FEE_NUM,
-            DEFAULT_FEE_NUM,
-            base.treasury.account.address,
-            base.mrn.address,
-            base.deployer.account.address,
-          ]),
-          "InvalidTokenAddress",
-        );
-      });
-
-      it("token1 = address(0) revert : InvalidTokenAddress", async function () {
-        const base = await networkHelpers.loadFixture(deployTokensFixture);
-        await assertDeployRevertsWithCustomError(
-          viem.deployContract("Pool", [
-            [base.tokenAddresses[0], "0x0000000000000000000000000000000000000000", base.tokenAddresses[2]],
-            EPOCH_DURATION,
-            PRIORITY_WINDOW,
-            MIN_FEE_NUM,
-            DEFAULT_FEE_NUM,
-            base.treasury.account.address,
-            base.mrn.address,
-            base.deployer.account.address,
-          ]),
-          "InvalidTokenAddress",
-        );
-      });
-
-      it("token2 = address(0) revert : InvalidTokenAddress", async function () {
-        const base = await networkHelpers.loadFixture(deployTokensFixture);
-        await assertDeployRevertsWithCustomError(
-          viem.deployContract("Pool", [
-            [base.tokenAddresses[0], base.tokenAddresses[1], "0x0000000000000000000000000000000000000000"],
-            EPOCH_DURATION,
-            PRIORITY_WINDOW,
-            MIN_FEE_NUM,
-            DEFAULT_FEE_NUM,
-            base.treasury.account.address,
-            base.mrn.address,
-            base.deployer.account.address,
-          ]),
-          "InvalidTokenAddress",
-        );
-      });
-    });
-
-    describe("B) Panier nominal, le deployement reussit", function () {
-      it("trois jetons non nuls passent la garde d'adresse", async function () {
-        // La fixture nominale deployePoolWith(deployTokensFixture, ...)
-        // couvre deja ce cas, mais on l'asserte explicitement ici pour
-        // que la section V] soit autonome : la garde est satisfaite,
-        // les trois adresses distinctes passent.
-        const base = await networkHelpers.loadFixture(deployTokensFixture);
-
-        const pool = await deployPoolWith(base, MIN_FEE_NUM, DEFAULT_FEE_NUM);
-
-        const t0 = (await pool.read.token0()).toLowerCase();
-        const t1 = (await pool.read.token1()).toLowerCase();
-        const t2 = (await pool.read.token2()).toLowerCase();
-        assert.notEqual(t0, "0x0000000000000000000000000000000000000000", "token0 nul apres deployement");
-        assert.notEqual(t1, "0x0000000000000000000000000000000000000000", "token1 nul apres deployement");
-        assert.notEqual(t2, "0x0000000000000000000000000000000000000000", "token2 nul apres deployement");
-      });
-    });
-  });
-
   describe("III.C) Chaque garde sort SON erreur, plusieurs arguments fautifs a la fois", function () {
       // Meme argument qu'a la section II.C, et meme necessite. Les quatre
       // require du constructeur se suivent (Pool.sol:70-73) et rendent quatre
@@ -852,6 +766,92 @@ describe("Pool.constructor", async function () {
           !forbidden.includes(storedTreasury),
           `treasury()=${storedTreasury} coincide avec l'un des trois autres comptes de la fixture [${forbidden}]`,
         );
+      });
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // V] I.7 #3 — Garde d'adresse nulle sur les jetons du panier
+  //
+  // La garde de deploiement `token0 != address(0) && token1 != address(0)
+  // && token2 != address(0)` (Pool.sol, en amont de la garde de doublons
+  // et de decimales) sort `InvalidTokenAddress` : sans elle, `decimals()`
+  // reverterait en panic 0x21 (appel sur adresse nulle ERC-20), et le
+  // deployer verrait un revert sans cause lisible. L'ordre des trois
+  // gardes d'adresse nulle (token0/1/2) -> doublons -> MRN -> decimales
+  // tient : un panier a zeros ne traverse pas la garde de doublons.
+  // ---------------------------------------------------------------------------
+
+  describe("V] I.7 #3 — garde d'adresse nulle sur les jetons", function () {
+    describe("A) Un token nul parmi trois : InvalidTokenAddress", function () {
+      it("token0 = address(0) revert : InvalidTokenAddress", async function () {
+        const base = await networkHelpers.loadFixture(deployTokensFixture);
+        await assertDeployRevertsWithCustomError(
+          viem.deployContract("Pool", [
+            ["0x0000000000000000000000000000000000000000", base.tokenAddresses[1], base.tokenAddresses[2]],
+            EPOCH_DURATION,
+            PRIORITY_WINDOW,
+            MIN_FEE_NUM,
+            DEFAULT_FEE_NUM,
+            base.treasury.account.address,
+            base.mrn.address,
+            base.deployer.account.address,
+          ]),
+          "InvalidTokenAddress",
+        );
+      });
+
+      it("token1 = address(0) revert : InvalidTokenAddress", async function () {
+        const base = await networkHelpers.loadFixture(deployTokensFixture);
+        await assertDeployRevertsWithCustomError(
+          viem.deployContract("Pool", [
+            [base.tokenAddresses[0], "0x0000000000000000000000000000000000000000", base.tokenAddresses[2]],
+            EPOCH_DURATION,
+            PRIORITY_WINDOW,
+            MIN_FEE_NUM,
+            DEFAULT_FEE_NUM,
+            base.treasury.account.address,
+            base.mrn.address,
+            base.deployer.account.address,
+          ]),
+          "InvalidTokenAddress",
+        );
+      });
+
+      it("token2 = address(0) revert : InvalidTokenAddress", async function () {
+        const base = await networkHelpers.loadFixture(deployTokensFixture);
+        await assertDeployRevertsWithCustomError(
+          viem.deployContract("Pool", [
+            [base.tokenAddresses[0], base.tokenAddresses[1], "0x0000000000000000000000000000000000000000"],
+            EPOCH_DURATION,
+            PRIORITY_WINDOW,
+            MIN_FEE_NUM,
+            DEFAULT_FEE_NUM,
+            base.treasury.account.address,
+            base.mrn.address,
+            base.deployer.account.address,
+          ]),
+          "InvalidTokenAddress",
+        );
+      });
+    });
+
+    describe("B) Panier nominal, le deployement reussit", function () {
+      it("trois jetons non nuls passent la garde d'adresse", async function () {
+        // La fixture nominale deployePoolWith(deployTokensFixture, ...)
+        // couvre deja ce cas, mais on l'asserte explicitement ici pour
+        // que la section V] soit autonome : la garde est satisfaite,
+        // les trois adresses distinctes passent.
+        const base = await networkHelpers.loadFixture(deployTokensFixture);
+
+        const pool = await deployPoolWith(base, MIN_FEE_NUM, DEFAULT_FEE_NUM);
+
+        const t0 = (await pool.read.token0()).toLowerCase();
+        const t1 = (await pool.read.token1()).toLowerCase();
+        const t2 = (await pool.read.token2()).toLowerCase();
+        assert.notEqual(t0, "0x0000000000000000000000000000000000000000", "token0 nul apres deployement");
+        assert.notEqual(t1, "0x0000000000000000000000000000000000000000", "token1 nul apres deployement");
+        assert.notEqual(t2, "0x0000000000000000000000000000000000000000", "token2 nul apres deployement");
       });
     });
   });

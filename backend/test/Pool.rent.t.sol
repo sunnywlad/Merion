@@ -219,12 +219,11 @@ contract PoolRentAccumulatorTest is Test, PoolTestBase {
   // par lui.
   function test_NotifyRentRevertsWithoutApproval() public {
     uint256 amount = 1e18;
-    // Garde specifique : sur pool non amorce (totalSupply == 0) la branche
-    // early-return POSERAIT rentLeftOver, mais le test interesse la branche
-    // du pull, inconditionnelle en queue. On amorce donc le pool pour
-    // traverser aussi la branche `else` (re-base du stream) et montrer
-    // que le pull reverte a la fin, apres que les effets sont poses.
-    pool.addLiquidity(0, SEED, 0);
+    // setUp a deja amorce le pool (l. 39 : `pool.addLiquidity(0, SEED, 0)`),
+    // donc la branche `else` (re-base du stream) est deja prise : on y voit
+    // le pull reverter apres que rentRate, rentEnd, rentLastUpdate et
+    // RentNotified ont ete poses. La CEI garantit que rien de ce qui
+    // precede n'est engage.
     assertEq(mrn.allowance(address(this), address(pool)), 0, "aucune approbation posee par defaut");
 
     vm.expectRevert(); // ERC20InsufficientAllowance(address(pool), 0, 1e18)

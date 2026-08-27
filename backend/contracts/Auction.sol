@@ -508,7 +508,7 @@ contract Auction {
     // M2 (I.7) : l'Auction ne POUSSE plus le MRN vers le Pool. C'est
     // `Pool.notifyRent` qui TIRE, en pull, sur l'approbation posee au
     // constructeur de l'Auction (cf. constructeur, I.7 #10). La garde
-    // est exercee par la test suite (test_SettleRevertsWithoutApproval,
+    // est exercee par la test suite (test_NotifyRentRevertsWithoutApproval,
     // I.7 #10) : sans approbation, le pull reverte
     // `ERC20InsufficientAllowance` et la totalite du settle (incluant
     // le burn ci-dessus) est annulee, laissant l'Auction et le Pool

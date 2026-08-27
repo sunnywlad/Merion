@@ -607,7 +607,7 @@ contract PoolInvariantTest is Test, PoolTestBase {
   // mordrait au lieu de passer en silence. Le early-return couvre la
   // fenetre d'avant le premier swap, ou il n'y a rien a exiger.
   //
-  // I.7 #12 : ALARME DE HARN AIS. Cette invariant est plus utile comme
+  // I.7 #12 : ALARME DE HARNAIS. Cette invariant est plus utile comme
   // detecteur de regression du setUp que comme une propriete de l'AMM
   // elle-meme. Elle NE SERT PAS a prouver que le managerCut > 0 (la
   // tautologie tient), elle sert a prouver que le harnais reste
