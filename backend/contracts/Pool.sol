@@ -116,6 +116,7 @@ contract Pool is ERC20, Ownable, Pausable {
   error InvalidTreasury();
   error DuplicateToken();
   error InvalidTokenDecimals();
+  error InvalidMrn();
 
   event FeeSet(uint256 indexed epoch, address indexed manager, uint256 oldFee, uint256 newFee);
   event AddedLiquidity(address indexed provider, uint256[3] amountsIn, uint256 mintedShares);
@@ -158,6 +159,7 @@ contract Pool is ERC20, Ownable, Pausable {
     token1 = _tokens[1];
     token2 = _tokens[2];
     require(token0 != token1 && token1 != token2 && token0 != token2, DuplicateToken());
+    require(_mrn != address(0) && _mrn != token0 && _mrn != token1 && _mrn != token2, InvalidMrn());
     require(IERC20Metadata(token0).decimals() == 8, InvalidTokenDecimals());
     require(IERC20Metadata(token1).decimals() == 8, InvalidTokenDecimals());
     require(IERC20Metadata(token2).decimals() == 8, InvalidTokenDecimals());
@@ -240,7 +242,7 @@ contract Pool is ERC20, Ownable, Pausable {
   function get_dy(uint256 _indexIn, uint256 _indexOut, uint256 _dx) external view returns (uint256) {
     uint72[3] memory cachedReserves = reserves;
     uint256 effective = effectiveFeeNum(_indexIn, _indexOut);
-    uint256 feeAmount = _dx * effective / FEE_DEN;
+    uint256 feeAmount = Math.ceilDiv(_dx * effective, FEE_DEN);
     return _getAmountOut(cachedReserves, _indexIn, _indexOut, _dx - feeAmount);
   }
 
