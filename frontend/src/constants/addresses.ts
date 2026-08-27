@@ -7,12 +7,14 @@ const addresses = {
       cbbtc: {name : "cbBTC", address: "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9", index: 1n},
       lbtc: {name : "LBTC", address: "0x5FbDB2315678afecb367f032d93F642f64180aa3", index: 2n}
     },
-    pool: "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9",
-    // I.5/I.6 — Une seule maison pour l'adresse, celle-ci. `MerionModule`
-    // (MRN, Pool, Auction, puis `pool.setAuction`) tourne désormais sur cette
-    // chaîne : reporter ici la valeur de `MerionModule#Auction` à chaque
-    // redéploiement.
-    auction: "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707" as `0x${string}` | null,
+    pool: "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707",
+    // I.5/I.6 — `MerionModule` (MRN, Pool, Auction, Faucet, puis
+    // `pool.setAuction`) tourne désormais sur cette chaîne : reporter ici
+    // la valeur de `AuctionModule#Auction` à chaque redéploiement.
+    auction: "0x0165878A594ca255338adfa4d48449f69242Eb8F" as `0x${string}` | null,
+    // V.0 — Faucet MRN déployé par `MerionModule`, à reporter depuis
+    // `MrnFaucetModule#MrnFaucet` à chaque redéploiement.
+    faucet: "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9" as `0x${string}` | null,
     mrn: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
   }
 } as const;
@@ -20,6 +22,7 @@ const addresses = {
 export const tokensInfo = Object.values(addresses[chainId].tokens);
 export const deployedPool = addresses[chainId].pool;
 export const deployedAuction = addresses[chainId].auction;
+export const deployedFaucet = addresses[chainId].faucet;
 export const deployedMrn = addresses[chainId].mrn;
 
 // Le loyer et les mises sont libellés en MRN, un ERC-20 à 18 décimales, là où
