@@ -478,6 +478,18 @@ contract PoolInvariantTest is Test, PoolTestBase {
   // couverture "un swap mute vraiment les reserves, sous manager" est
   // pinnee par test_managerPathIsActiveAndConserves (30 swaps deterministes
   // a montant modeste, tous executes).
+  // I.7 #12 : la tautologie est posee comme un filet, pas comme une
+  // propriete. `totalCalls > 100` implique `totalSupply > 0` par
+  // construction : avant amorcage, seuls `addLiquidityWrapper` et
+  // `addThenRemoveRoundTrip` n'annulent pas leur increment de
+  // `totalCalls` (les autres divisent par une reserve ou un supply
+  // nuls et revert en tete), et ces deux-la amorcent le pool. Donc
+  // `totalCalls > 100` -> `totalSupply > 0`, point. L'assertion tient
+  // pour la forme — un futur changement qui briserait cette implication
+  // (un `addLiquidityWrapper` qui n'amorce pas, par exemple) la ferait
+  // tomber, et c'est exactement le signal qu'on cherche. On NE SUPPRIME
+  // PAS l'assert, c'est l'assertion elle-meme qui est tautologique, pas
+  // le filet.
   function invariant_campaignDidSomething() view public {
     if (handler.totalCalls() < 100) return;
     assertGt(pool.totalSupply(), 0);
@@ -594,6 +606,16 @@ contract PoolInvariantTest is Test, PoolTestBase {
   // swapsUnderManager decrocherait de swapsExecuted et cet invariant
   // mordrait au lieu de passer en silence. Le early-return couvre la
   // fenetre d'avant le premier swap, ou il n'y a rien a exiger.
+  //
+  // I.7 #12 : ALARME DE HARN AIS. Cette invariant est plus utile comme
+  // detecteur de regression du setUp que comme une propriete de l'AMM
+  // elle-meme. Elle NE SERT PAS a prouver que le managerCut > 0 (la
+  // tautologie tient), elle sert a prouver que le harnais reste
+  // structurellement en mesure de l'exercer. Si un futur remaniement
+  // ajoutait un warpWrapper ou re-vidait le chemin gestionnaire, le
+  // compteur decrocherait et l'invariant tomberait. Le jour ou
+  // quelqu'un ouvre ce fichier, c'est ce role qu'il faut voir — pas
+  // une verification d'audit du swap.
   function invariant_managerPathWasExercised() view public {
     if (handler.swapsExecuted() == 0) return;
     assertEq(handler.swapsUnderManager(), handler.swapsExecuted());

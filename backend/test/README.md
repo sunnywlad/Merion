@@ -1975,6 +1975,29 @@ plus de granularite pour operer. Depuis le bornage, la meme configuration
 ratio hors bande. La trace est conservee dans le fichier plutot qu'effacee :
 elle dit exactement ce que l'invariant affirme, et ou il s'arrete.
 
+Le residu assume, I.7 #14 : la couverture de CAMPAGNE de cet invariant sur
+la garde de bande de `swap()` n'est PAS garantie au niveau run. Le fuzzer
+EDR choisit les selecteurs librement et n'est pas contraint d'appeler
+`swapWrapper` sur un run donne ; des qu'`afterInvariant` peut echouer pour
+une raison, le reducteur de contre-exemple minimise vers une sequence
+sans swap (`add` / `remove` / `round-trip` n'incrementent jamais
+`swapsExecuted`) et la rapporte comme contre-exemple. Un
+`assertGt(swapsExecuted, 0)` par run est donc auto-defait, verifie
+empiriquement (la sequence shrinkee faisait rougir les sept invariants).
+La garantie reelle est triple : `invariant_bandsAlwaysRespected` mord
+par appel, evalue apres chaque appel du handler, et toute mutation qui
+neutraliserait la boucle de bande de `swap` (verifie par mutation
+testing) la fait tomber ; le test deterministe
+`test_managerPathIsActiveAndConserves` execute trente swaps sous
+manager et verifie la conservation avec terme de frais ; le test
+`test_FuzzSwapAboveBandsRevertsWithBandError` fixe le rejet d'un swap
+hors bande a l'unite pres de la frontiere (76 716 541 675 satoshis sur
+des reserves egales a 1 000e8). L'invariant de campagne n'est donc pas
+une garantie, c'est un sondage — et la garantie vient de la triple
+redondance ci-dessus. **Accepte et explique a C4** : un jury qui ouvre
+le fichier de test le voit dans le bloc de deviation en tete de
+`PoolInvariantTest` et ici.
+
 Le fichier porte enfin un test cible, non fuzze : **`test_InsufficientReserveReachedViaForgedState`**.
 Amorce par `handler.addLiquidityWrapper`, `vm.store` sur le slot des reserves
 (decouvert par lecture du getter public et balayage, pas code en dur) pour

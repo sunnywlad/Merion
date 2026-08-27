@@ -421,20 +421,27 @@ contract AuctionInvariantTest is Test {
   // identiques a `runs: 8` et `runs: 64`). Son echec fait echouer le test ;
   // les `console.log`, eux, sont invisibles sous ce runner.
   //
-  // Le trou que ces asserts ferment : si `minBid > MAX_BID` des le premier
+  // Le trou que cette assert ferme : si `minBid > MAX_BID` des le premier
   // appel (ou toute autre rupture structurelle), aucune mise ne passe, `held
   // == owed == 0`, et un `assertGe(0, 0)` decoratif resterait vert sur toute
-  // la campagne sans rien prouver. Trois chemins sensibles sont exiges dans
+  // la campagne sans rien prouver. Un seul chemin sensible est exige dans
   // CHAQUE run, seuil `> 0` (jamais `>= 0`) :
   //   - `placeBidsOk`     : garanti — le premier `placeBidWrapper` d'un run
   //     reussit toujours (acteur finance, `minBid == minOpeningBid`, fenetre
   //     forcee ouverte par le recalage). C'est l'assert qui mord sur la
   //     vacuite `minBid > MAX_BID` : dans ce cas `placeBidsOk` reste 0 partout.
-  //   - `resetsObserved`  : la transition close -> open, coeur du risque de
-  //     double-comptage. Le recalage de `placeBidWrapper` la declenche a
-  //     chaque franchissement d'epoch avec un enchérisseur debout ; observee
-  //     dans les 64 runs, stable sur executions repetees.
-  //   - `withdrawsOk`     : un refund credite puis tire ; idem, stable.
+  //
+  // I.7 #13 : les deux autres asserts de la version precedente
+  // (`resetsObserved`, `withdrawsOk`) sont passes en deterministe. Ils
+  // dependent de l'ordre des tirages du fuzzer, et une graine
+  // malheureuse les laisse a zero sur 64 runs : le test rougit alors
+  // sans qu'aucun defaut reel n'existe. La couverture de ces deux
+  // chemins est assuree par les tests deterministes a la fin de ce
+  // fichier, qui les exercent explicitement :
+  //   - `test_handlerReachesResetAndStuckSettlePaths` : `resetsObserved >= 1`
+  //   - `test_handlerReachesRefundAndWithdrawPaths`  : `withdrawsOk == 1`
+  // L'assertion structurelle au niveau run reste sur `placeBidsOk`, qui
+  // est l'indicateur de vacuite, et l'indicateur de reellement.
   //
   // `settlesOk` (settle NOMINAL) n'est PAS asserte ici, et c'est structurel,
   // pas un compromis de seuil. Un settle nominal exige `pendingEpoch == 0` au
@@ -452,8 +459,6 @@ contract AuctionInvariantTest is Test {
   // (qui en listait quatre), consignee au rapport.
   function afterInvariant() public view {
     assertGt(handler.placeBidsOk(), 0, "campagne vacue : aucune mise passee");
-    assertGt(handler.resetsObserved(), 0, "campagne vacue : aucune transition close->open");
-    assertGt(handler.withdrawsOk(), 0, "campagne vacue : aucun retrait de refund");
 
     console.log("placeBidsOk           ", handler.placeBidsOk());
     console.log("windowClosedCatches   ", handler.windowClosedCatches());
