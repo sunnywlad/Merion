@@ -3,6 +3,7 @@ pragma solidity 0.8.36;
 
 import {Test} from "forge-std/Test.sol";
 import {PoolTestBase} from "./PoolTestBase.sol";
+import {Pool} from "../contracts/Pool.sol";
 
 // Couche Solidity d'I.4 : la MECANIQUE de l'accumulateur de loyer, isolee
 // de tout parcours multi-comptes. Meme partage que Pool.feeInForce.t.sol vs
@@ -149,5 +150,48 @@ contract PoolRentAccumulatorTest is Test, PoolTestBase {
       balPre * pool.accPerShare() / SCALE,
       "l'accru est fige sur le solde pre-burn (sa dette valait 0)"
     );
+  }
+
+  // --- 3. claimable(address) : la vue rend ce que claimRent transfere ----
+
+  // claimable(u) doit rendre, au wei pres, ce que claimRent() transfere dans
+  // la meme foulee. C'est l'egalite que l'invariant Foundry differentiel I.6
+  // generalisera ; ici on l'epingle sur un parcours concret. address(this)
+  // detient les parts LP1 posees au setUp (cf. en-tete du fichier), le
+  // claimant est donc le contrat de test lui-meme : ni compte distinct ni
+  // vm.prank. `claimable` projette l'accumulateur via `_accProjected()` a
+  // block.timestamp ; `claimRent` appelle `_updateRent()` qui ecrit cette
+  // meme projection puis lit accPerShare. Aucun warp entre les deux : meme
+  // timestamp, donc egalite exacte, pas seulement approchee.
+  function test_ClaimableMatchesClaimRentTransfer() public {
+    _notify(RENT);
+    uint256 start = pool.rentLastUpdate();
+    vm.warp(start + EPOCH / 2); // mi-stream : l'accru vivant est non nul
+
+    uint256 quoted = pool.claimable(address(this));
+    assertGt(quoted, 0, "fixture : claimable doit etre non nul pour tester l'egalite");
+
+    uint256 balBefore = mrn.balanceOf(address(this));
+    pool.claimRent();
+    assertEq(
+      mrn.balanceOf(address(this)) - balBefore,
+      quoted,
+      "claimable(u) doit rendre exactement ce que claimRent() transfere"
+    );
+  }
+
+  // claimable == 0 -> claimRent() revert ZeroRentOwed. LP2 n'a jamais detenu
+  // de parts : sa vue est nulle et le tirage doit revert. C'est la surface
+  // de revert que l'invariant differentiel couvrira aussi (une vue a zero
+  // n'autorise aucun transfert).
+  function test_ClaimRentRevertsWhenClaimableIsZero() public {
+    _notify(RENT);
+    vm.warp(pool.rentLastUpdate() + EPOCH / 2);
+
+    assertEq(pool.claimable(LP2), 0, "LP2 sans parts : claimable doit etre nul");
+
+    vm.prank(LP2);
+    vm.expectRevert(Pool.ZeroRentOwed.selector);
+    pool.claimRent();
   }
 }

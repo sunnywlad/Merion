@@ -148,12 +148,13 @@ BID_SILENCE de `Auction.test.ts` : `BID_SILENCE == 0` est la valeur livree a
 I.3, le gate A4 est roadmap).
 
 L'etape I.4 ajoute deux fichiers, `test/Pool.rent.test.ts` (25 tests) et
-`test/Pool.rent.t.sol` (5 tests). Sur ces 30, **8 sont verts aujourd'hui** et
-**22 rouges**, ces derniers en attente d'un correctif d'echelle sur le code
-I.4 : voir la section "Etape I.4" plus bas, qui nomme les deux defauts
-suspectes et l'`it` qui epingle chacun. Les attendus rouges sont derives de la
-formule d'I.4 (build-auction.md 4.4), pas d'une sortie observee : ils
-passeront au vert une fois l'echelle de l'accumulateur corrigee.
+`test/Pool.rent.t.sol` (7 tests). Les attendus sont derives de la formule
+d'I.4 (build-auction.md 4.4), pas d'une sortie observee. Les deux derniers
+tests de `Pool.rent.t.sol` (`test_ClaimableMatchesClaimRentTransfer`,
+`test_ClaimRentRevertsWhenClaimableIsZero`) epinglent la vue `claimable` :
+elle rend au wei pres ce que `claimRent` transfere, et une vue nulle
+n'autorise aucun tirage (revert `ZeroRentOwed`). C'est la fondation de
+l'invariant differentiel I.6.
 
 ## Structure de la suite
 
@@ -1595,6 +1596,10 @@ tranche suit `dt * rentRate / totalSupply()` (echelle `1e18` unique), la
 somme de deux tranches egale le stream entier, et `_update` capture l'accru
 du sender sur son solde PRE-transfert tout en n'accordant au receiver (mint
 comme transfert) AUCUN accru anterieur a l'instant ou il recoit les parts.
+S'y ajoute la vue `claimable` : sur un parcours concret elle rend au wei
+pres ce que `claimRent` transfere dans la meme foulee, et une vue nulle fait
+revert `claimRent` en `ZeroRentOwed` (fondation de l'invariant differentiel
+I.6).
 
 **Etat rouge, et les deux defauts d'echelle suspectes.** 22 des 30 tests
 d'I.4 sont rouges. Les attendus sont derives de la formule (total distribue

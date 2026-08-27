@@ -81,10 +81,6 @@ async function deployPoolWith(
   ]);
 }
 
-function ceilDiv(a: bigint, b: bigint): bigint {
-  return (a + b - 1n) / b;
-}
-
 async function bootstrapPool(
   base: TokensFixture,
   pool: Awaited<ReturnType<typeof deployPoolWith>>,
@@ -307,11 +303,31 @@ describe("Pool.audit", async function () {
   });
 
   // -------------------------------------------------------------------------
-  // Defaut 4
+  // Caracterisation du partage des frais (voisin du defaut 4, PAS sa preuve)
+  //
+  // Ce describe NE pin PAS le defaut 4. Le fix `cbef81a` n'a touche que la
+  // ligne de SIMULATION de la garde de bande (`afterSwapReserves[_indexIn]` :
+  // `_amount` -> `amountInToReserves`) ; l'ECRITURE `reserves[_indexIn] +=
+  // uint72(amountInToReserves)` etait deja sur le NET avant `cbef81a`. Comme
+  // ce test n'observe QUE `reserves[0]` apres swap, il passerait a
+  // l'identique sur `9bd8659` : il ne discrimine pas le fix.
+  //
+  // La vraie garde de bande sur le NET est epinglee par
+  // `test_MaxInBandAmountIsExactlyTheBoundary` (`test/Pool.swap.t.sol`) : la
+  // borne `MAX_IN_BAND_AMOUNT` a bouge de 76 624 746 076 a 76 627 560 281
+  // PRECISEMENT parce que la simulation de la bande passe du brut au net.
+  //
+  // Ce que ce test caracterise a la place : l'arithmetique du partage des
+  // frais sous un gestionnaire nomme. Sous un manager, `managerCut =
+  // baseAmount - protocolCut` est non nul, donc la lamelle prelevee sur
+  // l'entree (`protocolCut + managerCut`) est franche et l'egalite
+  // `reserves[0] apres == reserves[0] avant + (brut - lamelle)` se lit sans
+  // etre noyee par la troncature. Les trois assertions restent vraies et
+  // utiles comme caracterisation ; aucune ne pretend demontrer le defaut 4.
   // -------------------------------------------------------------------------
 
-  describe("III] La garde de bande opere sur un etat simule distinct de l'etat ecrit", function () {
-    it("apres un swap qui passe la garde de bande, la reserve entrante reelle est le NET du frais, pas le BRUT simule", async function () {
+  describe("III] Le partage des frais retire une lamelle des reserves entrantes", function () {
+    it("sous un manager nomme, reserves[0] apres swap vaut l'etat d'avant plus le NET du frais (brut moins protocolCut moins managerCut)", async function () {
       // Fixture AVEC gestionnaire : sans manager, managerCut = 0 et la
       // divergence se reduit a protocolCut, minuscule et vite ecrasee par la
       // troncature. Un manager nomme rend le partage (protocolCut, managerCut)
@@ -364,7 +380,7 @@ describe("Pool.audit", async function () {
       );
       assert.ok(
         divergence > 0n,
-        `simule et reel devraient diverger strictement (divergence=${divergence}), sinon la garde opere deja sur le NET`,
+        `la lamelle du partage devrait etre strictement positive sous un manager nomme (divergence=${divergence}), sinon protocolCut + managerCut a ete ecrase par la troncature`,
       );
     });
   });
@@ -390,29 +406,26 @@ describe("Pool.audit", async function () {
 
       const oneShot = 4000n;
       const ticket = 1999n;
-      const fee = ctx.effectiveAtSwap; // 5 sur ce pool equilibre
 
-      // Frais du POOL, formule miroir de swap() (Pool.sol:362) :
-      //   feeAmount = ceilDiv(_amount * effectiveFeeNum, FEE_DEN)
-      //   un coup     : ceilDiv(4000 * 5, 10000) = ceilDiv(20000, 10000) = 2
-      //   fractionne  : 2 * ceilDiv(1999 * 5, 10000) = 2 * ceilDiv(9995, 10000)
-      //                 = 2 * 1 = 2
-      // Propriete : le frais en fractionnant est >= au frais en un coup
-      // (interdiction de la sous-additivite au detriment du pool). Ici egalite,
-      // mais c'est l'inegalite qui est l'invariant.
-      const feeOneShot = ceilDiv(oneShot * fee, FEE_DEN);
-      const feeSplit = 2n * ceilDiv(ticket * fee, FEE_DEN);
-      assert.ok(
-        feeSplit >= feeOneShot,
-        `frais en fractionnant (${feeSplit}) < frais en un coup (${feeOneShot}) : le frais du pool serait sous-additif`,
-      );
-
-      // Meme ordre observe sur le cout REEL paye par l'appelant, swaps
-      // reellement executes : cost = _amount - amountOut.
-      //   un coup     : 4000 - amountOut(3998)  (dxApresFrais = 4000 - 2)
-      //   fractionne  : (1999 - amountOut(1998)) + (1999 - amountOut(1998))
-      // La courbe a produit constant ajoute au plus une unite de troncature par
-      // ticket, jamais en faveur de l'appelant, donc l'inegalite >= tient.
+      // Une seule assertion, et elle passe par le VRAI contrat via
+      // `simulate.swap`. (L'ancienne 1re assertion comparait
+      // `2n * ceilDiv(1999n*5n, 10000n)` a `ceilDiv(4000n*5n, 10000n)` avec le
+      // helper TS local : `2n >= 2n` calcule entierement hors chaine,
+      // insensible a Pool.sol:362. Retiree — cf. rapport Pass A point 2.)
+      //
+      // Cout REEL paye par l'appelant sur des swaps reellement executes :
+      // cost = _amount - amountOut, feeAmount pris par ceilDiv a Pool.sol:362.
+      //   un coup     : feeAmount = ceilDiv(4000*5, 10000) = 2, dxNet = 3998,
+      //                 cost = 4000 - out(3998)
+      //   fractionne  : feeAmount = ceilDiv(1999*5, 10000) = 1 par ticket,
+      //                 dxNet = 1998, cost = somme (1999 - out(1998))
+      // Sur ce pool (reserves 1e13 par jambe) : costOneShot = 3, costSplit = 4.
+      // Si L362 repassait en floor : le frais du ticket 1999 tomberait de
+      // ceilDiv(9995,10000)=1 a floor=0 (dxNet 1999 au lieu de 1998), rendant
+      // 1 sat par ticket a l'appelant -> costSplit = 2, tandis que costOneShot
+      // reste 3 (4000*5 = 20000 est divisible par 10000, floor == ceil). La
+      // 2e assertion casserait donc : 2 >= 3 est faux. Elle discrimine bien
+      // un retour en floor de L362.
       const { result: outOneShot } = await ctx.pool.simulate.swap([0n, oneShot, 2n, 0n], {
         account: ctx.depositor.account.address,
       });
