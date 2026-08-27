@@ -89,7 +89,8 @@ type TokensFixture = Awaited<ReturnType<typeof deployTokensFixture>>;
 // Deploie un pool sur des jetons deja en place, avec les valeurs nominales
 // (PoolTestBase.sol). `deployer` est l'owner — c'est lui qui detient le
 // bootstrap avant l'arrivee de l'encherisseur.
-function deployPoolWith(base: TokensFixture) {
+async function deployPoolWith(base: TokensFixture) {
+  const mrn = await viem.deployContract("MRN", []);
   return viem.deployContract("Pool", [
     [...base.tokenAddresses],
     EPOCH_DURATION,
@@ -97,6 +98,7 @@ function deployPoolWith(base: TokensFixture) {
     MIN_FEE_NUM,
     DEFAULT_FEE_NUM,
     base.deployer.account.address,
+    mrn.address,
     base.deployer.account.address,
   ]);
 }

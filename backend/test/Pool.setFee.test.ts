@@ -98,9 +98,12 @@ async function deployTokensAndPoolFixture() {
   const wbtc = await viem.deployContract("MockWrappedBTC", ["Wrapped BTC", "wBTC"]);
   const cbbtc = await viem.deployContract("MockWrappedBTC", ["Coinbase BTC", "cbBTC"]);
   const lbtc = await viem.deployContract("MockWrappedBTC", ["Lombard BTC", "lBTC"]);
+  const mrn = await viem.deployContract("MRN", []);
 
   // Le dernier argument du constructeur est le _owner (Ownable(_owner)) :
-  // `deployer` est donc l'owner dans toute cette suite.
+  // `deployer` est donc l'owner dans toute cette suite. Le 7e argument, juste
+  // avant _owner, est l'adresse MRN que le Pool utilise pour verser le loyer
+  // LP (I.4).
   const pool = await viem.deployContract("Pool", [
     [wbtc.address, cbbtc.address, lbtc.address],
     EPOCH_DURATION,
@@ -108,6 +111,7 @@ async function deployTokensAndPoolFixture() {
     MIN_FEE_NUM,
     NOMINAL_FEE_NUM,
     treasury.account.address,
+    mrn.address,
     deployer.account.address,
   ]);
 
@@ -115,7 +119,7 @@ async function deployTokensAndPoolFixture() {
   const deploymentBlock = await publicClient.getBlock();
   const genesis = deploymentBlock.timestamp;
 
-  return { deployer, manager, otherManager, thirdParty, wbtc, cbbtc, lbtc, pool, genesis };
+  return { deployer, manager, otherManager, thirdParty, wbtc, cbbtc, lbtc, mrn, pool, genesis };
 }
 
 // Le premier instant de l'epoch `epoch`, en secondes absolues. GENESIS est le

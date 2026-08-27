@@ -3,6 +3,7 @@ pragma solidity 0.8.36;
 
 import {Pool} from "./Pool.sol";
 import {MockWrappedBTC} from "./MockWrappedBTC.sol";
+import {MRN} from "./MRN.sol";
 import {Test} from "forge-std/Test.sol";
 
 /// BANC DE MESURE DU GAZ — CE N'EST PAS UNE SUITE DE TESTS.
@@ -33,6 +34,7 @@ abstract contract PoolGasBase is Test {
   MockWrappedBTC public wbtc;
   MockWrappedBTC public cbbtc;
   MockWrappedBTC public lbtc;
+  MRN public mrn;
   Pool public pool;
 
   // Montants figés du banc. NE PAS MODIFIER.
@@ -47,7 +49,8 @@ abstract contract PoolGasBase is Test {
     lbtc = new MockWrappedBTC("Lombard BTC", "lBTC");
 
     address[3] memory tokens = [address(wbtc), address(cbbtc), address(lbtc)];
-    pool = new Pool(tokens, 14400, 12, 1, FEE_NUM, address(0xBEEF), address(this));
+    mrn = new MRN();
+    pool = new Pool(tokens, 14400, 12, 1, FEE_NUM, address(0xBEEF), address(mrn), address(this));
 
     // Marge large : aucun approve manquant ne doit fausser une mesure.
     uint256 funding = SEED * 100;

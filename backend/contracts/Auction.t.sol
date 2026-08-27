@@ -69,9 +69,9 @@ abstract contract AuctionTestBase is Test {
     lbtc = new MockWrappedBTC("Lombard BTC", "lBTC");
 
     address[3] memory tokens = [address(wbtc), address(cbbtc), address(lbtc)];
-    pool = new Pool(tokens, 14400, 12, 1, 5, TREASURY, address(this));
-
     mrn = new MRN();
+    pool = new Pool(tokens, 14400, 12, 1, 5, TREASURY, address(mrn), address(this));
+
     auction = new Auction(address(pool), address(mrn), AUCTION_WINDOW, MAX_EXTENSION, BID_SILENCE, MIN_OPENING_BID);
 
     pool.setAuction(address(auction));
@@ -297,7 +297,7 @@ contract AuctionManagerCouplingTest is AuctionTestBase {
     cbbtc = new MockWrappedBTC("Coinbase BTC", "cbBTC");
     lbtc = new MockWrappedBTC("Lombard BTC", "lBTC");
     address[3] memory tokens = [address(wbtc), address(cbbtc), address(lbtc)];
-    Pool localPool = new Pool(tokens, 14400, 12, 1, 5, TREASURY, address(this));
+    Pool localPool = new Pool(tokens, 14400, 12, 1, 5, TREASURY, address(mrn), address(this));
     Auction localAuction = new Auction(
       address(localPool),
       address(mrn),

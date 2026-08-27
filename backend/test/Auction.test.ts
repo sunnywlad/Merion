@@ -95,6 +95,7 @@ async function deployTokensAndContractsFixture() {
     MIN_FEE_NUM,
     DEFAULT_FEE_NUM,
     treasury.account.address,
+    mrn.address,
     deployer.account.address,
   ]);
 

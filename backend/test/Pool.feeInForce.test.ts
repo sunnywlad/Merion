@@ -110,7 +110,8 @@ type TokensFixture = Awaited<ReturnType<typeof deployTokensFixture>>;
 // le nominal. C'est ce parametre-la qui est le sujet de la section I.A : une
 // lecture qui rendrait le meme nombre pour deux nominaux distincts serait une
 // constante, pas une lecture d'etat.
-function deployPoolWith(base: TokensFixture, nominalFeeNum: bigint) {
+async function deployPoolWith(base: TokensFixture, nominalFeeNum: bigint) {
+  const mrn = await viem.deployContract("MRN", []);
   return viem.deployContract("Pool", [
     [...base.tokenAddresses],
     EPOCH_DURATION,
@@ -118,6 +119,7 @@ function deployPoolWith(base: TokensFixture, nominalFeeNum: bigint) {
     MIN_FEE_NUM,
     nominalFeeNum,
     base.treasury.account.address,
+    mrn.address,
     base.deployer.account.address,
   ]);
 }

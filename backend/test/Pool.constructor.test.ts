@@ -14,7 +14,7 @@
 // l'equipe enverra en production et que le front lira ensuite par ses
 // getters publics. Un test Solidity deploie le pool depuis un contrat de
 // test, avec ses propres arguments figes dans PoolTestBase.sol ; un test
-// TypeScript reproduit le parcours reel, sept arguments passes a travers
+// TypeScript reproduit le parcours reel, huit arguments passes a travers
 // l'ABI generee, puis relus un a un par les memes getters que le front
 // appelle. Les deux chemins de revert du constructeur ne sont d'ailleurs
 // atteignables que la : une fois PoolTestBase.sol deploye, ils sont derriere
@@ -106,10 +106,13 @@ async function deployTokensFixture() {
   const wbtc = await viem.deployContract("MockWrappedBTC", ["Wrapped BTC", "wBTC"]);
   const cbbtc = await viem.deployContract("MockWrappedBTC", ["Coinbase BTC", "cbBTC"]);
   const lbtc = await viem.deployContract("MockWrappedBTC", ["Lombard BTC", "lBTC"]);
+  // Le jeton natif MRN, septieme argument du constructeur : le Pool le garde
+  // en immuable pour verser le loyer LP par claimRent (I.4).
+  const mrn = await viem.deployContract("MRN", []);
 
   const tokenAddresses = [wbtc.address, cbbtc.address, lbtc.address] as const;
 
-  return { deployer, depositor, other, treasury, wbtc, cbbtc, lbtc, tokenAddresses };
+  return { deployer, depositor, other, treasury, wbtc, cbbtc, lbtc, mrn, tokenAddresses };
 }
 
 type TokensFixture = Awaited<ReturnType<typeof deployTokensFixture>>;
@@ -134,6 +137,7 @@ function deployPoolWith(
     minFeeNum,
     nominalFeeNum,
     base.treasury.account.address,
+    base.mrn.address,
     base.deployer.account.address,
   ]);
 }
@@ -274,12 +278,30 @@ describe("Pool.constructor", async function () {
         );
       });
 
+      it("mrn lit bien _mrn, le septieme argument", async function () {
+        // Le 8e argument a rejoint le constructeur a I.4 : `address _mrn`, en
+        // SEPTIEME position, juste avant `_owner`. Le Pool le fige en immuable
+        // et s'en sert comme jeton de versement du loyer LP dans claimRent
+        // (Pool.sol). Ce test verifie le cablage : que c'est bien l'adresse
+        // MRN passee qui atterrit dans `mrn()`, et pas la tresorerie ou
+        // l'owner qui l'encadrent dans la signature.
+        const { pool, mrn } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
+
+        const storedMrn = await pool.read.mrn();
+        assert.equal(
+          storedMrn.toLowerCase(),
+          mrn.address.toLowerCase(),
+          `mrn() vaut ${storedMrn}, attendu ${mrn.address}`,
+        );
+      });
+
       it("owner() vaut _owner, l'adresse passee a Ownable", async function () {
         // L'owner n'est pas stocke par une ligne de Pool.sol mais par
         // Ownable(_owner) dans l'entete du constructeur (Pool.sol:66). Ce que
         // ce test verifie n'est donc pas le fonctionnement d'Ownable, hors
-        // perimetre, mais le cablage : que c'est bien le SEPTIEME argument
-        // qui y arrive, et pas msg.sender par defaut ni un autre des sept.
+        // perimetre, mais le cablage : que c'est bien le HUITIEME et dernier
+        // argument qui y arrive, et pas msg.sender par defaut ni un autre des
+        // huit (notamment pas l'adresse MRN qui le precede desormais).
         const { pool, deployer } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
 
         const owner = await pool.read.owner();

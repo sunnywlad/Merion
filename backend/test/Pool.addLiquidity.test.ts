@@ -50,8 +50,11 @@ async function deployTokensAndPool(feeNum: bigint) {
   const wbtc = await viem.deployContract("MockWrappedBTC", ["Wrapped BTC", "wBTC"]);
   const cbbtc = await viem.deployContract("MockWrappedBTC", ["Coinbase BTC", "cbBTC"]);
   const lbtc = await viem.deployContract("MockWrappedBTC", ["Lombard BTC", "lBTC"]);
+  const mrn = await viem.deployContract("MRN", []);
   const tokens = [wbtc, cbbtc, lbtc] as const;
 
+  // Le 7e argument du constructeur, juste avant _owner, est l'adresse MRN
+  // que le Pool utilise pour verser le loyer LP (I.4).
   const pool = await viem.deployContract("Pool", [
     [wbtc.address, cbbtc.address, lbtc.address],
     EPOCH_DURATION,
@@ -59,10 +62,11 @@ async function deployTokensAndPool(feeNum: bigint) {
     MIN_FEE_NUM,
     feeNum,
     treasury.account.address,
+    mrn.address,
     deployer.account.address,
   ]);
 
-  return { deployer, depositor, other, wbtc, cbbtc, lbtc, tokens, pool };
+  return { deployer, depositor, other, wbtc, cbbtc, lbtc, mrn, tokens, pool };
 }
 
 async function deployTokensAndPoolFixture() {

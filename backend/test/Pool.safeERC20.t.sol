@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {Pool} from "../contracts/Pool.sol";
 import {MockWrappedBTC} from "../contracts/MockWrappedBTC.sol";
 import {MockMisbehavingBTC} from "../contracts/MockMisbehavingBTC.sol";
+import {MRN} from "../contracts/MRN.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 // Couvre G1 : Pool utilise `SafeERC20` (using SafeERC20 for IERC20, Pool.sol:7)
@@ -27,6 +28,7 @@ contract PoolSafeERC20Test is Test {
   MockMisbehavingBTC public misbehaving;
   MockWrappedBTC public cbbtc;
   MockWrappedBTC public lbtc;
+  MRN public mrn;
   Pool public pool;
 
   uint256 constant SEED = 1000e8;
@@ -38,7 +40,8 @@ contract PoolSafeERC20Test is Test {
     lbtc = new MockWrappedBTC("Lombard BTC", "lBTC");
 
     address[3] memory tokens = [address(misbehaving), address(cbbtc), address(lbtc)];
-    pool = new Pool(tokens, 14400, 12, 1, 5, address(0xBEEF), address(this));
+    mrn = new MRN();
+    pool = new Pool(tokens, 14400, 12, 1, 5, address(0xBEEF), address(mrn), address(this));
 
     misbehaving.mint(address(this), MINT_HEADROOM);
     cbbtc.mint(address(this), MINT_HEADROOM);

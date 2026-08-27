@@ -49,7 +49,8 @@ aux trois autres : eclatee en trois, cette promesse devient invisible.
 
 Sur le constructeur, ce qui est interroge n'est plus une fonction mais le
 DEPLOIEMENT lui-meme : la transaction que l'equipe enverra en production, avec
-ses sept arguments passes a travers l'ABI generee, puis relus un a un par les
+ses huit arguments passes a travers l'ABI generee (le septieme, `_mrn`, ajoute
+a I.4 juste avant `_owner`), puis relus un a un par les
 memes getters publics que le front appelle. Un test Solidity ne peut pas
 vraiment poser cette question : `PoolTestBase.sol` fige ses arguments une fois
 pour toutes, et les deux chemins de revert du constructeur sont derriere lui
@@ -138,13 +139,21 @@ Le panier est fige a trois wrappers de BTC a cibles EGALES, un tiers chacun :
 WBTC en indice 0, cbBTC en indice 1, LBTC en indice 2. Il n'y a plus ni
 quatrieme jeton ni poids cibles differencies.
 
-La suite compte 370 tests verts : 262 en TypeScript (11 fichiers `test/*.test.ts`)
-et 108 en Solidity (10 fichiers `test/*.t.sol`, 5 fichiers `contracts/*.t.sol`),
-plus 3 tests marques "skipped" (la migration FEE_DEN documentee en IV de
-`Pool.feeSplit.t.sol` : la constante `FEE_DEN` ne peut pas etre modifiee
-sans toucher `Pool.sol`, hors perimetre de cette tache ; le test BID_SILENCE
-de `Auction.test.ts` : `BID_SILENCE == 0` est la valeur livree a I.3, le gate
-A4 est roadmap).
+La suite compte, hors I.4, 371 tests verts : 263 en TypeScript (11 fichiers
+`test/*.test.ts`) et 108 en Solidity (10 fichiers `test/*.t.sol`, 5 fichiers
+`contracts/*.t.sol`), plus 3 tests marques "skipped" (la migration FEE_DEN
+documentee en IV de `Pool.feeSplit.t.sol` : la constante `FEE_DEN` ne peut pas
+etre modifiee sans toucher `Pool.sol`, hors perimetre de cette tache ; le test
+BID_SILENCE de `Auction.test.ts` : `BID_SILENCE == 0` est la valeur livree a
+I.3, le gate A4 est roadmap).
+
+L'etape I.4 ajoute deux fichiers, `test/Pool.rent.test.ts` (25 tests) et
+`test/Pool.rent.t.sol` (5 tests). Sur ces 30, **8 sont verts aujourd'hui** et
+**22 rouges**, ces derniers en attente d'un correctif d'echelle sur le code
+I.4 : voir la section "Etape I.4" plus bas, qui nomme les deux defauts
+suspectes et l'`it` qui epingle chacun. Les attendus rouges sont derives de la
+formule d'I.4 (build-auction.md 4.4), pas d'une sortie observee : ils
+passeront au vert une fois l'echelle de l'accumulateur corrigee.
 
 ## Structure de la suite
 
@@ -421,6 +430,7 @@ test/Pool.setFee.t.sol           fuzz des cinq axes de setFee (bande, appelant, 
 test/Pool.depeg.t.sol            les bandes face a une decote reelle d'un wrapper
 test/Pool.invariant.t.sol        handler + quatre invariants + un test cible
 test/Pool.feeSplit.t.sol         bornes croisees + invariant I1 de conservation des frais (I.2)
+test/Pool.rent.t.sol             formule de l'accumulateur + ordre de _update sur mint/burn/transfert (I.4)
 contracts/Pool.gas.t.sol         mesures de gaz (rapport dans GAS.md)
 contracts/Pool.t.sol             decimals()
 contracts/MockWrappedBTC.t.sol   le mock ERC20Capped du panier
@@ -1516,6 +1526,102 @@ conservation stricte I2. Les sections II et IV sur la migration
 `FEE_DEN` sont documentees en FIXME et marquees `vm.skip(true)` :
 `FEE_DEN` est une constante, et le perimetre I.2 n'inclut pas sa
 parameterisation.
+
+## Etape I.4 — le loyer atteint les LP
+
+L'etape I.4 (plan 8c, build-auction.md 5.4 et 4.4, fiche I.4) branche le
+loyer LP sur `Pool.sol` : `notifyRent(uint256)` reserve a l'`auction`
+(erreur `NotAuction`), `claimRent()` en tirage seul (erreur `ZeroRentOwed`),
+un override `_update` qui regle l'accumulateur des deux cotes a chaque mint,
+burn et transfert, les events `RentNotified` / `RentClaimed`, et l'etat
+public `accPerShare` / `rentRate` / `rentEnd` / `rentLastUpdate` /
+`rentLeftOver` / `rentPending` / `rentDebt`. Le loyer est verse **en MRN**
+(echelle 18 decimales) alors que les parts LP portent 8 decimales, l'echelle
+de reconciliation etant `1e18` partout.
+
+Deux fichiers nouveaux. `test/Pool.rent.test.ts` porte le parcours reel : un
+LP approuve trois ERC-20 et depose, une EOA branchee comme `auction` par
+`setAuction` transfere du MRN au Pool puis appelle `notifyRent` (on
+interroge le Pool comme le ferait un composeur, l'enchere reelle est testee
+dans `Auction.test.ts`), le temps avance par `networkHelpers.time`, le LP
+tire son loyer. `test/Pool.rent.t.sol` isole la MECANIQUE de l'accumulateur
+avec `vm.warp` a la seconde : la formule de croissance de `accPerShare` par
+tranche, et l'ORDRE de `_update` (choke point OZ v5, build-auction.md E5) sur
+un mint, un burn et un transfert isoles.
+
+Ce que chaque groupe de `test/Pool.rent.test.ts` garde :
+
+- **I] notifyRent — controle d'acces et pose du stream.** A) tout appelant
+  autre que l'`auction` (l'owner du Pool inclus) revert `NotAuction`. B) au
+  premier `notifyRent`, `RentNotified` porte `(amount, rate, end)` avec
+  `rate = amount * 1e18 / EPOCH_DURATION` et `end = now + EPOCH_DURATION`,
+  derives de la formule. C) cas E4 : `notifyRent` alors que
+  `totalSupply() <= MINIMUM_LIQUIDITY` empile le montant dans `rentLeftOver`
+  sans toucher l'accumulateur ni revert, et un `notifyRent` ulterieur avec
+  des LP vivants replie ce `rentLeftOver` dans le nouveau `rentRate`.
+- **II] claimRent — le tirage.** A) LP present tout le mandat : ~70 % du prix
+  de cloture moins le poussier des parts mortes (test 28). B) LP entre aux
+  9/10 du mandat : ~10 % (test 29). C) `claimRent` sans parts ni
+  `rentPending` revert `ZeroRentOwed`. D) claim deux fois : le second revert
+  `ZeroRentOwed` (test 31).
+- **III] `_update` — la recompense va a qui detenait pendant que ca courait.**
+  A) transfert en plein stream : le sender garde l'accru de la periode
+  detenue, le destinataire n'accumule que sur la periode posterieure
+  (test 30). B) burn de toutes les parts en plein stream puis `claimRent`
+  (E5) : l'accru detenu est fige dans `rentPending`, ni vole ni perdu. C)
+  mint : un LP arrive apres un `notifyRent` n'a **aucune** creance sur la
+  rent d'avant son arrivee (`rentPending` nul, `rentDebt` cale sur
+  l'accumulateur courant), teste a mi-stream et apres la fin du stream.
+- **IV] Timing du reglement — rien n'est bloque (test 32, VERSION FICHE).**
+  A) `notifyRent` pendant le silence, B) a mi-mandat, C) deux `notifyRent`
+  rapproches : dans les trois cas tout finit distribuable et rien n'est
+  immobilise au-dela du poussier mort. La fiche I.4 renvoyant l'ancrage
+  tenure en roadmap, la section **n'exige pas** la distribution "sur la
+  moitie restante", seulement "rien n'est bloque". Le repli de la traine
+  dans `rentLeftOver` au second `notifyRent` est verifie en pur controle
+  d'etat.
+- **V] Solvabilite (corollaire I.4 de l'invariant I5).** A) apres une epoch
+  de touches frequentes et plusieurs claims, la somme reclamee reste
+  `<= amount` notifie et aucun `claimRent` ne revert pour solde insuffisant.
+  B) le solde MRN du Pool couvre a chaque instant toute creance encore
+  reclamable.
+- **GREEN de la fiche.** Un acheteur de parts un bloc avant le reglement ne
+  touche qu'une lamelle proportionnelle au temps detenu (pas un forfait), et
+  une adresse qui a tenu tout le mandat puis sort de sa position avant de
+  reclamer garde tout son accru.
+
+Ce que garde `test/Pool.rent.t.sol` : la croissance de `accPerShare` par
+tranche suit `dt * rentRate / totalSupply()` (echelle `1e18` unique), la
+somme de deux tranches egale le stream entier, et `_update` capture l'accru
+du sender sur son solde PRE-transfert tout en n'accordant au receiver (mint
+comme transfert) AUCUN accru anterieur a l'instant ou il recoit les parts.
+
+**Etat rouge, et les deux defauts d'echelle suspectes.** 22 des 30 tests
+d'I.4 sont rouges. Les attendus sont derives de la formule (total distribue
+sur un mandat entier = `rentRate * EPOCH_DURATION / 1e18 = amount`, reparti
+au prorata des parts et du temps), jamais d'une sortie observee ; ils
+passeront au vert quand l'echelle sera recollee. Les deux points suspectes :
+
+1. **`_updateRent` (`Pool.sol`) : un facteur `1e18` de trop.** La ligne
+   `accPerShare += dt * rentRate * 1e18 / supply` re-echelonne `rentRate`,
+   qui porte DEJA `1e18` par sa propre formule (`(amount + rentLeftOver) *
+   1e18 / EPOCH_DURATION`) et par le repli de la traine
+   (`rentRate * (rentEnd - now) / 1e18`). `claimRent` ne retire qu'un `1e18`
+   (`balanceOf(x) * accPerShare / 1e18`), donc tout tirage ressort `1e18`
+   fois trop grand et `claimRent` revert faute de MRN au Pool. La forme
+   coherente est `accPerShare += dt * rentRate / supply`. Epingle par
+   `test_UpdateRent_AccumulatorGrowsByExactlyDtRateOverSupply`
+   (`Pool.rent.t.sol`) et par toute la section II de `Pool.rent.test.ts`.
+2. **`_update` (`Pool.sol`) : capture du receiver sur le solde POST-transfert.**
+   L'accru du destinataire est capture avec `toBalance = balanceOf(to)` LU
+   APRES `super._update`, donc sur le solde qui inclut deja les parts
+   recues. Pour un destinataire neuf, cela credite `value * accPerShare /
+   1e18` de loyer deja acquis au sender a l'etape (2) : le meme accru est
+   paye deux fois. La capture du receiver doit se faire sur son solde
+   PRE-transfert (symetrique de l'etape (2) cote sender), la dette seule
+   etant recalee sur le solde post-transfert a l'etape (5). Epingle par
+   `test_UpdateOnTransfer_...` et `test_UpdateOnMint_...`
+   (`Pool.rent.t.sol`), et par III.A / III.C de `Pool.rent.test.ts`.
 
 ## Couche Solidity : fuzz, invariants, forge d'etat
 

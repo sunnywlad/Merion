@@ -2,6 +2,7 @@ import { buildModule } from "@nomicfoundation/hardhat-ignition/modules";
 import WBTCModule from "./wbtc.js";
 import CBBTCModule from "./cbbtc.js";
 import LBTCModule from "./lbtc.js";
+import MRNModule from "./mrn.js";
 
 const EPOCH_DURATION = 14400;
 const PRIORITY_WINDOW = 12;
@@ -15,6 +16,7 @@ if (NOMINAL_FEE_NUM < MIN_FEE_NUM) {
 
 export default buildModule("PoolModule", (m) => {
   const tokens = [m.useModule(WBTCModule).wbtc, m.useModule(CBBTCModule).cbbtc, m.useModule(LBTCModule).lbtc];
+  const { mrn } = m.useModule(MRNModule);
 
   const pool = m.contract("Pool", [
     tokens,
@@ -23,6 +25,7 @@ export default buildModule("PoolModule", (m) => {
     MIN_FEE_NUM,
     NOMINAL_FEE_NUM,
     TREASURY,
+    mrn,
     m.getAccount(0),
   ]);
 

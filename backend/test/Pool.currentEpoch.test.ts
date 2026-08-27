@@ -78,8 +78,11 @@ async function deployTokensAndPoolFixture() {
   const wbtc = await viem.deployContract("MockWrappedBTC", ["Wrapped BTC", "wBTC"]);
   const cbbtc = await viem.deployContract("MockWrappedBTC", ["Coinbase BTC", "cbBTC"]);
   const lbtc = await viem.deployContract("MockWrappedBTC", ["Lombard BTC", "lBTC"]);
+  const mrn = await viem.deployContract("MRN", []);
   const tokens = [wbtc, cbbtc, lbtc] as const;
 
+  // Le 7e argument du constructeur, juste avant _owner, est l'adresse MRN
+  // que le Pool utilise pour verser le loyer LP (I.4).
   const pool = await viem.deployContract("Pool", [
     [wbtc.address, cbbtc.address, lbtc.address],
     EPOCH_DURATION,
@@ -87,6 +90,7 @@ async function deployTokensAndPoolFixture() {
     MIN_FEE_NUM,
     DEFAULT_FEE_NUM,
     treasury.account.address,
+    mrn.address,
     deployer.account.address,
   ]);
 
@@ -95,7 +99,7 @@ async function deployTokensAndPoolFixture() {
   // recalculer reviendrait a reimplementer la ligne qu'on teste.
   const genesis = await pool.read.GENESIS();
 
-  return { deployer, depositor, other, tokens, wbtc, cbbtc, lbtc, pool, genesis };
+  return { deployer, depositor, other, tokens, wbtc, cbbtc, lbtc, mrn, pool, genesis };
 }
 
 type PoolFixture = Awaited<ReturnType<typeof deployTokensAndPoolFixture>>;

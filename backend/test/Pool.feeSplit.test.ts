@@ -79,8 +79,11 @@ async function deployTokensAndPoolFixture() {
   const wbtc = await viem.deployContract("MockWrappedBTC", ["Wrapped BTC", "wBTC"]);
   const cbbtc = await viem.deployContract("MockWrappedBTC", ["Coinbase BTC", "cbBTC"]);
   const lbtc = await viem.deployContract("MockWrappedBTC", ["Lombard BTC", "lBTC"]);
+  const mrn = await viem.deployContract("MRN", []);
   const tokens = [wbtc, cbbtc, lbtc] as const;
 
+  // Le 7e argument du constructeur, juste avant _owner, est l'adresse MRN
+  // que le Pool utilise pour verser le loyer LP (I.4).
   const pool = await viem.deployContract("Pool", [
     [wbtc.address, cbbtc.address, lbtc.address],
     EPOCH_DURATION,
@@ -88,6 +91,7 @@ async function deployTokensAndPoolFixture() {
     MIN_FEE_NUM,
     NOMINAL_FEE_NUM,
     treasury.account.address,
+    mrn.address,
     deployer.account.address,
   ]);
 
@@ -95,7 +99,7 @@ async function deployTokensAndPoolFixture() {
   const deploymentBlock = await publicClient.getBlock();
   const genesis = deploymentBlock.timestamp;
 
-  return { deployer, manager, other, wbtc, cbbtc, lbtc, tokens, pool, genesis, treasury };
+  return { deployer, manager, other, wbtc, cbbtc, lbtc, mrn, tokens, pool, genesis, treasury };
 }
 
 async function deployTokensAndPoolWithManager() {

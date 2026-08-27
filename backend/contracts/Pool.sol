@@ -47,6 +47,14 @@ contract Pool is ERC20, Ownable, Pausable {
   uint256 public immutable EPOCH_DURATION;
   uint256 public immutable PRIORITY_WINDOW;
   address public immutable treasury;
+  // I.4 — MRN que le Pool doit connaitre pour transferer le loyer
+  // accumule en MRN aux LP via `claimRent`. L'Auction a deja sa
+  // propre reference (en argument de constructeur) ; le Pool
+  // prend la sienne en immuable de deploiement, ce qui l'expose
+  // a un changement de token MRN entre Pool et Auction seulement
+  // si le deploiement est incoherent — c'est une garde de plus
+  // contre un couplage mal assemble.
+  address public immutable mrn;
 
   mapping(uint256 epoch => address) public managerOf;
   address public auction;
@@ -58,6 +66,20 @@ contract Pool is ERC20, Ownable, Pausable {
   // chaque tirage : remise a zero AVANT le transfert.
   mapping(address manager => uint256[3]) public feesOwed;
   uint256[3] public protocolFeesOwed;
+
+  // I.4 — loyer LP : un accumulateur `accPerShare` echelonne par 1e18,
+  // une dette par adresse, et un stream lineaire sur `EPOCH_DURATION`
+  // a partir de chaque `notifyRent`. La regle Synthetix/MasterChef tient :
+  // `pending = balance * accPerShare / 1e18 - rentDebt`. La mise a jour
+  // est paresseuse, declenchee par chaque touch (`_update`, `notifyRent`,
+  // `claimRent`), jamais par une boucle sur les LP.
+  uint256 public accPerShare;
+  uint256 public rentRate;
+  uint256 public rentEnd;
+  uint256 public rentLastUpdate;
+  uint256 public rentLeftOver;
+  mapping(address => uint256) public rentPending;
+  mapping(address => uint256) public rentDebt;
 
   uint256 constant public MINIMUM_LIQUIDITY = 1000;
 
@@ -87,12 +109,20 @@ contract Pool is ERC20, Ownable, Pausable {
   // BadSlippage parce que la cause n'est pas un seuil rate mais une
   // quantite nulle.
   error ZeroFeesOwed();
+  // I.4 — notifyRent par un non-auction, claimRent sur un registre vide.
+  error NotAuction();
+  error ZeroRentOwed();
 
   event FeeSet(uint256 indexed epoch, address indexed manager, uint256 oldFee, uint256 newFee);
   event AddedLiquidity(address indexed provider, uint256[3] amountsIn, uint256 mintedShares);
   event RemovedLiquidity(address indexed provider, uint256[3] amountsOut, uint256 burnedShares);
   event Swapped(address indexed swapper, uint256 indexed indexIn, uint256 amountIn, uint256 indexed indexOut, uint256 amountOut);
   event ManagerSet(uint256 indexed epoch, address indexed manager);
+  // I.4 — loyer LP : notification d'un nouveau stream de rent, avec
+  // montant, taux par seconde (echelle 1e18) et timestamp de fin.
+  event RentNotified(uint256 amount, uint256 rate, uint256 end);
+  // I.4 — tirage du loyer LP : quand un LP reclame sa part.
+  event RentClaimed(address indexed claimant, uint256 amount);
 
   constructor(
     address[3] memory _tokens,
@@ -101,6 +131,7 @@ contract Pool is ERC20, Ownable, Pausable {
     uint256 _minFeeNum,
     uint256 _nominalFeeNum,
     address _treasury,
+    address _mrn,
     address _owner
   ) ERC20("MerionLP", "MRNLP") Ownable(_owner) {
     GENESIS = block.timestamp;
@@ -114,6 +145,7 @@ contract Pool is ERC20, Ownable, Pausable {
     MIN_FEE_NUM = _minFeeNum;
     NOMINAL_FEE_NUM = _nominalFeeNum;
     treasury = _treasury;
+    mrn = _mrn;
 
     feeNum = uint16(_nominalFeeNum);
 
@@ -387,22 +419,165 @@ contract Pool is ERC20, Ownable, Pausable {
     IERC20(indexToAddress(_tokenIndex)).safeTransfer(treasury, owed);
   }
 
-  // I.3 — stub d'attente pour I.4. I.4 remplacera ce corps par
-  // l'accumulateur streame lineairement de la rent LP (build-auction.md 5.4) :
-  // un appel par l'encherisseur, `accPerShare += rate * dt * 1e18 /
-  // totalSupply()`, avec `rate = (amount + leftover) / EPOCH_DURATION`.
+  // I.4 — helper interne : flush l'accumulateur jusqu'a min(now, rentEnd).
+  // Aucune boucle sur les LP, c'est une multiplication et une division.
+  // L'early-return coupe court avant le premier `notifyRent` (rentEnd == 0
+  // et rentLastUpdate == 0) puis une fois le stream epuise (rentLastUpdate
+  // a rattrape rentEnd) : plus de SSTORE gaspille a chaque transfert.
+  // Chaque appel accumule sur `min(now, rentEnd) - rentLastUpdate`, donc
+  // toute la rent d'une epoch entre dans `accPerShare` meme si aucun
+  // `_update` n'a lieu entre `notifyRent` et la fin du stream.
   //
-  // Le stub doit accepter TOUT appelant en attendant I.4, parce qu'a I.3
-  // `auction` n'est pas encore branchee sur le pool et le seul chemin qui
-  // appelle est le test de `settle()` dans Auction.t.sol, et la negation
-  // restrictive `msg.sender == address(0)` casserait ce test. La
-  // restriction `auction-only` est l'un des apports de I.4 et pas un
-  // presuppose de I.3.
+  // ECHELLE : `rentRate` porte deja le facteur 1e18 (pose par `notifyRent`,
+  // consomme par `/ 1e18` dans le repli de traine et dans `claimRent`).
+  // L'increment est donc `dt * rentRate / supply`, PAS `* 1e18` de plus :
+  // `accPerShare` = loyer par part x 1e18, et `claimRent` retire ce seul
+  // 1e18 par `balanceOf(x) * accPerShare / 1e18`.
   //
-  // Aucun storage ici : la rent et l'accumulateur arrivent en I.4.
-  // FIXME: I.4 stub. Sera remplace par l'accumulateur streame lineairement.
-  function notifyRent(uint256 /* _amount */) external {
-    // Le corps est vide a dessein. Voir commentaire ci-dessus.
+  // Sous-cas supply nul ou faible pendant une tranche du stream. Si
+  // `supply == 0` (tous les LP sortis), la tranche n'est pas accumulee ;
+  // `rentLastUpdate` avance quand meme jusqu'a `end`, donc la tranche
+  // sautee n'est jamais reanimee et la rent correspondante reste en solde
+  // MRN du Pool, non reclamable. Si `supply` est faible sans etre nul
+  // (seules les parts mortes MINIMUM_LIQUIDITY restent), la tranche
+  // accumule contre un `accPerShare` gonfle : la part correspondante n'est
+  // reclamable que par 0x...dEaD et reste donc immobilisee en solde MRN du
+  // Pool. Degradation acceptee : pas de repli vers `rentLeftOver`, pas de
+  // solvabilite en jeu (le Pool ne doit jamais plus qu'il ne detient).
+  function _updateRent() internal {
+    if (rentLastUpdate >= rentEnd) return; // stream fini ou jamais demarre
+    uint256 end = block.timestamp < rentEnd ? block.timestamp : rentEnd;
+    uint256 dt = end - rentLastUpdate;
+    uint256 supply = totalSupply();
+    if (dt > 0 && rentRate > 0 && supply > 0) {
+      accPerShare += dt * rentRate / supply;
+    }
+    rentLastUpdate = end;
+  }
+
+  // I.4 — override du choke point d'OZ v5 (5.6.1) : mint, burn et transfer
+  // passent tous par `_update`. L'ordre (1) → (5) est obligatoire :
+  // l'accru en attente des DEUX parties se capture sur leur solde
+  // PRE-transfert (etapes 2 et 4), puis leurs dettes se recalent sur le
+  // solde POST-transfert (etape 5). Chacun ne touche que le loyer couru
+  // pendant qu'il detenait ses parts : « a reward belongs to whoever held
+  // the shares WHILE it accrued, not to whoever holds them at claim time ».
+  function _update(address from, address to, uint256 value) internal virtual override {
+    // (1) Flush l'accumulateur jusqu'a maintenant. Cote sender et
+    // receiver voient la meme valeur d'`accPerShare`.
+    _updateRent();
+    // `_updateRent` est le seul point qui bouge `accPerShare` sur ce
+    // chemin (`super._update` ne le touche pas) : une seule lecture,
+    // reutilisee en (2), (4) et (5).
+    uint256 acc = accPerShare;
+
+    // (2) Capturer le loyer en attente du sender (solde pre-transfert).
+    if (from != address(0)) {
+      uint256 fromBalance = balanceOf(from);
+      uint256 pending = fromBalance * acc / 1e18;
+      if (pending > rentDebt[from]) {
+        rentPending[from] += pending - rentDebt[from];
+      }
+    }
+
+    // (3) Mise a jour des soldes (OZ v5).
+    super._update(from, to, value);
+
+    // (4) Capturer le loyer en attente du receiver sur son solde
+    // PRE-transfert : `balanceOf(to)` est deja post-`super._update`, le
+    // solde d'avant vaut `toBalance - value` (le receiver gagne exactement
+    // `value`, mint comme transfert). Le crediter sur le solde post
+    // compterait deux fois l'accru des `value` parts, deja porte au sender
+    // en (2). Symetrique de l'etape (2). Pas de capture si `to == from`.
+    uint256 toBalance;
+    if (to != address(0) && to != from) {
+      toBalance = balanceOf(to);
+      uint256 pending = (toBalance - value) * acc / 1e18;
+      if (pending > rentDebt[to]) {
+        rentPending[to] += pending - rentDebt[to];
+      }
+    }
+
+    // (5) Reinitialisation des dettes sur les soldes post-transfert. Le
+    // sender a maintenant `pre - value` parts, le receiver `pre + value`.
+    // Leur futur loyer cumulera a partir de `balance * accPerShare /
+    // 1e18` qui vaut leur nouveau solde * l'accumulateur courant.
+    // `toBalance` est deja le solde post-transfert du receiver, capture
+    // en (4) sous la meme condition : pas de second SLOAD cote receiver.
+    if (from != address(0)) {
+      rentDebt[from] = balanceOf(from) * acc / 1e18;
+    }
+    if (to != address(0) && to != from) {
+      rentDebt[to] = toBalance * acc / 1e18;
+    }
+  }
+
+  // I.4 — point d'entree du loyer. Reserve a l'auction (setAuction
+  // est one-shot, donc personne d'autre ne peut l'appeler). Flush le
+  // stream courant, puis pose le nouveau rate et le nouvel end.
+  //
+  // Cas E4 (premier mandat, totalSupply == MINIMUM_LIQUIDITY, soit
+  // seules les parts mortes existent) : on accumule le rent dans
+  // `rentLeftOver` et on ne modifie pas l'accumulateur. Le residu
+  // sera distribuable a un futur LP, mais la part acquise aux parts
+  // mortes de 0x...dEaD reste non reclamable — c'est la reponse
+  // honnete a « ou va la poussiere ? » documentee dans
+  // build-auction.md 4.4 (1).
+  function notifyRent(uint256 amount) external {
+    require(msg.sender == auction, NotAuction());
+    _updateRent();
+    uint256 supply = totalSupply();
+    if (supply <= MINIMUM_LIQUIDITY) {
+      // Seules les parts mortes 0x...dEaD subsistent (ou aucune part) :
+      // dEaD ne reclame jamais, la rent ne peut aller a personne. Elle
+      // s'empile dans `rentLeftOver`, repliee integralement par le prochain
+      // `notifyRent` fait avec `totalSupply() > MINIMUM_LIQUIDITY` et
+      // distribuee aux LP alors presents, jamais rendue recouvrable par un
+      // admin (build-auction.md E4). Valeur differee, pas perdue : la voie
+      // de retour est le fonctionnement nominal du protocole.
+      rentLeftOver += amount;
+      return;
+    }
+    // Re-base du stream : la traine non encore distribuee du stream courant
+    // (`rentRate * temps restant`, echelle 1e18) est reversee dans
+    // `rentLeftOver` avant l'ecrasement de `rentRate`, sinon elle
+    // disparaitrait en silence. `_updateRent()` a deja fige l'accru jusqu'a
+    // maintenant, donc la periode ecoulee n'est pas comptee deux fois. Si
+    // le stream courant est deja expire la traine vaut zero et seul le
+    // `rentLeftOver` deja present (cycle supply bas anterieur) compte, ce
+    // que la formule ci-dessous gere sans branche supplementaire.
+    if (rentEnd > block.timestamp) {
+      rentLeftOver += rentRate * (rentEnd - block.timestamp) / 1e18;
+    }
+    rentRate = (amount + rentLeftOver) * 1e18 / EPOCH_DURATION;
+    rentLeftOver = 0;
+    rentEnd = block.timestamp + EPOCH_DURATION;
+    rentLastUpdate = block.timestamp;
+    emit RentNotified(amount, rentRate, rentEnd);
+  }
+
+  // I.4 — tirage du loyer LP, pull-only. Flush l'accumulateur, puis ajoute
+  // l'accru vivant du claimant sur son solde courant : un LP passif qui ne
+  // bouge jamais ses parts n'a rien dans `rentPending` (alimente seulement
+  // par `_update`), il faut donc lire `balanceOf * accPerShare / 1e18 -
+  // rentDebt` ici aussi. On y ajoute le `rentPending` deja capture par les
+  // transferts passes, puis on refixe la dette sur l'accru courant. CEI
+  // strict : toutes les ecritures d'etat (`rentDebt`, `rentPending`)
+  // precedent le transfert, un transfert qui revert ne donne pas de
+  // double claim.
+  function claimRent() external {
+    _updateRent();
+    uint256 bal = balanceOf(msg.sender);
+    uint256 accrued = bal * accPerShare / 1e18;
+    uint256 owed = rentPending[msg.sender];
+    if (accrued > rentDebt[msg.sender]) {
+      owed += accrued - rentDebt[msg.sender];
+    }
+    rentDebt[msg.sender] = accrued;
+    rentPending[msg.sender] = 0;
+    require(owed > 0, ZeroRentOwed());
+    IERC20(mrn).safeTransfer(msg.sender, owed);
+    emit RentClaimed(msg.sender, owed);
   }
 
 }
