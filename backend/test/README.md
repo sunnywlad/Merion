@@ -138,11 +138,13 @@ Le panier est fige a trois wrappers de BTC a cibles EGALES, un tiers chacun :
 WBTC en indice 0, cbBTC en indice 1, LBTC en indice 2. Il n'y a plus ni
 quatrieme jeton ni poids cibles differencies.
 
-La suite compte 344 tests verts : 245 en TypeScript (10 fichiers `test/*.test.ts`)
-et 99 en Solidity (10 fichiers `test/*.t.sol`, 4 fichiers `contracts/*.t.sol`),
-plus 2 tests marques "skipped" (la migration FEE_DEN documentee en IV de
+La suite compte 370 tests verts : 262 en TypeScript (11 fichiers `test/*.test.ts`)
+et 108 en Solidity (10 fichiers `test/*.t.sol`, 5 fichiers `contracts/*.t.sol`),
+plus 3 tests marques "skipped" (la migration FEE_DEN documentee en IV de
 `Pool.feeSplit.t.sol` : la constante `FEE_DEN` ne peut pas etre modifiee
-sans toucher `Pool.sol`, hors perimetre de cette tache).
+sans toucher `Pool.sol`, hors perimetre de cette tache ; le test BID_SILENCE
+de `Auction.test.ts` : `BID_SILENCE == 0` est la valeur livree a I.3, le gate
+A4 est roadmap).
 
 ## Structure de la suite
 
@@ -334,6 +336,78 @@ Pool.setFee
   VI] La pause ne bloque pas setFee
 ```
 
+`Auction.test.ts` (I.3, etape 8b du plan) :
+
+```
+Auction
+  I] placeBid — la fenetre et le seuil
+    A) Premiere mise sous MIN_OPENING_BID revert BidTooLow (test 18)
+    B) Hausse sous +10 % revert, exactement +10 % passe (test 19)
+    C) Mise en dehors de la fenetre revert WindowClosed (test 20)
+    D) Mise pendant BID_SILENCE revert (test 21, skip : BID_SILENCE == 0 a I.3)
+  II] refunds — credit et tirage
+    A) L'encherisseur depasse est credite, pas transfere (test 22)
+    B) Un contrat qui revert a la reception peut etre depasse (test 23)
+    C) Le meilleur encherisseur est manager-designate (test 24)
+  III] settle — brule, transfere, appelle notifyRent, emet l'evenement
+    A) settle brule 30 %, envoie 70 % au pool, second settle est un no-op (test 25)
+    B) settle par une adresse aleatoire passe (test 26)
+    C) Mandat sans encherisseur : settle revert et pool reste tradable (test 27)
+  IV] withdrawRefund — CEI et pull-only
+    A) Un ancien encherisseur tire son refund
+    B) Un appel sans refund disponible revert NoBidToRefund
+    C) Un autre encherisseur ne peut pas tirer le refund du premier
+  V] Reinitialisation par comparaison (build-auction.md 4.5)
+  VI] windowOpen et closesAt — vues
+```
+
+`contracts/Auction.t.sol` (couche Solidity d'I.3) :
+
+```
+AuctionEpochResetTest            reinit par comparaison, refunds preserves
+AuctionManagerCouplingTest       couplage Auction ↔ Pool, ManagerAlreadySet
+AuctionSettleInvariantTest       partage 70/30, idempotence, evenement Settled
+AuctionWithdrawRefundCEITest     CEI de withdrawRefund
+```
+
+Trois points d'I.3, documente la ou il faut les chercher.
+
+1. `HIGH_BID_BPS` est fixe a `11000` dans `Auction.sol`, pas `1100` comme
+   ecrit dans le brief I.3. `1100 / 10000 = 0.11 = 11 %` de highBid, ce
+   qui n'est PAS une hausse de +10 %, c'est un effondrement. La regle
+   annoncee ("+10 % raise") exige `1.10 * highBid`, soit `11000 / 10000`
+   ou `1100 / 1000`. La combinaison `1100` + `10000` du brief est un
+   typo ; la valeur corrigee `11000` donne la regle que le test 19
+   epingle, et la constante est documentee en commentaire au-dessus de
+   sa declaration.
+
+2. `setManager` est appele UNE SEULE FOIS par auction, au moment du
+   `settle()`, avec le `highBidder` du moment — c'est-a-dire le DERNIER
+   enchérisseur de l'enchere au moment ou elle bascule. La garde
+   `managerOf[epoch] != address(0)` de Pool.setManager (I.1) tient : un
+   second appel reverterait `ManagerAlreadySet`, et l'Auction ne le
+   tente jamais. `placeBid` ne touche pas a `pool.setManager` : pendant
+   toute la duree de l'enchere, `pool.managerOf(epoch) == address(0)`,
+   et le front lit `auction.highBidder()` pour afficher le meneur
+   courant. Le design anterieur nommait le PREMIER enchérisseur (un
+   acteur hostile pouvait poser la mise minimale et devenir manager
+   avant qu'un meilleur enchérisseur ne le depasse) ; le design
+   corrige tient la regle R3 (l'office est pris par le passage du
+   temps) et fixe la nomination au DERNIER enchérisseur, qui est
+   forcement le meilleur. Le commentaire d'entete d'`Auction.sol`
+   (point 3) tient la justification complete ; test 24 verifie ce
+   timing en deux temps — `managerOf(epoch) == address(0)` apres un
+   `placeBid`, et `managerOf(epoch) == B` apres `placeBid(A)` +
+   `placeBid(B)` + `settle()`.
+
+3. Le stub `notifyRent(uint256)` ajoute a `Pool.sol` a I.3 est
+   intentionnellement vide : il accepte tout appelant et ne fait rien,
+   pour ne pas casser le `settle()` de l'Auction (qui appelle
+   `pool.notifyRent(lpAmount)`). I.4 remplacera ce corps par
+   l'accumulateur streame lineairement de la rent LP
+   (build-auction.md 5.4). Le stub est documente en commentaire et le
+   FIXME preserve pour le grep.
+
 La couche Solidity, elle, se lit par fichier plutot que par arborescence :
 
 ```
@@ -350,7 +424,8 @@ test/Pool.feeSplit.t.sol         bornes croisees + invariant I1 de conservation 
 contracts/Pool.gas.t.sol         mesures de gaz (rapport dans GAS.md)
 contracts/Pool.t.sol             decimals()
 contracts/MockWrappedBTC.t.sol   le mock ERC20Capped du panier
-contracts/MRN.t.sol              le jeton natif MRN
+contracts/MRN.t.sol              le jeton natif MRN (migre a ERC20Burnable a I.3)
+contracts/Auction.t.sol          Auction, couche Solidity I.3
 ```
 
 L'amorcage est ecrit en dur, et a montants EGAUX. Sur pool vide,

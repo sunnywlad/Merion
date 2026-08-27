@@ -387,4 +387,22 @@ contract Pool is ERC20, Ownable, Pausable {
     IERC20(indexToAddress(_tokenIndex)).safeTransfer(treasury, owed);
   }
 
+  // I.3 — stub d'attente pour I.4. I.4 remplacera ce corps par
+  // l'accumulateur streame lineairement de la rent LP (build-auction.md 5.4) :
+  // un appel par l'encherisseur, `accPerShare += rate * dt * 1e18 /
+  // totalSupply()`, avec `rate = (amount + leftover) / EPOCH_DURATION`.
+  //
+  // Le stub doit accepter TOUT appelant en attendant I.4, parce qu'a I.3
+  // `auction` n'est pas encore branchee sur le pool et le seul chemin qui
+  // appelle est le test de `settle()` dans Auction.t.sol, et la negation
+  // restrictive `msg.sender == address(0)` casserait ce test. La
+  // restriction `auction-only` est l'un des apports de I.4 et pas un
+  // presuppose de I.3.
+  //
+  // Aucun storage ici : la rent et l'accumulateur arrivent en I.4.
+  // FIXME: I.4 stub. Sera remplace par l'accumulateur streame lineairement.
+  function notifyRent(uint256 /* _amount */) external {
+    // Le corps est vide a dessein. Voir commentaire ci-dessus.
+  }
+
 }
