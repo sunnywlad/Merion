@@ -5,6 +5,7 @@ import Faucet from '@/components/Faucet';
 import AddLiquidity from '@/components/AddLiquidity';
 import RemoveLiquidity from '@/components/RemoveLiquidity';
 import Swap from '@/components/Swap';
+import MandatePanel from '@/components/MandatePanel';
 
 export default function Home() {
   return (
@@ -12,6 +13,9 @@ export default function Home() {
       {/* Lecture seule : aucune action ne part d'ici, d'où l'absence de Panel. */}
       <aside className='shrink-0 p-4 border-b lg:w-72 lg:border-b-0 lg:border-r'>
         <Reserves />
+        <div className='mt-6 pt-6 border-t'>
+          <MandatePanel />
+        </div>
         <div className='mt-6 pt-6 border-t'>
           <Connection>
             <Balances />

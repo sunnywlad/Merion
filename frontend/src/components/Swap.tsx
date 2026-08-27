@@ -1,7 +1,7 @@
 'use client';
 
 import { useReserves } from "@/hooks/useReserves";
-import { useFeeInForce } from "@/hooks/useFeeInForce";
+import { useEffectiveFees } from "@/hooks/useEffectiveFees";
 import { useConstants } from "@/hooks/useConstants";
 import { useUserBalances } from "@/hooks/useUserBalances";
 import { useState } from "react";
@@ -36,7 +36,13 @@ const Swap = () => {
   const balanceIn = balanceInData?.result;
 
   const {error: errorReserves, reserves: reserveEntries} = useReserves();
-  const {error: errorFeeInForce, data: feeInForce} = useFeeInForce();
+  // I.5 — Fin de la migration du tarif : le devis lit `effectiveFeeNum(i, j)`,
+  // la vue par laquelle le swap et `get_dy` passent tous les deux. Lire
+  // `feeInForce()` ici sous-facturait exactement les swaps que la surcharge
+  // existe pour tarifer, et le tarif affiché par le panneau de mandat n'aurait
+  // pas été celui que ce formulaire fait payer.
+  const {error: errorFees, feeFor, errorFor} = useEffectiveFees();
+  const effectiveFeeNum = feeFor(indexIn, indexOut);
   const {error: errorConstants, feeDen: feeDenData} = useConstants();
   const feeDen = feeDenData?.result;
   const failedReads = collectReadErrors([
@@ -45,18 +51,22 @@ const Swap = () => {
       message: `Erreur de lecture de la réserve du token ${tokensInfo[i].name}`,
       error: entry?.error
     })),
-    {message: "Erreur de lecture des fees (num)", error: errorFeeInForce},
+    {message: "Erreur de lecture du tarif effectif", error: errorFees},
+    {
+      message: `Erreur de lecture du tarif effectif ${tokensInfo[indexIn].name} → ${tokensInfo[indexOut].name}`,
+      error: errorFor(indexIn, indexOut)
+    },
     {message: "Erreur de lecture des constantes du pool", error: errorConstants},
     {message: "Erreur de lecture des fees (den)", error: feeDenData?.error},
   ]);
   if (failedReads.length > 0) return <ReadErrors sources={failedReads} />;
-  if (!reserveEntries || feeInForce===undefined || !feeDen) return <Panel><p>Chargement...</p></Panel>;
+  if (!reserveEntries || effectiveFeeNum===undefined || !feeDen) return <Panel><p>Chargement...</p></Panel>;
 
   const reserves = reserveEntries.map((r) => r.result).filter((r) => r !== undefined);
 
   const {quote, reason} = getQuote({
   userAsk: {side, typedAmount, indexIn, indexOut, toleranceInput: tolerance},
-  poolState: {reserves, feeNum: feeInForce, feeDen}
+  poolState: {reserves, effectiveFeeNum, feeDen}
   });
 
   const handleSwap = async () => {

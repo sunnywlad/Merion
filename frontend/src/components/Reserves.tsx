@@ -1,25 +1,16 @@
 'use client';
 
 import {useReserves} from '@/hooks/useReserves';
-import { useFeeInForce } from '@/hooks/useFeeInForce';
-import { useConstants } from '@/hooks/useConstants';
 import { tokensInfo } from '@/constants/addresses';
 import AmountLine from '@/components/AmountLine';
 
 export default function Reserves() {
   const { reserves, supply, isLoading, error } = useReserves();
 
-  const { data: feeInForce, isLoading: isLoadingFee, error: errorFee } = useFeeInForce();
-  const { feeDen: feeDenEntry, isLoading: isLoadingDen, error: errorDen } = useConstants();
-  const feeDen = feeDenEntry?.status === 'success' ? feeDenEntry.result : undefined;
-
-  // Basis points, so decimals={2} below renders a percentage. `feeDen` is tested for truthiness
-  // and not merely for definedness: a zero denominator would divide by zero, and the pool would
-  // be broken anyway.
-  const feePercent = feeInForce !== undefined && feeDen
-    ? feeInForce * 10000n / feeDen
-    : undefined;
-
+  // I.5 — Le tarif n'est plus affiché ici : `MandatePanel`, juste en dessous
+  // dans la même colonne, porte la même valeur sous « Tarif de base en
+  // vigueur », et il la donne par direction. Deux libellés pour un seul chiffre
+  // se lisaient comme deux tarifs.
   return (
     <section className='min-w-0'>
       <h2 className='text-sm font-semibold pb-2'>Réserves du pool</h2>
@@ -42,15 +33,6 @@ export default function Reserves() {
           isLoading={isLoading}
           error={error ?? supply?.error}
           value={supply?.status === 'success' ? supply.result : undefined}
-        />
-
-        <AmountLine
-          label="Frais de swap"
-          isLoading={isLoadingFee || isLoadingDen}
-          error={errorFee ?? errorDen ?? feeDenEntry?.error}
-          value={feePercent}
-          decimals={2}
-          suffix=" %"
         />
       </ul>
     </section>
