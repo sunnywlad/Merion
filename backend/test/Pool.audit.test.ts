@@ -66,6 +66,7 @@ async function deployPoolWith(
   base: TokensFixture,
   tokens: readonly `0x${string}`[] | null = null,
   treasuryOverride: `0x${string}` | null = null,
+  mrnOverride: `0x${string}` | null = null,
 ) {
   const addresses = (tokens ?? base.tokenAddresses) as readonly [`0x${string}`, `0x${string}`, `0x${string}`];
   return viem.deployContract("Pool", [
@@ -75,9 +76,13 @@ async function deployPoolWith(
     MIN_FEE_NUM,
     DEFAULT_FEE_NUM,
     treasuryOverride ?? base.treasury.account.address,
-    base.mrn.address,
+    mrnOverride ?? base.mrn.address,
     base.deployer.account.address,
   ]);
+}
+
+function ceilDiv(a: bigint, b: bigint): bigint {
+  return (a + b - 1n) / b;
 }
 
 async function bootstrapPool(
@@ -107,6 +112,41 @@ async function deployTokensAndSeededPoolFixture() {
   const pool = await deployPoolWith(base);
   await bootstrapPool(base, pool, base.depositor);
   return { ...base, pool };
+}
+
+// Pool amorce + un gestionnaire nomme pour l'epoch 1, tarif de base fixe a 5
+// dans la fenetre de priorite. Partage par les describe III] et IV] : les deux
+// ont besoin d'un manager pour que le partage (protocolCut, managerCut) soit
+// non trivial. Motif : setAuction -> setManager -> saut dans la fenetre ->
+// setFee(5). deployTokensFixture est appele directement (pas via loadFixture)
+// comme deployTokensAndSeededPoolFixture, pour rester composable sous loadFixture.
+async function deploySeededPoolWithManagerFixture() {
+  const base = await deployTokensFixture();
+  const pool = await deployPoolWith(base);
+  await bootstrapPool(base, pool, base.depositor);
+
+  await pool.write.setAuction([base.attacker.account.address], {
+    account: base.deployer.account,
+  });
+  const managerAddr = base.other.account.address;
+  await pool.write.setManager([1n, managerAddr], {
+    account: base.attacker.account,
+  });
+
+  const genesis = BigInt(await pool.read.GENESIS());
+  const windowOpen = genesis + EPOCH_DURATION + 1n;
+  await networkHelpers.time.setNextBlockTimestamp(windowOpen);
+  await networkHelpers.mine();
+
+  await pool.write.setFee([5n], { account: base.other.account });
+
+  const effectiveAtSwap = BigInt(await pool.read.feeInForce());
+
+  await base.wbtc.write.approve([pool.address, 21_000_000n * 10n ** 8n], {
+    account: base.depositor.account,
+  });
+
+  return { ...base, pool, managerAddr, effectiveAtSwap };
 }
 
 // ---------------------------------------------------------------------------
@@ -202,17 +242,20 @@ describe("Pool.audit", async function () {
 
   describe("II] Le constructeur ne verifie ni les decimales ni l'unicite des trois adresses", function () {
     describe("A) Decimales : un token a 18 decimales est accepte a cote de tokens a 8", function () {
-      it("un deploiement avec MRN (18 decimales) en indice 1 revert avec InvalidTokenDecimals, pas avec succes", async function () {
+      it("un deploiement avec un token a 18 decimales en indice 1 revert avec InvalidTokenDecimals, pas avec succes", async function () {
         const base = await networkHelpers.loadFixture(deployTokensFixture);
 
-        // MRN est deploye avec 18 decimales (MRN.sol, constructeur ERC20
-        // standard, `decimals() = 18` par defaut). Le panier melange
-        // donc 8 decimales (WBTC, LBTC) et 18 decimales (MRN). Aucun
-        // require du constructeur ne le refuse (Pool.sol:140-143 sont
-        // les quatre gardes existantes : frais, frais min, duree
-        // d'epoque, fenetre ; aucun ne touche les jetons).
+        // MRN est deploye avec 18 decimales (constructeur ERC20 standard,
+        // `decimals() = 18` par defaut). On en deploie une SECONDE instance
+        // pour tenir l'indice 1 du panier : elle a bien 18 decimales, mais
+        // son adresse est distincte de `_mrn` (base.mrn), donc la garde
+        // `_mrn` (Pool.sol:162) passe et c'est
+        // `require(IERC20Metadata(token1).decimals() == 8, InvalidTokenDecimals())`
+        // (Pool.sol:164) qui reprend la main. Le panier melange donc
+        // 8 decimales (WBTC, LBTC) et 18 decimales (token18).
+        const token18 = await viem.deployContract("MRN", []);
         await assertDeployRevertsWithCustomError(
-          deployPoolWith(base, [base.wbtc.address, base.mrn.address, base.lbtc.address]),
+          deployPoolWith(base, [base.wbtc.address, token18.address, base.lbtc.address]),
           "InvalidTokenDecimals",
         );
       });
@@ -236,6 +279,31 @@ describe("Pool.audit", async function () {
         );
       });
     });
+
+    describe("C) MRN : adresse nulle ou collidee avec une jambe", function () {
+      // Pool.sol:162 —
+      // require(_mrn != address(0) && _mrn != token0 && _mrn != token1 && _mrn != token2, InvalidMrn())
+      // `mrn` est immutable et sert d'assise au loyer du protocole ; une
+      // adresse nulle ou confondue avec une jambe gelerait ce loyer sans
+      // recours. Meme famille que InvalidTreasury (I]) et DuplicateToken (B).
+      it("un deploiement avec _mrn = address(0) revert avec InvalidMrn, pas avec succes", async function () {
+        const base = await networkHelpers.loadFixture(deployTokensFixture);
+
+        await assertDeployRevertsWithCustomError(
+          deployPoolWith(base, undefined, undefined, "0x0000000000000000000000000000000000000000"),
+          "InvalidMrn",
+        );
+      });
+
+      it("un deploiement avec _mrn collide sur token0 revert avec InvalidMrn, pas avec succes", async function () {
+        const base = await networkHelpers.loadFixture(deployTokensFixture);
+
+        await assertDeployRevertsWithCustomError(
+          deployPoolWith(base, undefined, undefined, base.wbtc.address),
+          "InvalidMrn",
+        );
+      });
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -244,39 +312,59 @@ describe("Pool.audit", async function () {
 
   describe("III] La garde de bande opere sur un etat simule distinct de l'etat ecrit", function () {
     it("apres un swap qui passe la garde de bande, la reserve entrante reelle est le NET du frais, pas le BRUT simule", async function () {
-      const { pool, depositor, wbtc } = await networkHelpers.loadFixture(deployTokensAndSeededPoolFixture);
+      // Fixture AVEC gestionnaire : sans manager, managerCut = 0 et la
+      // divergence se reduit a protocolCut, minuscule et vite ecrasee par la
+      // troncature. Un manager nomme rend le partage (protocolCut, managerCut)
+      // = baseAmount, donc la lamelle est franche.
+      const { pool, depositor, wbtc, effectiveAtSwap } =
+        await networkHelpers.loadFixture(deploySeededPoolWithManagerFixture);
+
+      assert.equal(
+        effectiveAtSwap,
+        5n,
+        `feeInForce vaut ${effectiveAtSwap} apres setFee(5), attendu 5`,
+      );
 
       const r0Before = BigInt(await pool.read.reserves([0n]));
 
-      const swapAmount = 4000n;
-      const feeNum = BigInt(await pool.read.feeNum());
-      const baseAmount = (swapAmount * feeNum) / FEE_DEN;
+      // baseAmount = swapAmount * 5 / 10000 doit valoir >= 100 pour survivre a
+      // la troncature, donc swapAmount >= 200_000. A 1_000_000 sats :
+      //   baseAmount        = 1_000_000 * 5 / 10000 = 500
+      //   protocolCut       = 500 * 1000 / 10000     = 50
+      //   managerCut        = 500 - 50               = 450   (un manager est nomme)
+      //   amountInToReserves = 1_000_000 - 50 - 450  = 999_500
+      // 1_000_000 sats est negligeable devant les reserves amorcees
+      // (100_000e8 par jambe), donc le swap reste dans les bandes
+      // floor 13 % / ceiling 53 %.
+      const swapAmount = 1_000_000n;
+      const feeInForceNum = BigInt(await pool.read.feeInForce());
+      const baseAmount = (swapAmount * feeInForceNum) / FEE_DEN;
       const protocolCut = (baseAmount * PROTOCOL_FEE_BPS) / SPLIT_DEN;
-      const managerCut = 0n;
-      const netIn = swapAmount - protocolCut - managerCut;
+      const managerCut = baseAmount - protocolCut;
+      const amountInToReserves = swapAmount - protocolCut - managerCut;
 
       await wbtc.write.approve([pool.address, swapAmount], { account: depositor.account });
       await pool.write.swap([0n, swapAmount, 2n, 0n], { account: depositor.account });
 
       const r0After = BigInt(await pool.read.reserves([0n]));
 
-      const expectedReal = r0Before + netIn;
+      const expectedReal = r0Before + amountInToReserves;
       assert.equal(
         r0After,
         expectedReal,
-        `reserves[0] apres swap vaut ${r0After}, attendu ${expectedReal} (= ${r0Before} + ${netIn} : NET, pas BRUT)`,
+        `reserves[0] apres swap vaut ${r0After}, attendu ${expectedReal} (= ${r0Before} + ${amountInToReserves} : NET du frais, pas BRUT)`,
       );
 
       const simulatedGross = r0Before + swapAmount;
       const divergence = simulatedGross - r0After;
       assert.equal(
         divergence,
-        baseAmount,
-        `divergence simule/rel vaut ${divergence}, attendu ${baseAmount} (= baseAmount, frais partage que la simulation ignore)`,
+        protocolCut + managerCut,
+        `divergence simule/reel vaut ${divergence}, attendu ${protocolCut + managerCut} (= protocolCut + managerCut, la lamelle que la simulation naive r0 + swapAmount ignore)`,
       );
       assert.ok(
         divergence > 0n,
-        `simule et rel devraient diverger strictement (divergence=${divergence}), sinon la garde opere deja sur le NET`,
+        `simule et reel devraient diverger strictement (divergence=${divergence}), sinon la garde opere deja sur le NET`,
       );
     });
   });
@@ -285,37 +373,14 @@ describe("Pool.audit", async function () {
   // Defaut 5
   // -------------------------------------------------------------------------
 
-  describe("IV] Le frais arrondit a la troncature au profit de l'appelant", function () {
-    async function deploySeededPoolWithManagerFixture() {
-      const base = await networkHelpers.loadFixture(deployTokensFixture);
-      const pool = await deployPoolWith(base);
-      await bootstrapPool(base, pool, base.depositor);
-
-      await pool.write.setAuction([base.attacker.account.address], {
-        account: base.deployer.account,
-      });
-      const managerAddr = base.other.account.address;
-      await pool.write.setManager([1n, managerAddr], {
-        account: base.attacker.account,
-      });
-
-      const genesis = BigInt(await pool.read.GENESIS());
-      const windowOpen = genesis + EPOCH_DURATION + 1n;
-      await networkHelpers.time.setNextBlockTimestamp(windowOpen);
-      await networkHelpers.mine();
-
-      await pool.write.setFee([5n], { account: base.other.account });
-
-      const effectiveAtSwap = BigInt(await pool.read.feeInForce());
-
-      await base.wbtc.write.approve([pool.address, 21_000_000n * 10n ** 8n], {
-        account: base.depositor.account,
-      });
-
-      return { ...base, pool, managerAddr, effectiveAtSwap };
-    }
-
-    it("un swap de 4000 sats collecte 2 sats de frais ; deux swaps de 1999 collectent 0", async function () {
+  describe("IV] Le frais du pool ne recompense pas le fractionnement du swap", function () {
+    // DECISION DE CONCEPTION (journal 03-III2-OUVERT.md, 11:28) : la linearite
+    // du cut MANAGER est HORS perimetre du defaut 5. Le floor sur baseAmount /
+    // protocolCut / managerCut est un partage INTERNE {protocole, manager} ->
+    // {reserves LP} ; il ne fuit aucune valeur vers l'appelant et reste
+    // deliberement en floor. Ce test n'observe donc QUE ce que l'appelant paie
+    // et ne touche PLUS feesOwed[manager].
+    it("le cout total en fractionnant un swap est superieur ou egal au cout en un seul coup", async function () {
       const ctx = await networkHelpers.loadFixture(deploySeededPoolWithManagerFixture);
       assert.equal(
         ctx.effectiveAtSwap,
@@ -323,42 +388,49 @@ describe("Pool.audit", async function () {
         `feeInForce vaut ${ctx.effectiveAtSwap} apres setFee(5), attendu 5`,
       );
 
-      const swapAmount = 4000n;
-      await ctx.pool.write.swap([0n, swapAmount, 2n, 0n], { account: ctx.depositor.account });
-      const feesAfter1Swap = BigInt(await ctx.pool.read.feesOwed([ctx.managerAddr, 0n]));
-      assert.equal(
-        feesAfter1Swap,
-        2n,
-        `feesOwed[manager][0] apres 1 swap de ${swapAmount} vaut ${feesAfter1Swap}, attendu 2 (managerCut = 2 - 0)`,
+      const oneShot = 4000n;
+      const ticket = 1999n;
+      const fee = ctx.effectiveAtSwap; // 5 sur ce pool equilibre
+
+      // Frais du POOL, formule miroir de swap() (Pool.sol:362) :
+      //   feeAmount = ceilDiv(_amount * effectiveFeeNum, FEE_DEN)
+      //   un coup     : ceilDiv(4000 * 5, 10000) = ceilDiv(20000, 10000) = 2
+      //   fractionne  : 2 * ceilDiv(1999 * 5, 10000) = 2 * ceilDiv(9995, 10000)
+      //                 = 2 * 1 = 2
+      // Propriete : le frais en fractionnant est >= au frais en un coup
+      // (interdiction de la sous-additivite au detriment du pool). Ici egalite,
+      // mais c'est l'inegalite qui est l'invariant.
+      const feeOneShot = ceilDiv(oneShot * fee, FEE_DEN);
+      const feeSplit = 2n * ceilDiv(ticket * fee, FEE_DEN);
+      assert.ok(
+        feeSplit >= feeOneShot,
+        `frais en fractionnant (${feeSplit}) < frais en un coup (${feeOneShot}) : le frais du pool serait sous-additif`,
       );
+
+      // Meme ordre observe sur le cout REEL paye par l'appelant, swaps
+      // reellement executes : cost = _amount - amountOut.
+      //   un coup     : 4000 - amountOut(3998)  (dxApresFrais = 4000 - 2)
+      //   fractionne  : (1999 - amountOut(1998)) + (1999 - amountOut(1998))
+      // La courbe a produit constant ajoute au plus une unite de troncature par
+      // ticket, jamais en faveur de l'appelant, donc l'inegalite >= tient.
+      const { result: outOneShot } = await ctx.pool.simulate.swap([0n, oneShot, 2n, 0n], {
+        account: ctx.depositor.account.address,
+      });
+      const costOneShot = oneShot - outOneShot;
 
       const ctx2 = await networkHelpers.loadFixture(deploySeededPoolWithManagerFixture);
-      const smallTicket = 1999n;
+      let costSplit = 0n;
       for (let k = 0; k < 2; k++) {
-        await ctx2.pool.write.swap([0n, smallTicket, 2n, 0n], {
-          account: ctx2.depositor.account,
+        const { result: out } = await ctx2.pool.simulate.swap([0n, ticket, 2n, 0n], {
+          account: ctx2.depositor.account.address,
         });
+        costSplit += ticket - out;
+        await ctx2.pool.write.swap([0n, ticket, 2n, 0n], { account: ctx2.depositor.account });
       }
-      const feesAfter2SmallSwaps = BigInt(await ctx2.pool.read.feesOwed([ctx2.managerAddr, 0n]));
-      assert.equal(
-        feesAfter2SmallSwaps,
-        0n,
-        `feesOwed[manager][0] apres 2 swaps de ${smallTicket} vaut ${feesAfter2SmallSwaps}, attendu 0 (1999*5/10000 = 0 par troncature)`,
-      );
 
-      // La troncature FLOOR fait que deux swaps de 1999 collectent 0+0=0 sats
-      // de frais alors qu'un swap de 4000 collecte 2 sats. Les frais ne sont
-      // PAS lineaires en la taille : un appelant qui fragmente son swap en
-      // tickets trop petits pour atteindre la troncature paye moins que sa
-      // part. La correction est ceilDiv sur baseAmount (et toutes les parts
-      // qui en dependent) : apres le fix, chaque swap de 1999 collecte 1 sat
-      // (ceilDiv(1999*5, 10000) = 1), les deux swaps collectent 2, et
-      // l'egalite avec feesAfter1Swap tient. L'assertion ci-dessous etablit
-      // l'invariant cible : fees lineaires en la taille, pas sous-additives.
-      assert.equal(
-        feesAfter1Swap,
-        feesAfter2SmallSwaps,
-        `1 swap de ${swapAmount} (fees=${feesAfter1Swap}) devrait rapporter autant que 2 swaps de ${smallTicket} (fees=${feesAfter2SmallSwaps}) ; troncature FLOOR sous-additive : floor(1999*5/10000)+floor(1999*5/10000)=0 mais floor(4000*5/10000)=2`,
+      assert.ok(
+        costSplit >= costOneShot,
+        `cout reel en fractionnant (${costSplit}) < cout en un coup (${costOneShot}) : l'appelant gagnerait a fractionner`,
       );
     });
   });
