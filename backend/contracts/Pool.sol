@@ -4,6 +4,7 @@ pragma solidity 0.8.36;
 
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 using SafeERC20 for IERC20;
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
@@ -112,6 +113,9 @@ contract Pool is ERC20, Ownable, Pausable {
   // I.4 — notifyRent par un non-auction, claimRent sur un registre vide.
   error NotAuction();
   error ZeroRentOwed();
+  error InvalidTreasury();
+  error DuplicateToken();
+  error InvalidTokenDecimals();
 
   event FeeSet(uint256 indexed epoch, address indexed manager, uint256 oldFee, uint256 newFee);
   event AddedLiquidity(address indexed provider, uint256[3] amountsIn, uint256 mintedShares);
@@ -144,6 +148,7 @@ contract Pool is ERC20, Ownable, Pausable {
 
     MIN_FEE_NUM = _minFeeNum;
     NOMINAL_FEE_NUM = _nominalFeeNum;
+    require(_treasury != address(0), InvalidTreasury());
     treasury = _treasury;
     mrn = _mrn;
 
@@ -152,6 +157,10 @@ contract Pool is ERC20, Ownable, Pausable {
     token0 = _tokens[0];
     token1 = _tokens[1];
     token2 = _tokens[2];
+    require(token0 != token1 && token1 != token2 && token0 != token2, DuplicateToken());
+    require(IERC20Metadata(token0).decimals() == 8, InvalidTokenDecimals());
+    require(IERC20Metadata(token1).decimals() == 8, InvalidTokenDecimals());
+    require(IERC20Metadata(token2).decimals() == 8, InvalidTokenDecimals());
   }
 
   function decimals() public pure override returns (uint8) {
@@ -346,19 +355,30 @@ contract Pool is ERC20, Ownable, Pausable {
 
     // I.2 — le frais n'est plus une constante de pool, c'est une lecture
     // d'etat partagee entre la base (feeInForce) et la surcharge
-    // directionnelle (effectiveFeeNum). Le calcul du partage (base, baseCut,
-    // protocolCut, managerCut) est deplace apres les requires pour eviter
-    // le depassement de pile : la logique est equivalente puisque ces
-    // grandeurs ne conditionnent aucun require precedent.
-    uint256 feeAmount = _amount * effectiveFeeNum(_indexIn, _indexOut) / FEE_DEN;
+    // directionnelle (effectiveFeeNum). ceilDiv : E7 — la division ronde
+    // en faveur du pool, jamais en faveur de l'appelant.
+    uint256 feeAmount = Math.ceilDiv(_amount * effectiveFeeNum(_indexIn, _indexOut), FEE_DEN);
     amountOut = _getAmountOut(cachedReserves, _indexIn, _indexOut, _amount - feeAmount);
 
     require(amountOut > 0, ZeroOutput());
     require(cachedReserves[_indexOut] > amountOut, InsufficientReserve());
     require(_amount + cachedReserves[_indexIn] <= type(uint72).max, ReserveOverflow());
 
+    // I.2 — partage (base, baseCut, protocolCut, managerCut) deplace AVANT
+    // la construction d'afterSwapReserves : les bandes (floor/ceiling)
+    // verifient le meme etat que l'ecriture, soit le flux net qui entre
+    // dans les reserves (cuts du manager et du protocole defalques). Sans
+    // ce deplacement, les bandes s'appliquaient a un etat sur evalue de
+    // `baseAmount`, le swap passait la garde avec un pot que l'ecriture
+    // ne materialisait pas.
+    uint256 baseAmount = _amount * feeInForce() / FEE_DEN;
+    uint256 protocolCut = baseAmount * PROTOCOL_FEE_BPS / SPLIT_DEN;
+    address currentManager = manager();
+    uint256 managerCut = currentManager == address(0) ? 0 : baseAmount - protocolCut;
+    uint256 amountInToReserves = _amount - protocolCut - managerCut;
+
     uint256[3] memory afterSwapReserves = [uint256(cachedReserves[0]), cachedReserves[1], cachedReserves[2]];
-    afterSwapReserves[_indexIn] = _amount + afterSwapReserves[_indexIn];
+    afterSwapReserves[_indexIn] = amountInToReserves + afterSwapReserves[_indexIn];
     afterSwapReserves[_indexOut] = afterSwapReserves[_indexOut] - amountOut;
     uint256 sum = afterSwapReserves[0] + afterSwapReserves[1] + afterSwapReserves[2];
 
@@ -378,11 +398,7 @@ contract Pool is ERC20, Ownable, Pausable {
     // dans les reserves dans les deux cas. Le manager ne touche JAMAIS
     // la surcharge, sinon il profiterait du desequilibre qu'il tarifie
     // (4.3 (4)). CEI tient : effets avant les transferts.
-    uint256 baseAmount = _amount * feeInForce() / FEE_DEN;
-    uint256 protocolCut = baseAmount * PROTOCOL_FEE_BPS / SPLIT_DEN;
-    address currentManager = manager();
-    uint256 managerCut = currentManager == address(0) ? 0 : baseAmount - protocolCut;
-    reserves[_indexIn] += uint72(_amount - protocolCut - managerCut);
+    reserves[_indexIn] += uint72(amountInToReserves);
     reserves[_indexOut] -= uint72(amountOut);
     if (managerCut > 0) {
       feesOwed[currentManager][_indexIn] += managerCut;
@@ -419,6 +435,36 @@ contract Pool is ERC20, Ownable, Pausable {
     IERC20(indexToAddress(_tokenIndex)).safeTransfer(treasury, owed);
   }
 
+  // I.4 — projection sans ecriture de l'accumulateur paresseux. C'est le
+  // seul calcul que `_updateRent` et `claimable` doivent partager, sans
+  // quoi la vue et le transfert derivent au premier changement de l'un
+  // des deux. `_updateRent` prend la valeur et l'ecrit, `claimable` la
+  // retourne telle quelle : l'invariant Foundry differentiel
+  // (la vue rend exactement ce que `claimRent` transfere) tient par
+  // construction, pas par coincidence.
+  //
+  // ECHELLE : `rentRate` porte deja le facteur 1e18 (pose par `notifyRent`,
+  // consomme par `/ 1e18` dans le repli de traine et dans `claimRent`).
+  // L'increment est donc `dt * rentRate / supply`, PAS `* 1e18` de plus :
+  // `accPerShare` = loyer par part x 1e18, et `claimRent` retire ce seul
+  // 1e18 par `balanceOf(x) * accPerShare / 1e18`.
+  //
+  // Sous-cas supply nul : la tranche n'est pas accumulee ; `accPerShare`
+  // reste a sa valeur courante et `rentLastUpdate` n'est pas avance ici
+  // (c'est le role de `_updateRent`, voir ci-dessous). La tranche sautee
+  // n'est jamais reanimee par `_accProjected` : la rent correspondante
+  // reste en solde MRN du Pool, non reclamable. `claimable` rapporte donc
+  // la valeur figee a `rentLastUpdate`, identique a ce que `claimRent`
+  // transfererait apres le flush interne qu'il appelle.
+  function _accProjected() internal view returns (uint256) {
+    if (rentLastUpdate >= rentEnd) return accPerShare; // stream fini ou jamais demarre
+    uint256 end = block.timestamp < rentEnd ? block.timestamp : rentEnd;
+    uint256 dt = end - rentLastUpdate;
+    uint256 supply = totalSupply();
+    if (dt == 0 || rentRate == 0 || supply == 0) return accPerShare;
+    return accPerShare + dt * rentRate / supply;
+  }
+
   // I.4 — helper interne : flush l'accumulateur jusqu'a min(now, rentEnd).
   // Aucune boucle sur les LP, c'est une multiplication et une division.
   // L'early-return coupe court avant le premier `notifyRent` (rentEnd == 0
@@ -428,31 +474,28 @@ contract Pool is ERC20, Ownable, Pausable {
   // toute la rent d'une epoch entre dans `accPerShare` meme si aucun
   // `_update` n'a lieu entre `notifyRent` et la fin du stream.
   //
-  // ECHELLE : `rentRate` porte deja le facteur 1e18 (pose par `notifyRent`,
-  // consomme par `/ 1e18` dans le repli de traine et dans `claimRent`).
-  // L'increment est donc `dt * rentRate / supply`, PAS `* 1e18` de plus :
-  // `accPerShare` = loyer par part x 1e18, et `claimRent` retire ce seul
-  // 1e18 par `balanceOf(x) * accPerShare / 1e18`.
-  //
-  // Sous-cas supply nul ou faible pendant une tranche du stream. Si
-  // `supply == 0` (tous les LP sortis), la tranche n'est pas accumulee ;
-  // `rentLastUpdate` avance quand meme jusqu'a `end`, donc la tranche
-  // sautee n'est jamais reanimee et la rent correspondante reste en solde
-  // MRN du Pool, non reclamable. Si `supply` est faible sans etre nul
-  // (seules les parts mortes MINIMUM_LIQUIDITY restent), la tranche
-  // accumule contre un `accPerShare` gonfle : la part correspondante n'est
-  // reclamable que par 0x...dEaD et reste donc immobilisee en solde MRN du
-  // Pool. Degradation acceptee : pas de repli vers `rentLeftOver`, pas de
-  // solvabilite en jeu (le Pool ne doit jamais plus qu'il ne detient).
+  // Le facteur 1e18 et le sous-cas supply nul sont documentes sur
+  // `_accProjected` ci-dessus, dont cette fonction prend la valeur.
   function _updateRent() internal {
     if (rentLastUpdate >= rentEnd) return; // stream fini ou jamais demarre
-    uint256 end = block.timestamp < rentEnd ? block.timestamp : rentEnd;
-    uint256 dt = end - rentLastUpdate;
-    uint256 supply = totalSupply();
-    if (dt > 0 && rentRate > 0 && supply > 0) {
-      accPerShare += dt * rentRate / supply;
-    }
-    rentLastUpdate = end;
+    accPerShare = _accProjected();
+    rentLastUpdate = block.timestamp < rentEnd ? block.timestamp : rentEnd;
+  }
+
+  // I.4 — vue du loyer reclamable par une adresse, fondation de
+  // l'invariant Foundry differentiel. Reproduit le calcul que `claimRent`
+  // realise cote transfert (accru - rentDebt + rentPending) sans appeler
+  // `_updateRent` (une `view` ne peut pas ecrire) et sans muter l'etat :
+  // c'est la projection pure, partagee via `_accProjected` avec le
+  // chemin d'ecriture, qui garantit l'alignement. Cote front, cette vue
+  // remplace le miroir `lib/rentClaimable.ts` et les huit lectures
+  // accumulees dans `useRentPosition` (hors de ce diff).
+  function claimable(address _who) external view returns (uint256) {
+    uint256 acc = _accProjected();
+    uint256 accrued = balanceOf(_who) * acc / 1e18;
+    uint256 owed = rentPending[_who];
+    if (accrued > rentDebt[_who]) owed += accrued - rentDebt[_who];
+    return owed;
   }
 
   // I.4 — override du choke point d'OZ v5 (5.6.1) : mint, burn et transfer
