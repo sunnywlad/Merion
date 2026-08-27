@@ -115,6 +115,7 @@ contract Pool is ERC20, Ownable, Pausable {
   error ZeroRentOwed();
   error InvalidTreasury();
   error DuplicateToken();
+  error InvalidTokenAddress();
   error InvalidTokenDecimals();
   error InvalidMrn();
 
@@ -158,6 +159,14 @@ contract Pool is ERC20, Ownable, Pausable {
     token0 = _tokens[0];
     token1 = _tokens[1];
     token2 = _tokens[2];
+    // I.7 #3 : garde d'erreur de deploiement sur l'adresse nulle des
+    // trois jetons du panier, avant la garde de doublons et celle des
+    // decimales. Sans elle, `decimals()` reverterait en panic 0x21 (appel
+    // sur adresse nulle ERC-20) au lieu d'une erreur nommee : le
+    // deployer verrait un revert sans cause lisible. Meme classe que la
+    // garde decimales acceptee le 24-08 : le deployer doit pouvoir
+    // nommer la faute.
+    require(token0 != address(0) && token1 != address(0) && token2 != address(0), InvalidTokenAddress());
     require(token0 != token1 && token1 != token2 && token0 != token2, DuplicateToken());
     require(_mrn != address(0) && _mrn != token0 && _mrn != token1 && _mrn != token2, InvalidMrn());
     require(IERC20Metadata(token0).decimals() == 8, InvalidTokenDecimals());
@@ -235,10 +244,20 @@ contract Pool is ERC20, Ownable, Pausable {
     return _dxAfterFee * _cachedReserves[_indexOut] / (_dxAfterFee + _cachedReserves[_indexIn]);
   }
 
+  /// @notice Devis de routage : rend la sortie de swap pour une entree
+  ///         donnee, sur l'etat pre-swap.
+  /// @dev Convention `get_dy` de Curve : un devis de routage, PAS une
+  ///      promesse d'execution. Aucune garde d'execution n'est appliquee
+  ///      ici (bandes, pause, ZeroOutput, InsufficientReserve) — la vue
+  ///      n'ecrit rien et ne revert pas sur un etat qui ferait echouer
+  ///      `swap`. C'est ce qui rend la formule quotable par les
+  ///      agregateurs : un `get_dy` rend toujours un nombre, et l'integrateur
+  ///      decide ce qu'il fait de l'eventuelle impossibilite. Reproduit
+  ///      EXACTEMENT la formule de swap (effective fee puis
+  ///      `_getAmountOut`), ce que la simplicite de `effectiveFeeNum`
+  ///      garantit : un appel, une multiplication, une division.
   // I.2 — interface Curve. C'est la seule raison pour laquelle un
-  // agregateur peut coter ce pool. Reproduit EXACTEMENT la formule de swap
-  // sur l'etat pre-swap, ce que la simplicity de effectiveFeeNum garantit :
-  // un appel, une multiplication, une division.
+  // agregateur peut coter ce pool.
   function get_dy(uint256 _indexIn, uint256 _indexOut, uint256 _dx) external view returns (uint256) {
     uint72[3] memory cachedReserves = reserves;
     uint256 effective = effectiveFeeNum(_indexIn, _indexOut);
@@ -374,6 +393,17 @@ contract Pool is ERC20, Ownable, Pausable {
     // `baseAmount`, le swap passait la garde avec un pot que l'ecriture
     // ne materialisait pas.
     uint256 baseAmount = _amount * feeInForce() / FEE_DEN;
+    // I.7 #6 : plancher `protocolCut` = `baseAmount * PROTOCOL_FEE_BPS /
+    // SPLIT_DEN`, soit 10 % de la base (PROTOCOL_FEE_BPS = 1000 sur
+    // SPLIT_DEN = 10000). Le partage reste INTERNE : `protocolCut` +
+    // `managerCut` = `baseAmount` (90 % au manager) quand un
+    // gestionnaire est nomme, sinon `protocolCut` seul = `baseAmount/10`
+    // et le 9/10 restant tombe dans les reserves par defaut de
+    // gestionnaire (cf. commentaire des ecritures ci-dessous). Aucune
+    // fuite vers l'appelant : le swap recoit `amountOut` en jeton de
+    // sortie, le frais ne sort pas du pool avant `claimManagerFees` /
+    // `claimProtocolFees` (pull-only). Arbitrage tranche le 27-08 : le
+    // plancher reste, pas de liberte a la baisse.
     uint256 protocolCut = baseAmount * PROTOCOL_FEE_BPS / SPLIT_DEN;
     address currentManager = manager();
     uint256 managerCut = currentManager == address(0) ? 0 : baseAmount - protocolCut;
@@ -451,13 +481,24 @@ contract Pool is ERC20, Ownable, Pausable {
   // `accPerShare` = loyer par part x 1e18, et `claimRent` retire ce seul
   // 1e18 par `balanceOf(x) * accPerShare / 1e18`.
   //
-  // Sous-cas supply nul : la tranche n'est pas accumulee ; `accPerShare`
-  // reste a sa valeur courante et `rentLastUpdate` n'est pas avance ici
-  // (c'est le role de `_updateRent`, voir ci-dessous). La tranche sautee
-  // n'est jamais reanimee par `_accProjected` : la rent correspondante
-  // reste en solde MRN du Pool, non reclamable. `claimable` rapporte donc
-  // la valeur figee a `rentLastUpdate`, identique a ce que `claimRent`
+  // Sous-cas `supply == 0` (aucune part, ni vivante ni morte) : la
+  // tranche n'est pas accumulee ; `accPerShare` reste a sa valeur
+  // courante et `rentLastUpdate` n'est pas avance ici (c'est le role de
+  // `_updateRent`, voir ci-dessous). La tranche sautee n'est jamais
+  // reanimee par `_accProjected` : la rent correspondante reste en
+  // solde MRN du Pool, non reclamable. `claimable` rapporte donc la
+  // valeur figee a `rentLastUpdate`, identique a ce que `claimRent`
   // transfererait apres le flush interne qu'il appelle.
+  //
+  // Sous-cas `supply == MINIMUM_LIQUIDITY` (I.7 #4) : seules les 1000
+  // parts mortes 0x...dEaD subsistent. La branche early-return de
+  // `notifyRent` empile alors le rent dans `rentLeftOver` et ne touche
+  // NI `accPerShare` NI `rentRate` NI `rentEnd`, donc cette garde
+  // n'atteint jamais l'increment : `supply > 0` mais `rentRate == 0`,
+  // et la formule `dt * rentRate / supply` rend 0 sans division. Le
+  // `claimable` de 0x...dEaD reste nul, conforme au E4 documente (la
+  // poussiere est differee, jamais perdue, distribuee au premier LP
+  // vivant via le repli de `rentLeftOver`).
   function _accProjected() internal view returns (uint256) {
     if (rentLastUpdate >= rentEnd) return accPerShare; // stream fini ou jamais demarre
     uint256 end = block.timestamp < rentEnd ? block.timestamp : rentEnd;
@@ -639,6 +680,16 @@ contract Pool is ERC20, Ownable, Pausable {
     if (accrued > rentDebt[msg.sender]) {
       owed += accrued - rentDebt[msg.sender];
     }
+    // I.7 #7 : `rentDebt = accrued` est INCONDITIONNEL, contrairement
+    // au `if` ci-dessus qui ne paye la diff que si `accrued > rentDebt`.
+    // C'est intentionnel : `rentDebt` est une dette checkpoint, pas un
+    // solde cumule. Le rebaser sur l'accru courant a chaque claim (meme
+    // quand l'accru n'a pas bouge, par troncature entiere) garantit
+    // que le prochain claim diff depuis le bon point de depart, sans
+    // piéger un `rentDebt` desynchronise du `accPerShare` courant.
+    // Mettre l'ecriture dans le `if` la rendrait dependante du paiement
+    // de la diff, et une succession de claims a `accrued == rentDebt`
+    // (troncature au wei pres) figerait `rentDebt` au point precedent.
     rentDebt[msg.sender] = accrued;
     rentPending[msg.sender] = 0;
     require(owed > 0, ZeroRentOwed());
