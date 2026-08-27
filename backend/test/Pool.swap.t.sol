@@ -21,8 +21,20 @@ contract SwapFuzz is Test, PoolTestBase {
     if (indexOut >= indexIn) indexOut += 1;
   }
 
+  // I.2 — le swap utilise effectiveFeeNum, pas feeNum, pour la lecture du
+  // frais effectif. La formule d'amountAfterFee n'est plus
+  // amount * (FEE_DEN - feeNum) / FEE_DEN (celle-ci suppose que feeNum est
+  // un numerateur "direct", hors de la troncature), mais
+  // amount - amount * effective / FEE_DEN, qui reflete exactement le calcul
+  // du contrat (Pool.sol:321). L'ordre des operations change d'au plus une
+  // unite, et c'est precisement cette unite qui faisait echouer les trois
+  // tests de swap en cas de figure serree. Sur la fixture de ce contrat
+  // (reserves egales, donc effective == feeNum == 5), les deux formules
+  // donnent le meme resultat qu'au debut du chantier, SAUF sur les tout
+  // petits montants ou la troncature joue.
   function expectedAmountOut(uint256 indexIn, uint256 amount, uint256 indexOut) internal view returns (uint256) {
-    uint256 amountAfterFee = amount * (pool.FEE_DEN() - pool.feeNum()) / pool.FEE_DEN();
+    uint256 effective = pool.effectiveFeeNum(indexIn, indexOut);
+    uint256 amountAfterFee = amount - amount * effective / pool.FEE_DEN();
     return amountAfterFee * pool.reserves(indexOut) / (amountAfterFee + pool.reserves(indexIn));
   }
 

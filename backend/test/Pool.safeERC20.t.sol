@@ -130,13 +130,30 @@ contract PoolSafeERC20Test is Test {
     pool.addLiquidity(0, SEED, 0);
     misbehaving.setTransferFromMode(MockMisbehavingBTC.ReturnMode.Nothing);
     uint256 amount = 100e8;
-    uint256 amountAfterFee = amount * (pool.FEE_DEN() - pool.feeNum()) / pool.FEE_DEN();
+    // I.2 — le swap utilise effectiveFeeNum, pas feeNum, pour la lecture du
+    // frais effectif. Sur une pool equilibree (reserves[_indexIn] ==
+    // reserves[_indexOut]), la regle d'UNBALANCE_TOL_BPS place la direction
+    // "in band" et effective = feeInForce() = feeNum = 5. Mais la formule
+    // du quotient n'est plus amount * (FEE_DEN - feeNum) / FEE_DEN, c'est
+    // amount - amount * effective / FEE_DEN, avec une troncature differente
+    // (l'ordre des operations change d'une unite au pire).
+    uint256 effective = pool.effectiveFeeNum(0, 1);
+    uint256 amountAfterFee = amount - amount * effective / pool.FEE_DEN();
     uint256 expectedOut = amountAfterFee * pool.reserves(1) / (amountAfterFee + pool.reserves(0));
 
     uint256 amountOut = pool.swap(0, amount, 1, 0);
 
     assertEq(amountOut, expectedOut);
-    assertEq(pool.reserves(0), SEED + amount);
+    // I.2 — la reserve du token d'entree ne recoit plus le _amount entier :
+    // elle absorbe _amount - protocolCut - managerCut. Sur cette fixture
+    // (pas de gestionnaire, feeNum = 5, FEE_DEN = 10000, PROTOCOL_FEE_BPS =
+    // 1000, SPLIT_DEN = 10000) : baseAmount = 100e8 * 5 / 10000 = 5e6 ;
+    // protocolCut = 5e6 * 1000 / 10000 = 5e5 = 500_000. La nouvelle
+    // reserve vaut donc SEED + amount - 500_000.
+    uint256 baseAmount = amount * pool.feeInForce() / pool.FEE_DEN();
+    uint256 protocolCut = baseAmount * pool.PROTOCOL_FEE_BPS() / pool.SPLIT_DEN();
+    uint256 managerCut = pool.manager() == address(0) ? 0 : baseAmount - protocolCut;
+    assertEq(pool.reserves(0), SEED + amount - protocolCut - managerCut);
   }
 
   // ---------------------------------------------------------------------

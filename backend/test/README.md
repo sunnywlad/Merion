@@ -138,8 +138,11 @@ Le panier est fige a trois wrappers de BTC a cibles EGALES, un tiers chacun :
 WBTC en indice 0, cbBTC en indice 1, LBTC en indice 2. Il n'y a plus ni
 quatrieme jeton ni poids cibles differencies.
 
-La suite compte 319 tests verts : 227 en TypeScript (9 fichiers `test/*.test.ts`)
-et 92 en Solidity (9 fichiers `test/*.t.sol`, 4 fichiers `contracts/*.t.sol`).
+La suite compte 344 tests verts : 245 en TypeScript (10 fichiers `test/*.test.ts`)
+et 99 en Solidity (10 fichiers `test/*.t.sol`, 4 fichiers `contracts/*.t.sol`),
+plus 2 tests marques "skipped" (la migration FEE_DEN documentee en IV de
+`Pool.feeSplit.t.sol` : la constante `FEE_DEN` ne peut pas etre modifiee
+sans toucher `Pool.sol`, hors perimetre de cette tache).
 
 ## Structure de la suite
 
@@ -343,7 +346,8 @@ test/Pool.feeInForce.t.sol       packing du slot + lecture paresseuse, par vm.st
 test/Pool.setFee.t.sol           fuzz des cinq axes de setFee (bande, appelant, instant, epoch)
 test/Pool.depeg.t.sol            les bandes face a une decote reelle d'un wrapper
 test/Pool.invariant.t.sol        handler + quatre invariants + un test cible
-contracts/Pool.gas.t.sol         mesures de gas (rapport dans GAS.md)
+test/Pool.feeSplit.t.sol         bornes croisees + invariant I1 de conservation des frais (I.2)
+contracts/Pool.gas.t.sol         mesures de gaz (rapport dans GAS.md)
 contracts/Pool.t.sol             decimals()
 contracts/MockWrappedBTC.t.sol   le mock ERC20Capped du panier
 contracts/MRN.t.sol              le jeton natif MRN
@@ -1382,6 +1386,61 @@ message, est ce qui rend le test fiable.
 - le mecanisme ne tient a aucune epoch particuliere : a une epoch quelconque,
   un tarif de la bande different du nominal s'impose pendant son mandat,
   disparait de `feeInForce()` a l'epoch suivante, et survit dans `feeNum` brut
+
+## Etape I.2 — sortie des frais hors des reserves
+
+L'etape I.2 du worklist (journal de nuit 2026-08-27) introduit trois
+constantes (`UNBALANCE_TOL_BPS`, `PROTOCOL_FEE_BPS`, `SPLIT_DEN`), deux
+registres (`feesOwed[manager]`, `protocolFeesOwed`), deux vues
+(`effectiveFeeNum`, `get_dy`) et deux fonctions de tirage
+(`claimManagerFees`, `claimProtocolFees`). La migration a une
+consequence observable sur trois tests existants, qui ont ete mis a
+jour avec des commentaires "I.2 — decision X — voir journal de nuit
+2026-08-27" :
+
+- `Pool.swap.test.ts` : trois tests corriges. Le delta de
+  `reserves[0]` apres un swap n'est plus `_amount` mais
+  `_amount - protocolCut - managerCut` ; la difference entre le delta
+  de solde ERC-20 du pool et le delta de reserve sur le token
+  d'entree vaut exactement `protocolCut + managerCut` ; et le swap
+  `i == j` preleve desormais un frais (la defense orale devient "le
+  swap i==j est un appel legitime qui paie le frais comme tout
+  autre swap, et le manager n'en profite pas plus qu'il ne profite
+  des autres"). Le reste du fichier est inchange.
+- `Pool.safeERC20.t.sol` : un test corrige (`test_Swap_IndexInTransferFromReturningNothing_Succeeds`).
+  L'`expectedOut` utilise `effectiveFeeNum` et non `feeNum`, et
+  `reserves[0]` recoit `_amount - protocolCut - managerCut`.
+- `Pool.swap.t.sol` : `expectedAmountOut` utilise `effectiveFeeNum` au
+  lieu de `feeNum`, et la formule d'`amountAfterFee` reproduit
+  exactement celle du contrat (`amount - amount * effective / FEE_DEN`,
+  pas `amount * (FEE_DEN - feeNum) / FEE_DEN`). Le fix aligne la
+  troncature du test sur celle du contrat, et elimine un off-by-one
+  au pire d'une unite sur les tres petits montants.
+- `Pool.invariant.t.sol` : `expectedSwapAmountOut` aligne de la meme
+  maniere, pour que le handler du fuzzer ne desaccorde pas avec
+  `swap()` apres la migration I.2.
+
+Les deux nouveaux fichiers, qui couvrent ce qu'aucun des precedents
+ne pouvait dire, sont :
+
+```
+test/Pool.feeSplit.test.ts   surface I.2 cote TypeScript
+test/Pool.feeSplit.t.sol     surface I.2 cote Solidity (bornes + invariant I1)
+```
+
+`Pool.feeSplit.test.ts` couvre `effectiveFeeNum` (six paires in
+band, six paires skew, et la frontiere stricte `>` a 2.00 %),
+`get_dy` (coherence simule / execute sur pool equilibre, vue pure),
+et le partage du frais (registres avec et sans gestionnaire,
+surcharge, et les deux fonctions de tirage avec leurs messages
+d'erreur `ZeroFeesOwed`). `Pool.feeSplit.t.sol` porte les bornes
+croisees-multipliees (5.2.4 et 10d de la fiche), l'invariant I1
+(`balanceOf(pool, token) >= reserves[token] + protocolFeesOwed[token]
++ sum(feesOwed[m][token])` sur plusieurs sequences), et la
+conservation stricte I2. Les sections II et IV sur la migration
+`FEE_DEN` sont documentees en FIXME et marquees `vm.skip(true)` :
+`FEE_DEN` est une constante, et le perimetre I.2 n'inclut pas sa
+parameterisation.
 
 ## Couche Solidity : fuzz, invariants, forge d'etat
 

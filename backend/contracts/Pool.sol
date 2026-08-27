@@ -34,9 +34,12 @@ contract Pool is ERC20, Ownable, Pausable {
   uint32 public lastSetFeeEpoch;
   uint256 constant public MAX_FEE_NUM = 50;
   uint256 constant public FEE_DEN = 10000;
-  uint256 public immutable NOMINAL_FEE_NUM;
   uint256 constant public UNBALANCE_FACTOR = 2;
+  uint256 constant public UNBALANCE_TOL_BPS = 200;
   uint256 constant public TOL_DEN = 10000;
+  uint256 constant public PROTOCOL_FEE_BPS = 1000;
+  uint256 constant public SPLIT_DEN = 10000;
+  uint256 public immutable NOMINAL_FEE_NUM;
 
   uint256 public immutable MIN_FEE_NUM;
 
@@ -47,6 +50,14 @@ contract Pool is ERC20, Ownable, Pausable {
 
   mapping(uint256 epoch => address) public managerOf;
   address public auction;
+
+  // I.2 — sortie des reserves : deux registres, l'un par gestionnaire
+  // (l'adresse du mandat, pas le role) et l'un global pour la part
+  // protocole. L'argent reste dans le pool tant que les fonctions de tirage
+  // ne l'ont pas pousse vers le manager ou vers la tresorerie, et CEI tient
+  // chaque tirage : remise a zero AVANT le transfert.
+  mapping(address manager => uint256[3]) public feesOwed;
+  uint256[3] public protocolFeesOwed;
 
   uint256 constant public MINIMUM_LIQUIDITY = 1000;
 
@@ -72,6 +83,10 @@ contract Pool is ERC20, Ownable, Pausable {
   // Seule erreur de setFee à porter des arguments : c'est la seule dont
   // l'appelant ne peut pas dériver la cause sans lire deux constantes.
   error FeeOutOfBand(uint256 min, uint256 max);
+  // I.2 — appel d'un tirage alors que le registre est vide ; distincte de
+  // BadSlippage parce que la cause n'est pas un seuil rate mais une
+  // quantite nulle.
+  error ZeroFeesOwed();
 
   event FeeSet(uint256 indexed epoch, address indexed manager, uint256 oldFee, uint256 newFee);
   event AddedLiquidity(address indexed provider, uint256[3] amountsIn, uint256 mintedShares);
@@ -135,6 +150,57 @@ contract Pool is ERC20, Ownable, Pausable {
 
   function feeInForce() public view returns (uint256) {
     return lastSetFeeEpoch == currentEpoch() ? feeNum : NOMINAL_FEE_NUM;
+  }
+
+  // I.2 — surcharge directionnelle, lue sur l'etat d'avant-swap.
+  // Le swap et get_dy passent tous deux par cette vue, ce qui garantit
+  // l'accord entre le devis execute et le devis quotable.
+  //
+  // DEUX BRANCHES, pas de palier intermediaire : la remise directionnelle
+  // (R3 bis) et la lecture au point milieu (E6) sont roadmap. La forme
+  // reduite tient la demi-journee du chantier, parce que le swap n'a qu'un
+  // appel a _getAmountOut et get_dy reste trois lignes au-dessus.
+  //
+  // La direction se compare sur les RESERVES, jamais sur les parts cibles,
+  // et depuis 2026-08-22 les trois cibles sont egales : la regle est exacte
+  // dans les deux sens, l'asymetrie du 45/45/10 ne reapparait que le jour
+  // ou les cibles cessent d'etre egales.
+  //
+  // BANDE MORTE lue sur TOL_DEN, JAMAIS sur FEE_DEN. Granularite de tarif
+  // et granularite de bande morte ne partagent pas un denominateur (voir
+  // build-auction.md 2.1).
+  //
+  // Le max dans la branche skew protege le cas biaise : un gestionnaire qui
+  // ecrit 0 en base ne peut pas rendre la piscine gratuite quand elle est
+  // la plus desiquilibree. C'est ce que bunni-v2 faisait avec
+  // max(amAmmSwapFee, surgeFee), voir build-auction.md 4.3 (1).
+  function effectiveFeeNum(uint256 _indexIn, uint256 _indexOut) public view returns (uint256) {
+    uint256 base = feeInForce();
+    uint72[3] memory cachedReserves = reserves;
+    if (cachedReserves[_indexIn] * TOL_DEN > cachedReserves[_indexOut] * (TOL_DEN + UNBALANCE_TOL_BPS)) {
+      uint256 candidate = base * UNBALANCE_FACTOR;
+      uint256 floorSurcharge = NOMINAL_FEE_NUM * UNBALANCE_FACTOR;
+      return candidate > floorSurcharge ? candidate : floorSurcharge;
+    }
+    return base;
+  }
+
+  // I.2 — helper de prix, pur sur les reserves qu'on lui passe. Prend la
+  // forme d'un quotient de produit constant, sans frais : la function
+  // appelante (swap ou get_dy) a deja nette les frais de l'entree.
+  function _getAmountOut(uint72[3] memory _cachedReserves, uint256 _indexIn, uint256 _indexOut, uint256 _dxAfterFee) internal pure returns (uint256) {
+    return _dxAfterFee * _cachedReserves[_indexOut] / (_dxAfterFee + _cachedReserves[_indexIn]);
+  }
+
+  // I.2 — interface Curve. C'est la seule raison pour laquelle un
+  // agregateur peut coter ce pool. Reproduit EXACTEMENT la formule de swap
+  // sur l'etat pre-swap, ce que la simplicity de effectiveFeeNum garantit :
+  // un appel, une multiplication, une division.
+  function get_dy(uint256 _indexIn, uint256 _indexOut, uint256 _dx) external view returns (uint256) {
+    uint72[3] memory cachedReserves = reserves;
+    uint256 effective = effectiveFeeNum(_indexIn, _indexOut);
+    uint256 feeAmount = _dx * effective / FEE_DEN;
+    return _getAmountOut(cachedReserves, _indexIn, _indexOut, _dx - feeAmount);
   }
 
   // Le seul levier du gestionnaire du mandat courant : il fixe la base de
@@ -246,8 +312,14 @@ contract Pool is ERC20, Ownable, Pausable {
   function swap(uint256 _indexIn, uint256 _amount, uint256 _indexOut, uint256 _minOut) external whenNotPaused returns (uint256 amountOut) {
     uint72[3] memory cachedReserves = reserves;
 
-    uint256 amountAfterFee = _amount * (FEE_DEN - feeNum) / FEE_DEN;
-    amountOut = amountAfterFee * cachedReserves[_indexOut] / (amountAfterFee + cachedReserves[_indexIn]);
+    // I.2 — le frais n'est plus une constante de pool, c'est une lecture
+    // d'etat partagee entre la base (feeInForce) et la surcharge
+    // directionnelle (effectiveFeeNum). Le calcul du partage (base, baseCut,
+    // protocolCut, managerCut) est deplace apres les requires pour eviter
+    // le depassement de pile : la logique est equivalente puisque ces
+    // grandeurs ne conditionnent aucun require precedent.
+    uint256 feeAmount = _amount * effectiveFeeNum(_indexIn, _indexOut) / FEE_DEN;
+    amountOut = _getAmountOut(cachedReserves, _indexIn, _indexOut, _amount - feeAmount);
 
     require(amountOut > 0, ZeroOutput());
     require(cachedReserves[_indexOut] > amountOut, InsufficientReserve());
@@ -265,13 +337,54 @@ contract Pool is ERC20, Ownable, Pausable {
 
     require(amountOut >= _minOut, BadSlippage());
 
-    reserves[_indexIn] += uint72(_amount);
+    // I.2 — ligne de credit des reserves (4.3, regle R5) et ecriture des
+    // deux registres. Le partage est asymetrique par construction :
+    // protocolCut + managerCut = baseAmount quand un gestionnaire est
+    // nomme (90 % / 10 %), mais seulement protocolCut = baseAmount/10
+    // sinon, le reste de la base (9/10) tombant dans les reserves par
+    // defaut de gestionnaire. La surcharge (feeAmount - baseAmount) reste
+    // dans les reserves dans les deux cas. Le manager ne touche JAMAIS
+    // la surcharge, sinon il profiterait du desequilibre qu'il tarifie
+    // (4.3 (4)). CEI tient : effets avant les transferts.
+    uint256 baseAmount = _amount * feeInForce() / FEE_DEN;
+    uint256 protocolCut = baseAmount * PROTOCOL_FEE_BPS / SPLIT_DEN;
+    address currentManager = manager();
+    uint256 managerCut = currentManager == address(0) ? 0 : baseAmount - protocolCut;
+    reserves[_indexIn] += uint72(_amount - protocolCut - managerCut);
     reserves[_indexOut] -= uint72(amountOut);
+    if (managerCut > 0) {
+      feesOwed[currentManager][_indexIn] += managerCut;
+    }
+    if (protocolCut > 0) {
+      protocolFeesOwed[_indexIn] += protocolCut;
+    }
 
     IERC20(indexToAddress(_indexIn)).safeTransferFrom(msg.sender, address(this), _amount);
     IERC20(indexToAddress(_indexOut)).safeTransfer(msg.sender, amountOut);
 
     emit Swapped(msg.sender, _indexIn, _amount, _indexOut, amountOut);
+  }
+
+  // I.2 — tirage des frais du gestionnaire, pull-only. CEI tient : la
+  // remise a zero du registre precede le transfert, sans exception (5.6 (4)).
+  function claimManagerFees(uint256 _tokenIndex) external {
+    uint256 owed = feesOwed[msg.sender][_tokenIndex];
+    require(owed > 0, ZeroFeesOwed());
+    feesOwed[msg.sender][_tokenIndex] = 0;
+    IERC20(indexToAddress(_tokenIndex)).safeTransfer(msg.sender, owed);
+  }
+
+  // I.2 — tirage de la part protocole, pull-only, payable a la tresorerie
+  // immuable. L'argent ne suit jamais la propriete (build-auction.md 4.2) :
+  // meme si owner() etait detourne, le flux de tresorerie ne le suivrait
+  // pas. Permissionless : n'importe qui peut declencher le virement vers
+  // la tresorerie, ce qui supprime la dependance a la bonne volonte d'un
+  // bot de gouvernance.
+  function claimProtocolFees(uint256 _tokenIndex) external {
+    uint256 owed = protocolFeesOwed[_tokenIndex];
+    require(owed > 0, ZeroFeesOwed());
+    protocolFeesOwed[_tokenIndex] = 0;
+    IERC20(indexToAddress(_tokenIndex)).safeTransfer(treasury, owed);
   }
 
 }

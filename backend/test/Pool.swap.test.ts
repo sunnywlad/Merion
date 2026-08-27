@@ -194,10 +194,29 @@ async function deployZeroFeeSeededPoolFixture() {
 // _amount du cas nominal (II.A) : 10% de SEED_AMOUNT, choisi comme dans
 // removeLiquidity pour son calcul propre.
 const NOMINAL_SWAP_AMOUNT_IN = SEED_AMOUNT / 10n; // 1 000 000 000
+
+// I.2 — les frais migrent hors des reserves : la part "base" du swap
+// (protocolCut + managerCut) reste dans le pool mais ne va plus dans
+// reserves[_indexIn]. La reserve recoit donc _amount moins la part base,
+// et les constantes suivantes servent aux tests qui le verifient.
+const FEE_NUM = 5n; // _nominalFeeNum sur la fixture
+const FEE_DEN = 10_000n;
+const PROTOCOL_FEE_BPS = 1_000n;
+const SPLIT_DEN = 10_000n;
+// baseAmount = _amount * FEE_NUM / FEE_DEN = 1e9 * 5 / 10000 = 500_000
+// protocolCut = baseAmount * PROTOCOL_FEE_BPS / SPLIT_DEN = 500_000 * 1000 / 10000 = 50_000
+// managerCut = 0 (pas de gestionnaire sur cette fixture)
+// reserves[0] += 1e9 - 50_000 = 999_950_000
+// I.2 — fin de la migration.
+const PROTOCOL_CUT_NOMINAL = (NOMINAL_SWAP_AMOUNT_IN * FEE_NUM / FEE_DEN) * PROTOCOL_FEE_BPS / SPLIT_DEN;
+const MANAGER_CUT_NOMINAL = 0n; // pas de gestionnaire sur cette suite
+const RESERVE_IN_GAIN_NOMINAL = NOMINAL_SWAP_AMOUNT_IN - PROTOCOL_CUT_NOMINAL - MANAGER_CUT_NOMINAL;
+
 // Amorcage a montants egaux (Pool.sol:93) : reserves = [1e10, 1e10, 1e10].
 // Calcul a la main (feeNum = 5, FEE_DEN = 10000, n'importe quelle paire,
 // puisque les trois reserves sont identiques) :
-//   amountAfterFee = 1e9 * (10000 - 5) / 10000 = 999 500 000
+//   feeAmount = 1e9 * 5 / 10000 = 500 000
+//   amountAfterFee = 1e9 - 500 000 = 999 500 000
 //   amountOut = 999 500 000 * 1e10 / (999 500 000 + 1e10)
 //             = 9 995 000 000 000 000 000 / 10 999 500 000
 //             = 908 677 667 (tronque vers le bas)
@@ -362,13 +381,17 @@ describe("Pool.swap", async function () {
         );
       });
 
-      it("reserves[0] (le token d'entree) augmente exactement de _amount, frais compris", async function () {
-        // amountAfterFee (95% de _amount) est ce qui sert au calcul du prix,
-        // mais c'est bien le montant PLEIN _amount qui entre en reserve
-        // (Pool.sol:158 : reserves[_indexIn] += uint72(_amount), pas
-        // uint72(amountAfterFee)). C'est precisement la que les frais
-        // s'accumulent, au benefice des LP plutot que d'etre extraits du
-        // pool.
+      it("reserves[0] augmente de _amount moins la part protocole, frais hors reserve", async function () {
+        // I.2 — la part base du swap (protocolCut + managerCut) reste dans
+        // le pool mais ne va plus dans reserves[_indexIn]. La reserve
+        // recoit _amount - protocolCut - managerCut, soit exactement
+        // _amount - baseAmount (la surcharge, feeAmount - baseAmount,
+        // reste par construction dans les reserves). Sur cette fixture,
+        // managerCut vaut 0 (pas de gestionnaire nomme), donc
+        // reserves[0] += _amount - protocolCut, et la difference avec
+        // _amount vaut exactement protocolCut, qui se retrouve dans
+        // protocolFeesOwed[0]. Voir aussi le test suivant (soldes ERC-20)
+        // pour la consequence sur la balance du pool.
         const { pool, tokens, other } = await networkHelpers.loadFixture(deploySeededPoolFixture);
         await mintAndApproveSingleToken(tokens, pool, other, 0, NOMINAL_SWAP_AMOUNT_IN);
         const reserveBefore = (await readReserves(pool))[0];
@@ -379,8 +402,20 @@ describe("Pool.swap", async function () {
         const gain = reserveAfter - reserveBefore;
         assert.equal(
           gain,
-          NOMINAL_SWAP_AMOUNT_IN,
-          `reserves[0] a augmente de ${gain}, attendu le montant PLEIN _amount=${NOMINAL_SWAP_AMOUNT_IN} (pas amountAfterFee)`,
+          RESERVE_IN_GAIN_NOMINAL,
+          `reserves[0] a augmente de ${gain}, attendu _amount - protocolCut - managerCut=${RESERVE_IN_GAIN_NOMINAL} (= _amount=${NOMINAL_SWAP_AMOUNT_IN} - protocolCut=${PROTOCOL_CUT_NOMINAL} - managerCut=${MANAGER_CUT_NOMINAL}). La part base reste dans le pool mais sort des reserves vers feesOwed/protocolFeesOwed.`,
+        );
+
+        // Verification de la contrepartie : la part base qui quitte la
+        // reserve se retrouve dans protocolFeesOwed[0] (et feesOwed si un
+        // gestionnaire etait nomme). Sur cette fixture, le registre du
+        // gestionnaire reste a zero et protocolFeesOwed[0] vaut
+        // exactement protocolCut.
+        const protocolFeesOwed0 = await pool.read.protocolFeesOwed([0n]);
+        assert.equal(
+          protocolFeesOwed0,
+          PROTOCOL_CUT_NOMINAL,
+          `protocolFeesOwed[0] vaut ${protocolFeesOwed0} apres le swap, attendu ${PROTOCOL_CUT_NOMINAL} (= baseAmount=${NOMINAL_SWAP_AMOUNT_IN * FEE_NUM / FEE_DEN} * ${PROTOCOL_FEE_BPS} / ${SPLIT_DEN})`,
         );
       });
 
@@ -421,7 +456,18 @@ describe("Pool.swap", async function () {
         );
       });
 
-      it("les soldes ERC-20 du pool sur les tokens 0 et 2 suivent exactement les deltas de reserves", async function () {
+      it("les soldes ERC-20 du pool sur le token 2 suivent le delta de reserves, et sur le token 0 le delta est superieur de la part protocole", async function () {
+        // I.2 — la part base du swap (protocolCut + managerCut) reste dans
+        // le pool mais ne va plus dans reserves[_indexIn]. La reserve du
+        // token d'entree n'absorbe donc plus tout le _amount, alors que le
+        // solde ERC-20 du pool sur ce token, lui, augmente bien de _amount
+        // (le transferFrom entrant porte la totalite, et la part base n'est
+        // pas extraite du pool). L'ecart entre les deux deltas vaut
+        // exactement protocolCut + managerCut : c'est la part base, qui
+        // reste dans le pool et attend d'etre tiree par
+        // claimProtocolFees / claimManagerFees. Sur la jambe sortante, en
+        // revanche, l'ecart reste nul : seul amountOut sort, et amountOut
+        // est aussi exactement la baisse de la reserve.
         const { pool, tokens, other } = await networkHelpers.loadFixture(deploySeededPoolFixture);
         await mintAndApproveSingleToken(tokens, pool, other, 0, NOMINAL_SWAP_AMOUNT_IN);
         const reservesBefore = await readReserves(pool);
@@ -439,10 +485,22 @@ describe("Pool.swap", async function () {
           poolBalancesAfter[0] - poolBalancesBefore[0],
           poolBalancesAfter[2] - poolBalancesBefore[2],
         ];
-        assert.deepEqual(
-          balanceDeltas,
-          reserveDeltas,
-          `deltas de solde du pool (0, 2)=[${balanceDeltas}], deltas de reserves (0, 2)=[${reserveDeltas}] : ces deux lectures on-chain devraient etre identiques`,
+        // La jambe sortante : reserve et solde bougent du meme montant
+        // (le safeTransfer sortant et la baisse de reserve portent le
+        // meme amountOut). La difference doit etre nulle.
+        assert.equal(
+          balanceDeltas[1] - reserveDeltas[1],
+          0n,
+          `token 2 (sortant) : deltas solde - reserve = ${balanceDeltas[1] - reserveDeltas[1]}, attendu 0n (amountOut sort a la fois de la reserve et du solde du pool)`,
+        );
+        // La jambe entrante : le solde du pool absorbe _amount entier, la
+        // reserve n'absorbe que _amount - protocolCut - managerCut. La
+        // difference vaut exactement protocolCut + managerCut.
+        const diffIn = balanceDeltas[0] - reserveDeltas[0];
+        assert.equal(
+          diffIn,
+          PROTOCOL_CUT_NOMINAL + MANAGER_CUT_NOMINAL,
+          `token 0 (entrant) : deltas solde - reserve = ${diffIn}, attendu ${PROTOCOL_CUT_NOMINAL + MANAGER_CUT_NOMINAL} (la part base reste dans le pool, sort des reserves vers protocolFeesOwed / feesOwed)`,
         );
       });
 
@@ -715,22 +773,37 @@ describe("Pool.swap", async function () {
         );
       });
 
-      it("indexIn == indexOut : la reserve concernee monte exactement de cette meme perte nette", async function () {
+      it("indexIn == indexOut : la reserve concernee monte de la perte nette moins la part protocole", async function () {
+        // I.2 — le swap i==j preleve un frais (a la difference de la Phase
+        // 1 ou c'etait une donation pure) : la reserve ne recoit donc pas
+        // integralement la perte nette du swapper, elle en recoit la perte
+        // nette MOINS la part base (protocolCut + managerCut, qui migre
+        // vers les registres feesOwed / protocolFeesOwed). Le swapper
+        // perd toujours _amount - amountOut — c'est la, et la seulement,
+        // qu'il continue de se penaliser. La defense orale devient : "le
+        // swap i==j est un appel legitime qui paie le frais comme tout
+        // autre swap, et le manager n'en profite pas plus qu'il ne profite
+        // des autres" (la surcharge ne va pas dans feesOwed[manager], voir
+        // Pool.sol:343-358).
         const { pool, tokens, other } = await networkHelpers.loadFixture(deploySeededPoolFixture);
         await mintAndApproveSingleToken(tokens, pool, other, 0, NOMINAL_SWAP_AMOUNT_IN);
         const reserveBefore = (await readReserves(pool))[0];
         const balanceBefore = (await readBalances(tokens, other.account.address))[0];
 
+        const { result: amountOut } = await pool.simulate.swap([0n, NOMINAL_SWAP_AMOUNT_IN, 0n, 0n], {
+          account: other.account.address,
+        });
         await pool.write.swap([0n, NOMINAL_SWAP_AMOUNT_IN, 0n, 0n], { account: other.account });
 
         const reserveAfter = (await readReserves(pool))[0];
         const balanceAfter = (await readBalances(tokens, other.account.address))[0];
         const reserveGain = reserveAfter - reserveBefore;
         const netLoss = balanceBefore - balanceAfter;
+        const expectedGain = netLoss - (PROTOCOL_CUT_NOMINAL + MANAGER_CUT_NOMINAL);
         assert.equal(
           reserveGain,
-          netLoss,
-          `gain de reserves[0]=${reserveGain}, perte nette du swapper=${netLoss} : ces deux lectures on-chain devraient etre identiques (rien n'est draine du pool, seul l'appelant se penalise)`,
+          expectedGain,
+          `gain de reserves[0]=${reserveGain}, attendu perte nette (${netLoss}) moins la part base (${PROTOCOL_CUT_NOMINAL + MANAGER_CUT_NOMINAL}) = ${expectedGain}. La difference part dans protocolFeesOwed / feesOwed ; la perte nette du swapper reste _amount - amountOut=${NOMINAL_SWAP_AMOUNT_IN - amountOut}.`,
         );
       });
 

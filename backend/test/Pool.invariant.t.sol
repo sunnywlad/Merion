@@ -101,7 +101,10 @@ contract PoolHandler is CommonBase, StdUtils, StdAssertions {
   }
 
   function expectedSwapAmountOut(uint256 indexIn, uint256 amount, uint256 indexOut) internal view returns (uint256) {
-    uint256 amountAfterFee = amount * (pool.FEE_DEN() - pool.feeNum()) / pool.FEE_DEN();
+    // I.2 — voir Pool.swap.t.sol : le swap utilise effectiveFeeNum, et la
+    // formule d'amountAfterFee est amount - amount * effective / FEE_DEN.
+    uint256 effective = pool.effectiveFeeNum(indexIn, indexOut);
+    uint256 amountAfterFee = amount - amount * effective / pool.FEE_DEN();
     return amountAfterFee * pool.reserves(indexOut) / (amountAfterFee + pool.reserves(indexIn));
   }
 
