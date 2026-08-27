@@ -145,18 +145,67 @@ contract PoolHandler is CommonBase, StdUtils, StdAssertions {
   }
 
   // Le fuzzer choisit `amount` sans connaitre les bandes (floor = 13 %,
-  // ceiling = 53 %, Pool.sol:20-21 et 151-154) : une bonne partie des tirages
-  // pousserait legitimement une jambe hors bande, et sans ce try/catch un
-  // seul de ces swaps ferait echouer tout le run, invariants compris. Le
-  // catch n'avale QUE FloorTouched et CeilingTouched (les deux seuls reverts
-  // attendus de cette garde) ; tout autre revert (panic, ReserveOverflow,
-  // BadSlippage, ZeroOutput...) est rebubble tel quel, pour ne jamais
-  // transformer ce wrapper en test vide qui masquerait un vrai bug.
+  // ceiling = 53 %, Pool.sol:20-21 et 388-389) : une bonne partie des tirages
+  // pousse legitimement une jambe hors bande, et sans ce try/catch un seul de
+  // ces swaps ferait echouer tout le run, invariants compris. Le catch n'avale
+  // QUE FloorTouched et CeilingTouched ; tout autre revert (panic,
+  // ReserveOverflow, BadSlippage, ZeroOutput...) est rebubble tel quel.
+  //
+  // Ce que cette liste etroite N'ACHETE PAS sous failOnRevert = false : elle
+  // ne protege pas d'un "test vide". Sous ce mode le runner discarde de la
+  // meme facon un revert avale par le catch ET un revert rebubble en
+  // assembleur : dans les deux cas l'appel de wrapper est jete et la campagne
+  // continue. La liste etroite ne DISTINGUE donc pas, en campagne, un vrai bug
+  // (panic, overflow) d'une bande touchee legitimement — les deux finissent
+  // discardes. Elle reste correcte par principe et deviendra discriminante si
+  // l'on flippe `failOnRevert = true` (dette, cf. bloc de deviation en tete de
+  // PoolInvariantTest), ou un revert non liste ferait alors echouer le run.
+  // En l'etat, la garantie "swap() respecte les bandes" est portee par
+  // invariant_bandsAlwaysRespected (evalue apres chaque appel, mord quelle que
+  // soit la config) et par les tests deterministes, pas par ce catch.
+  //
+  // Domaine de `amount` : sur pool amorce (reserve d'entree non nulle), borne
+  // dans [2000, reserves(indexIn)]. Avant le retune c'etait [1, 21_000_000e8] :
+  // sur des reserves de ~1e8 a ~1e11 cette plage de 2,1e15 encadrait le tirage
+  // entre deux zones mortes (bas : ZeroOutput ; haut : la quasi-totalite de la
+  // plage pousse hors bande, `catch` -> retour 0), et la plupart des swaps
+  // fuzzes ne s'executaient PAS. Le retune ramene la borne haute a la reserve
+  // d'entree : les tirages y font desormais exercer le vrai chemin de swap()
+  // (calcul du frais partage, ecriture des reserves, boucle de garde de bande)
+  // au lieu de rebondir sur des montants absurdes.
+  //   - borne basse 2000 : ecarte la troncature a zero d'amountAfterFee ;
+  //   - borne haute = reserve d'entree : sur un pool a peu pres equilibre,
+  //     entrer `a` sur une jambe la pousse a un ratio
+  //     (1 + x)^2 / (x^2 + 3x + 3) avec x = a / reserve ; ce ratio franchit le
+  //     plafond 53 % vers x ~= 0,77. Les tirages sous ce seuil executent
+  //     jusqu'au bout, ceux au-dela (ou moins des que le pool penche deja cote
+  //     jambe entrante) heurtent CeilingTouched et prennent le
+  //     `catch Floor/CeilingTouched`. Les deux regimes coexistent, ce qui
+  //     empeche invariant_bandsAlwaysRespected d'etre trivialement satisfait
+  //     sur le chemin swap().
+  // `reserves(indexIn) / 2` (x max = 0,5, ratio plafond 47,4 %) a ete essaye
+  // et ecarte : sur un pool que la campagne garde proche de l'equilibre il ne
+  // fait jamais toucher la bande, le `catch` n'est jamais pris et I3 n'est
+  // plus eprouve sur swap() en campagne. `/ 4` a fortiori.
+  //
+  // NB : la couverture n'est PAS garantie au niveau run (le fuzzer EDR n'est
+  // pas contraint d'appeler swapWrapper, et afterInvariant n'assert pas
+  // swapsExecuted > 0 — voir son commentaire et le bloc de residu en tete de
+  // PoolInvariantTest). Le retune garantit la QUALITE des swaps fuzzes, pas
+  // leur frequence ; invariant_bandsAlwaysRespected (mord par appel) + le
+  // deterministe portent la garantie.
+  //
+  // Sur pool NON amorce (reserve d'entree nulle, totalSupply() == 0), on garde
+  // le domaine historique : swap() y revert ZeroOutput, rebubble puis
+  // discarde, le run ne fait rien de ce cote — comportement d'avant le retune.
   function swapWrapper(uint256 _indexIn, uint256 _amount, uint256 _indexOut, uint256 _minOut) external returns (uint256 amountOut) {
     totalCalls++;
     uint256 indexIn = boundIndex(_indexIn);
     uint256 indexOut = boundIndex(_indexOut);
-    uint256 amount = bound(_amount, 1, 21_000_000e8);
+    uint256 reserveIn = pool.reserves(indexIn);
+    uint256 amount = reserveIn == 0
+      ? bound(_amount, 1, 21_000_000e8)
+      : bound(_amount, 2000, reserveIn);
     uint256 minOut = bound(_minOut, 0, expectedSwapAmountOut(indexIn, amount, indexOut));
 
     // uint256() explicite : reserves() rend uint72, et uint72 * uint72
@@ -311,6 +360,20 @@ contract PoolHandler is CommonBase, StdUtils, StdAssertions {
 //      avales par swapWrapper (aujourd'hui FloorTouched / CeilingTouched
 //      seulement). Bonne hygiene, mais 300+ lignes d'infra heritee hors du
 //      mandat des deux invariants I.6. Le flip est porte en dette.
+//
+// Residu assume : la couverture de campagne de I3
+// (`invariant_bandsAlwaysRespected`) sur la garde de bande de `swap()` n'est
+// PAS garantie au niveau run. Le fuzzer EDR choisit les selecteurs librement
+// et n'appelle pas forcement swapWrapper sur un run donne ; un
+// `assertGt(swapsExecuted, 0)` par run est auto-defait par le reducteur de
+// contre-exemple (verifie empiriquement). Le domaine retune de `swapWrapper`
+// garantit que les swaps QUI SONT fuzzes exercent le vrai chemin de la garde
+// de bande (au lieu de rebondir dessus sur des montants absurdes). Le cas
+// d'une garde de bande cassee est epingle par `invariant_bandsAlwaysRespected`
+// (mutation verifiee : les deux `require` de bande neutralises dans `swap()`
+// -> cet invariant, et lui seul, tombe) et par le deterministe
+// `test_managerPathIsActiveAndConserves` (30 swaps executes, tous sous
+// manager).
 contract PoolInvariantTest is Test, PoolTestBase {
   PoolHandler public handler;
   uint256 public lastShareValue;
@@ -428,19 +491,31 @@ contract PoolInvariantTest is Test, PoolTestBase {
   // comptes (le compteur est increment en tete de wrapper, donc annule par
   // les appels qui revert). Le plancher 100 est franchement sous ce
   // minimum observe et franchement au-dessus de zero : un run qui n'y
-  // arrive pas est un run ou le handler a revert-bloque tot, campagne
-  // vide. Le early-return neutralise la passe post-setUp, ou totalCalls
-  // vaut encore zero (comme pour les invariant_ de ce fichier).
+  // arrive pas est un run ou le handler a revert-bloque tot, campagne vide.
   //
-  // On n'y met PAS assertGt(swapsExecuted, 0). Sous failOnRevert=false, un
-  // run sans aucun swap execute (que des add / remove / round-trip, ou des
-  // swaps qui touchent tous une bande) est un etat valide et frequent en
-  // fuzz ; de plus, des qu'afterInvariant echoue pour une autre raison, le
-  // reducteur de contre-exemple d'EDR sait fabriquer une telle sequence et
-  // la campagne devient rouge a tort. La couverture "un swap mute vraiment
-  // les reserves" est deterministe, dans test_managerPathIsActiveAndConserves.
+  // PAS de early-return `if (totalCalls == 0) return;` : la pathologie visee
+  // (handler revert-bloque des le premier appel -> totalCalls == 0) est
+  // EXACTEMENT la condition sur laquelle ce early-return laissait passer le
+  // run. Il n'existe pas de passe afterInvariant a zero appel sous le runner
+  // EDR : Auction.invariant.t.sol le prouve, son afterInvariant assert
+  // `placeBidsOk > 0` sans aucune garde et 64 runs restent verts. La passe
+  // post-setUp que l'ancien commentaire invoquait n'execute pas
+  // afterInvariant (elle evalue les invariant_, pas ce hook).
+  //
+  // On n'y assert PAS swapsExecuted > 0. Sous le runner EDR le fuzzer choisit
+  // les selecteurs librement et n'est jamais contraint d'appeler swapWrapper
+  // sur un run donne ; des qu'afterInvariant peut echouer pour une raison,
+  // le reducteur de contre-exemple minimise vers une sequence sans swap
+  // (add / remove / round-trip n'incrementent jamais swapsExecuted) et la
+  // rapporte comme contre-exemple. L'assertion serait auto-defaitable.
+  // Verifie empiriquement : elle rougissait les 7 invariants sur des
+  // sequences shrinkees 100 % sans swap. Le retune du domaine de swapWrapper
+  // (cf. son commentaire) garantit la QUALITE des swaps fuzzes, pas leur
+  // FREQUENCE. La couverture de la garde de bande sur le chemin swap() est
+  // portee par invariant_bandsAlwaysRespected (mutation verifiee : boucle de
+  // bande neutralisee -> il tombe seul) et par le deterministe
+  // test_managerPathIsActiveAndConserves (30 swaps).
   function afterInvariant() view public {
-    if (handler.totalCalls() == 0) return;
     assertGt(handler.totalCalls(), 100);
   }
 

@@ -64,12 +64,18 @@ import {Auction} from "../contracts/Auction.sol";
 //
 // SELECTEURS AVALES (revert attendu, pas un bug masque) :
 //   placeBidWrapper     : Auction.WindowClosed        — la fenetre d'enchere
-//     (900 s apres le debut de l'epoch vendue) est fermee. FILET : depuis le
-//     recalage de fenetre en tete de `placeBidWrapper` (voir la DEVIATION
-//     documentee la-bas), le wrapper avance le temps jusqu'a la prochaine
-//     ouverture avant de miser, donc ce revert n'est quasiment plus atteint
-//     par le fuzzer ; le `catch` reste comme garde-fou si un chemin non
-//     couvert ferme la fenetre entre le recalage et l'appel.
+//     (900 s apres le debut de l'epoch vendue) est fermee. CODE MORT EN
+//     CAMPAGNE : le recalage de fenetre en tete de `placeBidWrapper` (voir la
+//     DEVIATION documentee la-bas) precede TOUJOURS le calcul du seuil et
+//     l'appel `placeBid`, et il avance le temps jusqu'a la prochaine
+//     ouverture des que la fenetre courante est fermee. Aucun chemin du
+//     handler ne referme la fenetre entre ce recalage et l'appel : le fuzzer
+//     ne peut donc pas atteindre `WindowClosed`, et `windowClosedCatches`
+//     reste structurellement 0 (verifie sur executions repetees). Le `catch`
+//     est conserve UNIQUEMENT comme garde defensive : si un futur changement
+//     retirait ou deplacait le recalage, une mise hors fenetre redeviendrait
+//     possible et ce revert legitime ne doit pas casser la campagne.
+//     `WindowClosed` reste couvert positivement par `Auction.test.ts` I] C).
 //   settleWrapper       : Auction.NoBidToSettle       — aucun mandat en
 //     attente et aucune enchere courante a capturer (slot vide, degradation
 //     R7) ; c'est l'idempotence documentee de `settle`.
@@ -199,8 +205,13 @@ contract AuctionHandler is CommonBase, StdUtils, StdAssertions {
     // sont incompatibles. On avance donc jusqu'a la prochaine ouverture de
     // fenetre quand la fenetre courante est fermee ; `warpWrapper` garde tout
     // son role (rotation d'epoch aleatoire, chemins `EpochAlreadyStarted` /
-    // slot perime), et le `catch WindowClosed` reste un filet (une mise hors
-    // fenetre sur le meme epoch, avant reinitialisation, y tombe encore).
+    // slot perime). Ce recalage precede TOUJOURS le calcul du seuil et l'appel
+    // `placeBid`, et aucun chemin du handler ne referme la fenetre entre les
+    // deux : le `catch WindowClosed` plus bas est donc du CODE MORT en
+    // campagne, `windowClosedCatches` reste structurellement 0. Il n'est
+    // conserve que comme garde defensive si un futur changement retirait ou
+    // deplacait ce recalage (cf. entete de fichier). `WindowClosed` est
+    // couvert positivement par `Auction.test.ts` I] C).
     // La borne haute de fenetre est `startOfEpoch(currentEpoch()) +
     // auctionWindow`, que `sellingEpoch` soit a jour ou perime (dans les deux
     // cas `sellingEpoch - 1 == currentEpoch()` apres reinitialisation).
@@ -584,6 +595,75 @@ contract AuctionInvariantTest is Test {
       4.31e18,
       "held = 1,00 + 1,10 + 1,21 + 1,00 (en e18)"
     );
+    invariant_mrnCoversObligations();
+  }
+
+  // Couverture POSITIVE de `deadMrn`. Le test ci-dessus laisse `deadMrn == 0` :
+  // une seule reinitialisation portante, sans pending anterieur a ecraser.
+  // Ici on force une SECONDE reinitialisation portante, celle qui ecrase un
+  // `pendingAmount` non nul et deja non reglable -> `deadMrn += pendingBefore`.
+  //
+  // Etapes 1 a 5 identiques a test_threeLiabilityTermsNonZeroTogether. Tous
+  // les `amountSeed` valent 0, donc chaque mise vaut EXACTEMENT son seuil :
+  //   minOpeningBid = 1e18 ; HIGH_BID_BPS / BPS_DEN = 11000 / 10000 = 1,1.
+  //   1. acteur 0, enchere vide      -> 1,00e18
+  //   2. acteur 1, floor(1,00e18)    -> 1,10e18   (refund acteur 0 += 1,00e18)
+  //   3. acteur 2, floor(1,10e18)    -> 1,21e18   (refund acteur 1 += 1,10e18)
+  //   4. warp +2 epochs (currentEpoch 0 -> 2)
+  //   5. acteur 3 : reset close->open, capture la mise d'acteur 2 dans
+  //      pendingAmount (1,21e18), highBid revient a minOpeningBid = 1,00e18.
+  //      pendingBefore lu = 0  -> deadMrn reste 0.
+  //   held = 1,00 + 1,10 + 1,21 + 1,00 = 4,31e18 (en e18).
+  //
+  // Etapes 6 et 7, l'ajout :
+  //   6. warp +2 epochs (currentEpoch 2 -> 4) : `sellingEpoch` (3, pose par le
+  //      reset de l'etape 5) devient perime, la prochaine mise reinitialisera.
+  //   7. acteur 0, `placeBidWrapper(0, 0)` : SECONDE reinitialisation portante.
+  //      `highBidder` == acteur 3 (non nul) au reset -> capture INCONDITIONNELLE
+  //      `pendingAmount = highBid` : l'ancien `pendingAmount` (1,21e18, issu de
+  //      la mise d'acteur 2, epoch 1 deja tournee, jamais reglable) est ECRASE
+  //      par la mise d'acteur 3 (1,00e18) SANS etre sorti du solde. Le wrapper
+  //      lit `pendingBefore = 1,21e18 != 0` et fait `deadMrn += 1,21e18`.
+  //      Nouvelle mise d'acteur 0 : seuil = minOpeningBid = 1,00e18 (highBid
+  //      remis a zero par le reset).
+  //
+  //   <mise acteur 2> = 1,21e18  (le pending ecrase).
+  //   held  = 1,00 + 1,10 + 1,21 + 1,00 + 1,00 = 5,31e18
+  //           (les 5 `safeTransferFrom` des 5 mises ; aucun settle, aucun
+  //            withdraw : rien ne sort).
+  //   owed  = sumRefunds + pendingAmount + highBid
+  //         = 2,10e18   + 1,00e18       + 1,00e18 = 4,10e18
+  //   owed + deadMrn = 4,10e18 + 1,21e18 = 5,31e18 == held. Egalite au wei.
+  function test_deadMrnAccumulatesOnSecondCarryingReset() public {
+    handler.placeBidWrapper(0, 0); // 1
+    handler.placeBidWrapper(1, 0); // 2
+    handler.placeBidWrapper(2, 0); // 3
+    handler.warpWrapper(type(uint256).max); // 4. +2 epochs -> currentEpoch 2
+    handler.placeBidWrapper(3, 0); // 5. 1re reinitialisation portante
+
+    assertEq(handler.deadMrn(), 0, "1re reinit : aucun pending anterieur, deadMrn nul");
+    assertEq(auction.pendingAmount(), 1.21e18, "pending = mise acteur 2");
+    assertEq(mrn.balanceOf(address(auction)), 4.31e18, "held apres 4 mises");
+
+    handler.warpWrapper(type(uint256).max); // 6. +2 epochs -> currentEpoch 4
+    handler.placeBidWrapper(0, 0); // 7. 2e reinitialisation portante : ecrase le pending
+
+    assertGe(handler.resetsObserved(), 2, "deux transitions close->open observees");
+    assertEq(
+      handler.deadMrn(),
+      1.21e18,
+      "pending d'acteur 2 (1,21e18) ecrase sans etre sorti : deadMrn"
+    );
+    assertEq(auction.pendingAmount(), 1e18, "pending ecrase par la mise d'acteur 3 (1,00e18)");
+    assertEq(auction.highBid(), 1e18, "nouvelle mise d'acteur 0 = minOpeningBid");
+    assertEq(handler.sumRefunds(), 2.1e18, "refunds inchanges : 1,00e18 + 1,10e18");
+    assertEq(
+      mrn.balanceOf(address(auction)),
+      5.31e18,
+      "held = 1,00 + 1,10 + 1,21 + 1,00 + 1,00 (en e18)"
+    );
+
+    // held == owed + deadMrn au wei : 5,31e18 == 4,10e18 + 1,21e18.
     invariant_mrnCoversObligations();
   }
 }
