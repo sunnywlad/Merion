@@ -441,7 +441,7 @@ test/Pool.depeg.t.sol            les bandes face a une decote reelle d'un wrappe
 test/Pool.invariant.t.sol        handler (dont chemin gestionnaire) + cinq invariants + deux tests cibles
 test/Pool.feeSplit.t.sol         bornes croisees + invariant I1 de conservation des frais (I.2)
 test/Pool.rent.t.sol             formule de l'accumulateur + ordre de _update sur mint/burn/transfert (I.4)
-test/Auction.invariant.t.sol     handler placeBid/settle/withdrawRefund/warp + invariant I4 (le MRN de l'Auction couvre refunds + pending + highBid) + quatre tests cibles
+test/Auction.invariant.t.sol     handler placeBid/settle/withdrawRefund/warp + invariant I4 (egalite : le MRN de l'Auction == refunds + pending + highBid + deadMrn) + cinq tests cibles
 contracts/Pool.gas.t.sol         mesures de gaz (rapport dans GAS.md)
 contracts/Pool.t.sol             decimals()
 contracts/MockWrappedBTC.t.sol   le mock ERC20Capped du panier
