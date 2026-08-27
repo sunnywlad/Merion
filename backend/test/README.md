@@ -429,7 +429,7 @@ test/Pool.forgedState.t.sol      proprietes atteintes par forge d'etat (vm.store
 test/Pool.feeInForce.t.sol       packing du slot + lecture paresseuse, par vm.store
 test/Pool.setFee.t.sol           fuzz des cinq axes de setFee (bande, appelant, instant, epoch)
 test/Pool.depeg.t.sol            les bandes face a une decote reelle d'un wrapper
-test/Pool.invariant.t.sol        handler + quatre invariants + un test cible
+test/Pool.invariant.t.sol        handler (dont chemin gestionnaire) + cinq invariants + deux tests cibles
 test/Pool.feeSplit.t.sol         bornes croisees + invariant I1 de conservation des frais (I.2)
 test/Pool.rent.t.sol             formule de l'accumulateur + ordre de _update sur mint/burn/transfert (I.4)
 contracts/Pool.gas.t.sol         mesures de gaz (rapport dans GAS.md)

@@ -38,6 +38,17 @@ contract PoolHandler is CommonBase, StdUtils, StdAssertions {
   // l'expose via invariant_addLiquidityDeliversAllThreeLegs.
   bool public allAddLiquidityLegsGrew = true;
 
+  // Chemin gestionnaire (defaut 4) : nombre de swaps qui ont reellement mute
+  // les reserves (swapsExecuted) et, parmi eux, ceux tournes alors qu'un
+  // manager etait nomme pour l'epoch courante (swapsUnderManager). Sous le
+  // harnais courant, setUp de PoolInvariantTest nomme un manager pour
+  // l'epoch 1 et y fait entrer l'horloge : les deux compteurs avancent donc
+  // ensemble. L'ecart n'apparaitrait que si un futur remaniement de fixture
+  // re-vidait le chemin gestionnaire ; invariant_managerPathWasExercised
+  // expose ce garde-fou au runner.
+  uint256 public swapsExecuted;
+  uint256 public swapsUnderManager;
+
   constructor(MockWrappedBTC _wbtc, MockWrappedBTC _cbbtc, MockWrappedBTC _lbtc, Pool _pool) {
     wbtc = _wbtc;
     cbbtc = _cbbtc;
@@ -62,6 +73,19 @@ contract PoolHandler is CommonBase, StdUtils, StdAssertions {
     (uint256[3] memory reservesAfter, uint256[3] memory balancesAfter) = poolState();
     for (uint256 i; i < 3; i++) {
       assertEq(reservesAfter[i] + balancesBefore[i], reservesBefore[i] + balancesAfter[i]);
+    }
+  }
+
+  // Somme des deux registres de frais pour une jambe : part protocole
+  // (globale) + part du mandat `_mgr` (nulle si aucun manager). swap()
+  // deplace protocolCut et managerCut hors de `reserves` vers ces
+  // registres, mais l'argent reste en SOLDE du pool : la conservation
+  // stricte de swapWrapper doit donc porter sur reserves + ces registres,
+  // pas sur reserves seules (addLiquidity / removeLiquidity, eux, ne
+  // touchent aucun registre de frais et gardent la forme simple).
+  function feeRegistrySnapshot(address _mgr) internal view returns (uint256[3] memory owed) {
+    for (uint256 i; i < 3; i++) {
+      owed[i] = pool.protocolFeesOwed(i) + (_mgr == address(0) ? 0 : pool.feesOwed(_mgr, i));
     }
   }
 
@@ -123,6 +147,8 @@ contract PoolHandler is CommonBase, StdUtils, StdAssertions {
     uint256 minOut = bound(_minOut, 0, expectedSwapAmountOut(indexIn, amount, indexOut));
 
     uint256 kBefore = pool.reserves(indexIn) * pool.reserves(indexOut);
+    address mgrAtSwap = pool.manager();
+    uint256[3] memory owedBefore = feeRegistrySnapshot(mgrAtSwap);
     (uint256[3] memory reservesBefore, uint256[3] memory balancesBefore) = poolState();
 
     try pool.swap(indexIn, amount, indexOut, minOut) returns (uint256 result) {
@@ -140,7 +166,35 @@ contract PoolHandler is CommonBase, StdUtils, StdAssertions {
       }
     }
 
-    assertReservesTrackBalances(reservesBefore, balancesBefore);
+    // Conservation avec frais partages : sur la jambe d'entree, le brut
+    // `_amount` se ventile en trois — le NET qui entre dans `reserves`, la
+    // part protocole et (si un manager est nomme) la part manager. Les deux
+    // parts de frais restent en SOLDE du pool mais quittent `reserves` pour
+    // les registres feesOwed. La conservation exacte est donc, par jambe :
+    //   Δreserves[i] + ΔfeesOwed_total[i] == Δbalance[i].
+    // Sans le terme de frais (l'ancienne forme, reservee ici a
+    // addLiquidity / removeLiquidity), tout swap dont managerCut > 0 — le
+    // chemin du defaut 4, exerce a chaque appel depuis que setUp nomme un
+    // manager — faisait echouer cette assertion et etait rejete en silence
+    // sous failOnRevert=false. Le terme de frais reactive la validation sur
+    // ce chemin.
+    (uint256[3] memory reservesAfter, uint256[3] memory balancesAfter) = poolState();
+    uint256[3] memory owedAfter = feeRegistrySnapshot(mgrAtSwap);
+    for (uint256 i; i < 3; i++) {
+      assertEq(
+        reservesAfter[i] + owedAfter[i] + balancesBefore[i],
+        reservesBefore[i] + owedBefore[i] + balancesAfter[i]
+      );
+    }
+
+    // Ce swap a mute les reserves. `mgrAtSwap` non nul => la garde de bande
+    // de swap() vient de s'appliquer au NET du frais partage
+    // (_amount - protocolCut - managerCut) et non au brut : le chemin du
+    // defaut 4. setUp maintient un manager actif pour toute la duree du run.
+    swapsExecuted++;
+    if (mgrAtSwap != address(0)) {
+      swapsUnderManager++;
+    }
 
     uint256 kAfter = pool.reserves(indexIn) * pool.reserves(indexOut);
     assertGe(kAfter, kBefore);
@@ -213,6 +267,13 @@ contract PoolInvariantTest is Test, PoolTestBase {
   PoolHandler public handler;
   uint256 public lastShareValue;
 
+  // Manager nomme pour l'epoch 1 par setUp. Adresse fixe et arbitraire, un
+  // simple EOA sans code : le seul role du manager dans ce harnais est de
+  // rendre pool.manager() non nul pour l'epoch du run, ce qui bascule
+  // swap() sur le chemin managerCut > 0 (defaut 4). Le manager ne recoit
+  // jamais de token ici (claimManagerFees n'est pas appele).
+  address internal constant MANAGER = address(0xA11CE);
+
   function setUp() public override {
     super.setUp();
     handler = new PoolHandler(wbtc, cbbtc, lbtc, pool);
@@ -221,6 +282,35 @@ contract PoolInvariantTest is Test, PoolTestBase {
     lbtc.transfer(address(handler), 21_000_000e8);
 
     targetContract(address(handler));
+
+    // --- Chemin gestionnaire (defaut 4) --------------------------------
+    // Sans cette sequence, le handler ne nomme jamais de manager :
+    // managerCut vaut toujours zero et la garde de bande de swap() sur le
+    // NET du frais partage n'est jamais eprouvee. On nomme donc un manager
+    // pour l'epoch 1 et on fait entrer l'horloge dans cette epoch, comme
+    // deploySeededPoolWithManagerFixture de Pool.audit.test.ts.
+    //
+    // Trois transactions qu'un acteur reel envoie dans cet ordre (aucun
+    // vm.store, aucun etat inatteignable) :
+    //   1. l'owner nomme un manager pour une epoch future. setManager
+    //      l'autorise explicitement tant qu'aucune auction n'est branchee
+    //      (auction == address(0) && msg.sender == owner()) ; ce contrat de
+    //      test est l'owner (feeSetter du deploiement, cf. PoolTestBase).
+    //      Appel fait AVANT le warp, sans quoi _epoch > currentEpoch()
+    //      echouerait.
+    //   2. EPOCH_DURATION s'ecoule, l'epoch 1 commence. Le fuzz Foundry
+    //      n'avance pas block.timestamp entre deux appels du handler : apres
+    //      ce warp unique l'horloge reste dans l'epoch 1 pour tout le run,
+    //      donc manager() rend MANAGER a chaque appel et currentEpoch()
+    //      vaut 1 en permanence.
+    //   3. le manager fixe sa base de frais dans la fenetre de priorite
+    //      (offset 1 s < PRIORITY_WINDOW = 12 s). lastSetFeeEpoch ==
+    //      currentEpoch() == 1, donc feeInForce() rend feeNum (5) et le run
+    //      tourne sous un manager actif a tarif fixe.
+    pool.setManager(1, MANAGER);
+    vm.warp(pool.GENESIS() + pool.EPOCH_DURATION() + 1);
+    vm.prank(MANAGER);
+    pool.setFee(5);
   }
 
   function invariant_reservesNeverExceedBalances() view public {
@@ -290,6 +380,48 @@ contract PoolInvariantTest is Test, PoolTestBase {
       assertLt(reserve * 100, ceiling_ * sum);
       assertGt(reserve * 100, floor_ * sum);
     }
+  }
+
+  // Defaut 4 : la garde de bande de swap() porte sur le NET du frais partage
+  // (_amount - protocolCut - managerCut), jamais sur le brut. Cette
+  // propriete n'est reellement eprouvee que si des swaps tournent sous un
+  // manager nomme (managerCut > 0). setUp en nomme un pour l'epoch 1 et fait
+  // entrer l'horloge dans cette epoch : le compteur du handler doit donc
+  // grimper des qu'un swap mute les reserves. Garde-fou de non-regression :
+  // si un futur remaniement de setUp re-vide le chemin gestionnaire,
+  // swapsUnderManager reste a zero pendant que swapsExecuted grimpe, et cet
+  // invariant mord. Le early-return couvre la fenetre d'avant le premier
+  // swap, ou il n'y a rien a exiger.
+  function invariant_managerPathWasExercised() view public {
+    if (handler.swapsExecuted() == 0) return;
+    assertGt(handler.swapsUnderManager(), 0);
+  }
+
+  // Verite de terrain du harnais elargi : setUp doit produire un manager
+  // ACTIF (nomme + horloge dans son epoch + base de frais fixee), et un
+  // swap qui accroit `feesOwed[MANAGER]` doit conserver l'actif du pool
+  // sous la forme reserves + registres de frais. Verifie hors campagne de
+  // fuzz, sur une sequence deterministe et bornee (reserves sous le seuil
+  // ou le calcul uint72 de kBefore deborde, point faible pre-existant du
+  // handler, sans rapport avec le chemin manager). Sans ce test, une
+  // regression de fixture qui re-viderait le chemin passerait les
+  // invariants (early-return sur swapsExecuted == 0) sans bruit.
+  function test_managerPathIsActiveAndConserves() public {
+    assertEq(pool.manager(), MANAGER);
+    assertEq(pool.currentEpoch(), 1);
+    assertEq(pool.feeInForce(), 5);
+
+    handler.addLiquidityWrapper(0, 1e8, 0);
+    for (uint256 i; i < 30; i++) {
+      handler.swapWrapper(i % 3, 1e6 + i * 1e5, (i + 1) % 3, 0);
+    }
+
+    assertEq(handler.swapsUnderManager(), handler.swapsExecuted());
+    assertGt(handler.swapsUnderManager(), 0);
+    assertGt(
+      pool.feesOwed(MANAGER, 0) + pool.feesOwed(MANAGER, 1) + pool.feesOwed(MANAGER, 2),
+      0
+    );
   }
 
   // Slot of `reserves` in Pool's storage. The packing of `uint72[3]` means
