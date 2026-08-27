@@ -156,6 +156,15 @@ elle rend au wei pres ce que `claimRent` transfere, et une vue nulle
 n'autorise aucun tirage (revert `ZeroRentOwed`). C'est la fondation de
 l'invariant differentiel I.6.
 
+L'etape I.6 ajoute les invariants Foundry differes : le handler de
+`test/Pool.invariant.t.sol` est elargi au chemin gestionnaire
+(`managerCut > 0`) pour I3 (chaque jambe dans sa bande, tout appelant),
+et un fichier neuf `test/Auction.invariant.t.sol` porte I4 : le MRN
+detenu par l'Auction couvre en permanence `Σ refunds + pendingAmount +
+highBid`. Les deux invariants sont doubles d'un test de mutation (garde
+retiree du contrat -> l'invariant, et lui seul, tombe) et de tests
+deterministes qui prouvent chaque chemin sensible atteignable.
+
 ## Structure de la suite
 
 `Pool.constructor.test.ts` :
@@ -432,6 +441,7 @@ test/Pool.depeg.t.sol            les bandes face a une decote reelle d'un wrappe
 test/Pool.invariant.t.sol        handler (dont chemin gestionnaire) + cinq invariants + deux tests cibles
 test/Pool.feeSplit.t.sol         bornes croisees + invariant I1 de conservation des frais (I.2)
 test/Pool.rent.t.sol             formule de l'accumulateur + ordre de _update sur mint/burn/transfert (I.4)
+test/Auction.invariant.t.sol     handler placeBid/settle/withdrawRefund/warp + invariant I4 (le MRN de l'Auction couvre refunds + pending + highBid) + quatre tests cibles
 contracts/Pool.gas.t.sol         mesures de gaz (rapport dans GAS.md)
 contracts/Pool.t.sol             decimals()
 contracts/MockWrappedBTC.t.sol   le mock ERC20Capped du panier
