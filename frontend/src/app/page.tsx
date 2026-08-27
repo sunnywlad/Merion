@@ -6,6 +6,8 @@ import AddLiquidity from '@/components/AddLiquidity';
 import RemoveLiquidity from '@/components/RemoveLiquidity';
 import Swap from '@/components/Swap';
 import MandatePanel from '@/components/MandatePanel';
+import AuctionPanel from '@/components/AuctionPanel';
+import MrnGrant from '@/components/MrnGrant';
 
 export default function Home() {
   return (
@@ -30,6 +32,8 @@ export default function Home() {
           <RemoveLiquidity />
           <Swap />
           <Faucet />
+          <MrnGrant />
+          <AuctionPanel />
         </div>
       </main>
     </div>

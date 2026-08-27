@@ -24,7 +24,12 @@ export function useAuctionState() {
       // `startOfEpoch(sellingEpoch - 1)`, et la soustraction sous-déborde à
       // `sellingEpoch == 0`. Cette entrée en échec est donc un état nominal, et
       // le panneau la lit comme telle au lieu de la router vers `ReadErrors`.
-      { address: deployedAuction ?? undefined, abi: auctionAbi, functionName: 'closesAt', args: [] }
+      { address: deployedAuction ?? undefined, abi: auctionAbi, functionName: 'closesAt', args: [] },
+      // I.6 — Le mandat gagné mais pas encore réglé. Les deux valent zéro
+      // ensemble quand le slot est vide (`settle()` viendrait de reverter
+      // `NoBidToSettle`) : c'est un état nominal, pas une erreur de lecture.
+      { address: deployedAuction ?? undefined, abi: auctionAbi, functionName: 'pendingEpoch', args: [] },
+      { address: deployedAuction ?? undefined, abi: auctionAbi, functionName: 'pendingAmount', args: [] }
     ] as const,
     query: {
       enabled: deployedAuction !== null,
@@ -39,6 +44,8 @@ export function useAuctionState() {
     highBidder: data?.[3],
     windowOpen: data?.[4],
     closesAt: data?.[5],
+    pendingEpoch: data?.[6],
+    pendingAmount: data?.[7],
     isLoading,
     error,
     queryKey
