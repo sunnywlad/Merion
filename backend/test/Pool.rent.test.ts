@@ -140,11 +140,16 @@ async function depositAs(
   await pool.write.addLiquidity([0n, amountPerLeg, 0n], { account: lp.account });
 }
 
-// Transfere `amount` MRN au Pool (le fait Auction.settle avant l'appel)
-// puis notifie le loyer depuis l'EOA-enchere.
+// M2 (I.7) : reproduit le pull pattern de `Auction.settle()` ->
+// `pool.notifyRent()`. Le deployer finance l'EOA-enchere du montant
+// exact (le 70 % qu'un settle reel lui aurait laisse), l'EOA-enchere
+// approuve le Pool, et `notifyRent` tire en pull. La section V
+// (Solvabilite) repose sur ce financement EXACT : sur-financer le Pool
+// masquerait la solvabilite, qui est precisement ce qu'elle verifie.
 async function notifyRent(fixture: RentFixture, amount: bigint) {
   const { pool, mrn, deployer, auctionEOA } = fixture;
-  await mrn.write.transfer([pool.address, amount], { account: deployer.account });
+  await mrn.write.transfer([auctionEOA.account.address, amount], { account: deployer.account });
+  await mrn.write.approve([pool.address, amount], { account: auctionEOA.account });
   await pool.write.notifyRent([amount], { account: auctionEOA.account });
 }
 
@@ -212,7 +217,12 @@ describe("Pool.rent", async function () {
         //   rentEnd  = block.timestamp + EPOCH_DURATION
         const expectedRate = (RENT * SCALE) / EPOCH_DURATION;
 
-        await mrn.write.transfer([pool.address, RENT], { account: deployer.account });
+        // M2 (I.7) : l'EOA-enchere detient le MRN, approuve le Pool, et
+        // `notifyRent` tire en pull. Le test suivant fixe le timestamp AVANT
+        // l'appel pour pouvoir asserter l'event `RentNotified` sur la valeur
+        // exacte de `rentEnd` (callTs + EPOCH_DURATION).
+        await mrn.write.transfer([auctionEOA.account.address, RENT], { account: deployer.account });
+        await mrn.write.approve([pool.address, RENT], { account: auctionEOA.account });
         const callTs = (await now()) + 1n; // le prochain bloc
         await networkHelpers.time.setNextBlockTimestamp(callTs);
         await viem.assertions.emitWithArgs(

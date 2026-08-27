@@ -40,7 +40,14 @@ contract PoolRentAccumulatorTest is Test, PoolTestBase {
   }
 
   function _notify(uint256 amount) internal {
-    mrn.transfer(address(pool), amount); // Auction.settle envoie le MRN avant l'appel
+    // M2 (I.7) : le Pool TIRE, l'Auction ne POUSSE plus. `address(this)`
+    // joue l'enchere (cf. setUp), il a recu tout le MRN mint par le
+    // deployer de MRN (transfert direct au test contrat, ou via MRN
+    // pre-mint). L'approbation est posee ici, exactement le `max`
+    // suffisant pour un seul notifyRent — la section V de
+    // Pool.rent.test.ts pose `max` et verifie la solvabilite au centime
+    // pres.
+    mrn.approve(address(pool), amount);
     pool.notifyRent(amount);
   }
 
@@ -193,5 +200,34 @@ contract PoolRentAccumulatorTest is Test, PoolTestBase {
     vm.prank(LP2);
     vm.expectRevert(Pool.ZeroRentOwed.selector);
     pool.claimRent();
+  }
+
+  // --- 4. M2 (I.7) : pull depuis l'Auction, garde d'approbation ----
+
+  // M2 — le Pool TIRE, l'Auction ne POUSSE plus. Sans approbation de
+  // l'Auction (ici `address(this)`) vers le Pool, `safeTransferFrom`
+  // reverte `ERC20InsufficientAllowance` et la totalite de `notifyRent`
+  // est annulee (CEI : aucun effet d'etat engage). C'est l'echec
+  // bruyant documente en I.7 #10, preferable a une sur-declaration
+  // silencieuse de l'Auction (l'ancien push masquait l'approbation
+  // manquante : un _settle qui reverte apres le burn laissait l'Auction
+  // amputee de ses 30 %).
+  //
+  // Aucune approbation posee dans le harnais : `address(this)` n'a
+  // jamais appele `mrn.approve(address(pool), ...)` — seul `_notify`
+  // pose l'approbation necessaire, et le test ci-dessous ne passe pas
+  // par lui.
+  function test_NotifyRentRevertsWithoutApproval() public {
+    uint256 amount = 1e18;
+    // Garde specifique : sur pool non amorce (totalSupply == 0) la branche
+    // early-return POSERAIT rentLeftOver, mais le test interesse la branche
+    // du pull, inconditionnelle en queue. On amorce donc le pool pour
+    // traverser aussi la branche `else` (re-base du stream) et montrer
+    // que le pull reverte a la fin, apres que les effets sont poses.
+    pool.addLiquidity(0, SEED, 0);
+    assertEq(mrn.allowance(address(this), address(pool)), 0, "aucune approbation posee par defaut");
+
+    vm.expectRevert(); // ERC20InsufficientAllowance(address(pool), 0, 1e18)
+    pool.notifyRent(amount);
   }
 }

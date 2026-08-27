@@ -568,6 +568,21 @@ contract Pool is ERC20, Ownable, Pausable {
   // mortes de 0x...dEaD reste non reclamable — c'est la reponse
   // honnete a « ou va la poussiere ? » documentee dans
   // build-auction.md 4.4 (1).
+  //
+  // M2 (I.7) : le MRN est tire en PULL, pas pousse par l'Auction. Le
+  // decouplage entre les deux contrats est l'argument load-bearing :
+  // `notifyRent` EST deja garde `onlyAuction` (NotAuction, teste) ; le
+  // pull ne rajoute aucune parade, il garantit que la garde de cablage
+  // (approbation Auction -> Pool, posee au constructeur de l'Auction,
+  // cf. `Auction.sol` constructeur) est l'unique condition manquante.
+  // Sans approbation, `safeTransferFrom` reverte `ERC20InsufficientAllowance`
+  // et la totalite de la transaction est annulee, y compris les effets
+  // d'etat poses plus haut (re-base, rentLeftOver, rentRate, rentEnd,
+  // rentLastUpdate) : c'est l'echec bruyant documente en I.7 #10,
+  // preferable a une sur-declaration silencieuse. Le retrait du
+  // `safeTransfer` de `_settle` rend l'argument vrai PAR CONSTRUCTION :
+  // les deux contrats n'ont plus besoin de transferer l'un vers l'autre,
+  // chacun n'a qu'a connaitre l'adresse de l'autre et l'approbation.
   function notifyRent(uint256 amount) external {
     require(msg.sender == auction, NotAuction());
     _updateRent();
@@ -581,24 +596,30 @@ contract Pool is ERC20, Ownable, Pausable {
       // admin (build-auction.md E4). Valeur differee, pas perdue : la voie
       // de retour est le fonctionnement nominal du protocole.
       rentLeftOver += amount;
-      return;
+    } else {
+      // Re-base du stream : la traine non encore distribuee du stream courant
+      // (`rentRate * temps restant`, echelle 1e18) est reversee dans
+      // `rentLeftOver` avant l'ecrasement de `rentRate`, sinon elle
+      // disparaitrait en silence. `_updateRent()` a deja fige l'accru jusqu'a
+      // maintenant, donc la periode ecoulee n'est pas comptee deux fois. Si
+      // le stream courant est deja expire la traine vaut zero et seul le
+      // `rentLeftOver` deja present (cycle supply bas anterieur) compte, ce
+      // que la formule ci-dessous gere sans branche supplementaire.
+      if (rentEnd > block.timestamp) {
+        rentLeftOver += rentRate * (rentEnd - block.timestamp) / 1e18;
+      }
+      rentRate = (amount + rentLeftOver) * 1e18 / EPOCH_DURATION;
+      rentLeftOver = 0;
+      rentEnd = block.timestamp + EPOCH_DURATION;
+      rentLastUpdate = block.timestamp;
+      emit RentNotified(amount, rentRate, rentEnd);
     }
-    // Re-base du stream : la traine non encore distribuee du stream courant
-    // (`rentRate * temps restant`, echelle 1e18) est reversee dans
-    // `rentLeftOver` avant l'ecrasement de `rentRate`, sinon elle
-    // disparaitrait en silence. `_updateRent()` a deja fige l'accru jusqu'a
-    // maintenant, donc la periode ecoulee n'est pas comptee deux fois. Si
-    // le stream courant est deja expire la traine vaut zero et seul le
-    // `rentLeftOver` deja present (cycle supply bas anterieur) compte, ce
-    // que la formule ci-dessous gere sans branche supplementaire.
-    if (rentEnd > block.timestamp) {
-      rentLeftOver += rentRate * (rentEnd - block.timestamp) / 1e18;
-    }
-    rentRate = (amount + rentLeftOver) * 1e18 / EPOCH_DURATION;
-    rentLeftOver = 0;
-    rentEnd = block.timestamp + EPOCH_DURATION;
-    rentLastUpdate = block.timestamp;
-    emit RentNotified(amount, rentRate, rentEnd);
+    // CEI strict : effets d'etat poses AVANT l'interaction externe. Une
+    // rejection ici (allowance ou balance de l'Auction) revert
+    // integralement la transaction, donc rien de ce qui precede n'est
+    // engage. Un appel ulterieur rejoue alors le meme scenario sur le
+    // meme `rentLeftOver` / `rentRate` / `rentEnd`.
+    IERC20(mrn).safeTransferFrom(msg.sender, address(this), amount);
   }
 
   // I.4 — tirage du loyer LP, pull-only. Flush l'accumulateur, puis ajoute

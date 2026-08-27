@@ -232,6 +232,18 @@ contract Auction {
     // `settle()`. Il est pose ici uniquement parce que la construction de
     // `pool` le rend gratuit.
     treasury = p.treasury();
+
+    // M2 (I.7) : l'Auction pre-approuve le Pool sur le MRN. La pose est
+    // ici plutot qu'au cablage parce que l'adresse du Pool y est
+    // `immutable` (cf. ci-dessus), donc la condition d'I.7 #10
+    // (« constructeur si l'adresse du pool y est immutable ») tient. Le
+    // Pool tire sur cette approbation dans `notifyRent`
+    // (cf. `Pool.sol`, I.7 #8-9) : c'est le decouplage qui rend l'argument
+    // vrai par construction, sans adjacence de deux lignes dans un
+    // contrat tiers. `approve` (vs `forceApprove`) est adapte ici :
+    // l'Auction est fraichement deployee, l'allowance MRN precedente est
+    // nulle, le passage 0 -> max ne peut pas reverter.
+    IERC20(_mrn).approve(address(p), type(uint256).max);
   }
 
   // -------------------------------------------------------------------------
@@ -493,7 +505,15 @@ contract Auction {
     uint256 burnAmount = pendingAmount * BURN_BPS / SPLIT_DEN;
     uint256 lpAmount = pendingAmount - burnAmount;
     ERC20Burnable(address(mrn)).burn(burnAmount);
-    mrn.safeTransfer(address(pool), lpAmount);
+    // M2 (I.7) : l'Auction ne POUSSE plus le MRN vers le Pool. C'est
+    // `Pool.notifyRent` qui TIRE, en pull, sur l'approbation posee au
+    // constructeur de l'Auction (cf. constructeur, I.7 #10). La garde
+    // est exercee par la test suite (test_SettleRevertsWithoutApproval,
+    // I.7 #10) : sans approbation, le pull reverte
+    // `ERC20InsufficientAllowance` et la totalite du settle (incluant
+    // le burn ci-dessus) est annulee, laissant l'Auction et le Pool
+    // dans l'etat d'avant. Le reseau economique de la part 70/30 reste
+    // inchange (cf. I.7 #8) : 30 % detruits, 70 % arrives au Pool.
     pool.notifyRent(lpAmount);
 
     // Nomination du manager par `pool.setManager` (R3, point (3) de
