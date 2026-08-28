@@ -3,7 +3,7 @@ import { IBM_Plex_Sans, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
 
 import Providers from "./providers";
-import Header from "@/components/Header";
+import Navbar from "@/components/Navbar";
 
 const plexSans = IBM_Plex_Sans({
   variable: "--font-sans",
@@ -30,7 +30,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         className={`${plexSans.variable} ${plexMono.variable} min-h-full flex flex-col`}
       >
         <Providers>
-          <Header />
+          <Navbar />
           {children}
         </Providers>
       </body>
