@@ -58,6 +58,11 @@ const BPS_DEN = 10000n;
 const SPLIT_DEN = 10000n;
 const BURN_BPS = 3000n;
 const LP_BPS = 7000n;
+// Prime au caller de settle() : 0,1 % de lpAmount en MRN, prelevee sur le
+// flux qui va aux LP. Cf. Auction.sol SETTLE_REWARD_BPS et le merion-concepts
+// pour l'argumentaire (sans prime, seul le futur gestionnaire a interet direct
+// a settle, et l'enchere peut rester en suspens indefiniment).
+const SETTLE_REWARD_BPS = 10n;
 
 // L'addresse nulle, lue comme `zeroAddress` de viem.
 const ZERO_ADDRESS = zeroAddress;
@@ -533,7 +538,7 @@ describe("Auction", async function () {
         // surenchere. A l'ouverture de l'enchere du mandat 2, la
         // reinit capture le mandat 1 dans le slot pending et appelle
         // _settle() automatiquement.
-        const { auction, bidderA, mrn, pool, genesis } = await networkHelpers.loadFixture(deployTokensAndContractsFixture);
+        const { auction, deployer, bidderA, mrn, pool, genesis } = await networkHelpers.loadFixture(deployTokensAndContractsFixture);
 
         await warpToGenesis(genesis);
         await auction.write.placeBid([FIRST_BID], { account: bidderA.account });
@@ -542,6 +547,11 @@ describe("Auction", async function () {
         const totalSupplyBefore = await mrn.read.totalSupply();
         const auctionBalanceBefore = await mrn.read.balanceOf([auction.address]);
         const auctionSupplyBefore = await mrn.read.totalSupply();
+        // Le caller de `settle()` est le deployer (premier walletClient),
+        // le bot n'ayant pas de compte reserve dans cette suite. Le delta
+        // du solde MRN du caller doit valoir 0,1 % de lpAmount : prime de
+        // settle() (cf. Auction.sol SETTLE_REWARD_BPS, merion-concepts).
+        const callerBalanceBefore = await mrn.read.balanceOf([deployer.account.address]);
 
         _assertEqual(auctionBalanceBefore, FIRST_BID, "avant le settle, l'Auction detient 2 MRN");
 
@@ -551,17 +561,26 @@ describe("Auction", async function () {
         await warpToBidSilenceWindow(genesis, 1n);
         await auction.write.settle();
 
-        // Le partage : 30 % brule, 70 % au pool.
+        // Le partage : 30 % brule, 70 % au pool, desquels 0,1 % partent au
+        // caller de settle() (SETTLE_REWARD_BPS = 10 sur BPS_DEN = 10000).
         const expectedBurn = FIRST_BID * BURN_BPS / SPLIT_DEN;
         const expectedLp = FIRST_BID - expectedBurn;
+        const expectedReward = expectedLp * SETTLE_REWARD_BPS / BPS_DEN;
+        const expectedPoolAfterReward = expectedLp - expectedReward;
 
         const poolBalanceAfter = await mrn.read.balanceOf([pool.address]);
         const totalSupplyAfter = await mrn.read.totalSupply();
+        const callerBalanceAfter = await mrn.read.balanceOf([deployer.account.address]);
 
         _assertEqual(
           poolBalanceAfter - poolBalanceBefore,
-          expectedLp,
-          "le pool doit avoir recu exactement 70 % du clearing",
+          expectedPoolAfterReward,
+          "le pool doit avoir recu 99,9 % de lpAmount, le 0,1 % allant au caller de settle",
+        );
+        _assertEqual(
+          callerBalanceAfter - callerBalanceBefore,
+          expectedReward,
+          "le caller de settle doit avoir recu 0,1 % de lpAmount en MRN",
         );
         _assertEqual(
           totalSupplyBefore - totalSupplyAfter,
