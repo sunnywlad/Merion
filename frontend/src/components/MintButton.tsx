@@ -1,3 +1,5 @@
+'use client';
+
 import {useWriteContract, useConnection, useWaitForTransactionReceipt, useWatchAsset} from 'wagmi';
 import {parseUnits, Address} from 'viem';
 import {mockWrappedBTCAbi} from '@/constants/abi';
@@ -43,7 +45,7 @@ const MintButton = ({name, address}: {name: string, address: Address}) => {
         args: [userAddress, mintedAmount]
       })}}
       disabled={waiting || !userAddress}>
-        {waiting ? "Mint en cours" : `Mint ${name}`}
+        {waiting ? "Mint en cours" : `Mint 10 ${name}`}
       </button>
       {error && <p>{error.message}</p>}
     </div>

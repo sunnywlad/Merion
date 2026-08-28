@@ -1,83 +1,126 @@
 'use client';
 
-import { useState, useRef } from 'react';
-import { useWriteContract, useConnection, useWaitForTransactionReceipt, useWatchAsset } from 'wagmi';
-import { useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import { useWriteContract, useConnection, useWaitForTransactionReceipt, useReadContract, useWatchAsset } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
-import { deployedMrn, MRN_DECIMALS } from '@/constants/addresses';
-import { mrnAbi } from '@/constants/abi';
+import { formatUnits } from 'viem';
+import { deployedFaucet, deployedMrn, MRN_DECIMALS } from '@/constants/addresses';
+import { mrnFaucetAbi } from '@/constants/abi';
 import Panel from '@/components/Panel';
 
-const DEV_GRANT = 1_000n * 10n ** 18n; // I.6 — 1000 MRN, pour rendre une mise démontrable depuis un autre compte.
-
-// I.6 — Sur le modèle de `Faucet`/`MintButton` (même Panel, même bouton bordé) :
-// MRN a une supply fixe, sans `mint`, toute entière chez le compte 0 au
-// déploiement. Ce bouton dev transfère depuis le compte CONNECTÉ, donc il ne
-// fait quelque chose que connecté en account 0.
+// V.0 — Un seul bouton : `drip()` sur le faucet. Plus de « envoyer à mon
+// adresse », qui ne fonctionnait que depuis l'owner et restait silencieusement
+// cassé pour quiconque. Le faucet redistribue depuis un réservoir pré-financé,
+// sans mint (cf. `MrnFaucet.sol` commentaire d'en-tête).
 const MrnGrant = () => {
-  const [recipient, setRecipient] = useState('');
   const userAddress = useConnection().address;
   const { mutate, isPending, error, data: hash } = useWriteContract();
   const { isLoading, isSuccess } = useWaitForTransactionReceipt({ hash });
   const waiting = isPending || isLoading;
   const queryClient = useQueryClient();
-  // I.6 — Même correctif que `MintButton` : un wallet qui n'a jamais vu MRN
-  // ignore ses 18 décimales et affiche le montant brut (1000 MRN devient un
-  // nombre à 21 chiffres). Le premier envoi réussi déclenche
-  // `wallet_watchAsset` une seule fois par montage (`asked`), sur le compte
-  // CONNECTÉ (l'envoyeur) — pas de bouton séparé à maintenir en double.
+
+  // `dripInterval` et `dripAmount` sont des `immutable` cote contrat : une
+  // lecture par session suffit (staleTime Infinity). Lire depuis le contrat
+  // et non depuis des constantes en dur : si l'argument du constructeur du
+  // faucet change, le front suit en silence, sans desync entre le label, le
+  // cooldown et la regle on-chain.
+  const dripInterval = useReadContract({
+    address: deployedFaucet ?? undefined,
+    abi: mrnFaucetAbi,
+    functionName: 'dripInterval',
+    args: [],
+    query: { enabled: deployedFaucet !== null, staleTime: Infinity }
+  });
+  const dripAmount = useReadContract({
+    address: deployedFaucet ?? undefined,
+    abi: mrnFaucetAbi,
+    functionName: 'dripAmount',
+    args: [],
+    query: { enabled: deployedFaucet !== null, staleTime: Infinity }
+  });
+
+  // Le `lastDripAt` lu en polling lent (30 s) suffit : la valeur bouge une
+  // fois par drip, et le bouton n'a pas besoin d'etre a la seconde pres.
+  const lastDrip = useReadContract({
+    address: deployedFaucet ?? undefined,
+    abi: mrnFaucetAbi,
+    functionName: 'lastDripAt',
+    args: userAddress === undefined ? undefined : [userAddress],
+    query: { enabled: deployedFaucet !== null && userAddress !== undefined, refetchInterval: 30000 }
+  });
+  const lastDripAt = lastDrip.data;
+
+  const drip = () => {
+    if (!userAddress || deployedFaucet === null) return;
+    mutate({
+      address: deployedFaucet,
+      abi: mrnFaucetAbi,
+      functionName: 'drip',
+      args: []
+    });
+  };
+
+  // V.0 — Meme correctif que `MintButton` : un wallet qui n'a jamais vu MRN
+  // ignore ses 18 decimales et affiche le montant brut. Premier drip reussi
+  // declenche `wallet_watchAsset` une seule fois par montage (`asked`).
   const { mutate: watchAsset } = useWatchAsset();
   const asked = useRef(false);
 
   useEffect(() => {
     if (isSuccess) {
       queryClient.invalidateQueries();
-      setRecipient('');
       if (!asked.current) {
         asked.current = true;
+        // L'ajout au wallet regarde MRN, pas le faucet : c'est MRN que
+        // l'utilisateur veut voir avec 18 decimales dans MetaMask.
         watchAsset({ type: 'ERC20', options: { address: deployedMrn, symbol: 'MRN', decimals: MRN_DECIMALS } });
       }
     }
   }, [isSuccess, queryClient, watchAsset]);
 
-  const send = (to: string) => {
-    if (!userAddress || !to.startsWith('0x')) return;
-    mutate({
-      address: deployedMrn,
-      abi: mrnAbi,
-      functionName: 'transfer',
-      args: [to as `0x${string}`, DEV_GRANT]
-    });
-  };
+  // Bouton desactive aussi pendant le cooldown. `lastDripAt` et `dripInterval`
+  // sont en secondes (block.timestamp), `Date.now()` aussi : l'ecart est direct.
+  // Si `dripInterval` n'est pas encore arrive, le cooldown reste a 0 et le
+  // bouton est actif (mais le contrat rejettera de toute facon avec TooEarly).
+  const cooldownSeconds = lastDripAt !== undefined && dripInterval.data !== undefined
+    ? Number(lastDripAt) + Number(dripInterval.data) - Math.floor(Date.now() / 1000)
+    : 0;
+  const inCooldown = lastDripAt !== undefined && cooldownSeconds > 0;
+  const faucetMissing = deployedFaucet === null;
+  const dripAmountLabel = dripAmount.data !== undefined
+    ? formatUnits(dripAmount.data, MRN_DECIMALS)
+    : '...';
+  const intervalHours = dripInterval.data !== undefined
+    ? Number(dripInterval.data) / 3600
+    : 0;
 
   return (
     <Panel>
       <p className='font-semibold pb-2'>Get MRN</p>
       <p className='text-sm pb-2'>
-        N&apos;a d&apos;effet que connecté sur le compte 0 (détenteur de tout le MRN à l&apos;origine).
+        Demande {dripAmountLabel} MRN au faucet du projet, qui redistribue depuis le reservoir
+        pre-finance par l&apos;owner du pool au deploiement. Une demande toutes
+        les {intervalHours} h par adresse.
       </p>
-      <div className='flex flex-wrap gap-4 items-center'>
-        <input
-          className='px-2 border rounded flex-1 min-w-0 disabled:opacity-50 disabled:cursor-not-allowed'
-          type='text'
-          placeholder='Adresse destinataire'
-          value={recipient}
-          disabled={waiting}
-          onChange={(e) => setRecipient(e.target.value)}
-        />
-        <button
-          className='border rounded px-4 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50'
-          onClick={() => send(recipient)}
-          disabled={waiting || !userAddress || !recipient.startsWith('0x')}>
-          {waiting ? 'Envoi en cours' : 'Envoyer 1000 MRN'}
-        </button>
-        <button
-          className='border rounded px-4 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50'
-          onClick={() => userAddress && send(userAddress)}
-          disabled={waiting || !userAddress}>
-          {waiting ? 'Envoi en cours' : 'Envoyer à mon adresse'}
-        </button>
-      </div>
+      {faucetMissing ? (
+        <p className='text-sm pb-2 italic'>
+          Faucet non deploye sur cette chaine : relancer <code>workMerion</code>.
+        </p>
+      ) : (
+        <div className='flex flex-wrap gap-4 items-center'>
+          <button
+            className='border rounded px-4 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50'
+            onClick={drip}
+            disabled={waiting || !userAddress || inCooldown}>
+            {waiting ? 'Drip en cours' : `Demander ${dripAmountLabel} MRN`}
+          </button>
+          {inCooldown && (
+            <span className='text-sm'>
+              Prochain drip dans {Math.floor(cooldownSeconds / 60)} min.
+            </span>
+          )}
+        </div>
+      )}
       {error && <p>{error.message}</p>}
     </Panel>
   );

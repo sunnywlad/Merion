@@ -31,8 +31,8 @@ const Swap = () => {
 
   const userAddress = useConnection().address;
 
-  const { data : balancesData } = useUserBalances();
-  const balanceInData = balancesData?.[indexIn];
+  const { btcBalances } = useUserBalances();
+  const balanceInData = btcBalances[indexIn];
   const balanceIn = balanceInData?.result;
 
   const {error: errorReserves, reserves: reserveEntries} = useReserves();

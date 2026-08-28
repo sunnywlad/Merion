@@ -49,7 +49,7 @@ abstract contract AuctionTestBase is Test {
   uint256 internal constant AUCTION_WINDOW = 900; // 15 min
   uint256 internal constant MAX_EXTENSION = 0; // A1 roadmap
   uint256 internal constant BID_SILENCE = 60; // fenetre de settle avant fin d'epoch
-  uint256 internal constant MIN_OPENING_BID = 1e18; // 1 MRN a 18 decimales
+  uint256 internal constant MIN_OPENING_BID = 10e18; // 10 MRN a 18 decimales (restated 2026-08-28)
 
   // Le prix d'ouverture au-dessus de MIN_OPENING_BID. C'est la valeur
   // qu'utilise `placeBid` quand une enchere est deja ouverte, parce que
@@ -57,7 +57,7 @@ abstract contract AuctionTestBase is Test {
   // +10 % sur une mise plus haute. Voir 5.3 (3) : `placeBid` prend
   // `max(MIN_OPENING_BID, highBid * 11 / 10)`, et toute enchere succes-
   // sive passe par la branche `highBid * 11 / 10`.
-  uint256 internal constant FIRST_BID = 2e18; // 2 MRN
+  uint256 internal constant FIRST_BID = 10.5e18; // 10.5 MRN, premier bid au-dessus de MIN_OPENING_BID (10 MRN) et sous la hausse +10% (11 MRN)
 
   address internal constant BIDDER_A = address(uint160(0xA11CE));
   address internal constant BIDDER_B = address(uint160(0xB0B));
@@ -131,11 +131,11 @@ abstract contract AuctionTestBase is Test {
 contract AuctionEpochResetTest is AuctionTestBase {
 
   function test_HighBidResetsOnEpochRollover() public {
-    // Mandat 0, l'enchere du mandat 1. BIDDER_A pose 2 MRN. Le slot
+    // Mandat 0, l'enchere du mandat 1. BIDDER_A pose 10.5 MRN (FIRST_BID). Le slot
     // `highBid` est non nul.
     _warpToEpoch(0);
     _bidAs(BIDDER_A, FIRST_BID);
-    assertEq(auction.highBid(), FIRST_BID, "highBid doit valoir 2 MRN apres la mise initiale");
+    assertEq(auction.highBid(), FIRST_BID, "highBid doit valoir 10.5 MRN apres la mise initiale");
 
     // On avance au mandat 1 (la fenetre du mandat 1 est ouverte). Aucun
     // bid n'a ete pose sur l'enchere du mandat 2.
@@ -144,27 +144,27 @@ contract AuctionEpochResetTest is AuctionTestBase {
     // Calcul a la main : sur l'enchere du mandat 2,
     // `sellingEpoch == 1` mais `currentEpoch() + 1 == 2`. La comparaison
     // de la reinitialisation echoue, le slot est rouvert a zero, et
-    // `highBid` passe a 0. La mise de 2 MRN * 110 / 100 = 2.2 MRN - 1
-    // wei doit donc passer, ce qu'elle ne ferait PAS si le slot
-    // portait encore l'ancien 2 MRN.
-    _bidAs(BIDDER_B, 2e18 + 1);
+    // `highBid` passe a 0. La mise de 10.5 MRN + 1 wei est sous la hausse
+    // +10% (11.55 MRN) du precedent highBid, ce qui ne passerait PAS si le
+    // slot portait encore l'ancien 10.5 MRN.
+    _bidAs(BIDDER_B, 10.5e18 + 1);
 
     assertEq(
       auction.highBid(),
-      2e18 + 1,
-      "apres rollover, highBid doit avoir ete remis a zero : la mise tient, pas une deuxieme fois 2.2 MRN"
+      10.5e18 + 1,
+      "apres rollover, highBid doit avoir ete remis a zero : la mise tient, pas une deuxieme fois 11.55 MRN"
     );
   }
 
   function test_RefundsAreNotClearedByTheEpochRollover() public {
-    // L'enchere du mandat 1 : BIDDER_A pose 2 MRN, BIDDER_B enchérit
+    // L'enchere du mandat 1 : BIDDER_A pose 10.5 MRN (FIRST_BID), BIDDER_B enchérit
     // au-dessus et le dépasse. BIDDER_A est crédité dans `refunds`.
-    // Le seuil pour la surenchere est `highBid * 11/10 = 2.2 MRN` (avec
+    // Le seuil pour la surenchere est `highBid * 11/10 = 11.55 MRN` (avec
     // HIGH_BID_BPS = 11000, voir commentaire dans Auction.sol).
     _warpToEpoch(0);
     _bidAs(BIDDER_A, FIRST_BID);
     _bidAs(BIDDER_B, (FIRST_BID * 11) / 10);
-    assertEq(auction.refunds(BIDDER_A), FIRST_BID, "BIDDER_A doit etre credite de 2 MRN");
+    assertEq(auction.refunds(BIDDER_A), FIRST_BID, "BIDDER_A doit etre credite de 10.5 MRN");
 
     // On avance au mandat 1, on enchérit sur le mandat 2. La
     // reinitialisation par comparaison a efface `highBid`, `highBidder`
@@ -375,20 +375,20 @@ contract AuctionSettleInvariantTest is AuctionTestBase {
   }
 
   function test_SettleBurns30AndSends70ToPool() public {
-    // L'enchere du mandat 1. BIDDER_A pose 2 MRN. L'enchere cloture a
+    // L'enchere du mandat 1. BIDDER_A pose 10.5 MRN (FIRST_BID). L'enchere cloture a
     // la dure sans qu'un autre encherisseur ne surenchérisse. Le bot
     // appelle `settle()` pendant la fenetre BID_SILENCE, AVANT que
     // l'epoch ne tourne. La garde `_epoch > currentEpoch()` du Pool
     // (I.1) tient : `pendingEpoch (1) > currentEpoch() (0)`.
     _warpToEpoch(0);
     _bidAs(BIDDER_A, FIRST_BID);
-    assertEq(auction.highBid(), FIRST_BID, "highBid vaut 2 MRN");
+    assertEq(auction.highBid(), FIRST_BID, "highBid vaut 10.5 MRN");
 
     // Avant le settle, le MRN de l'Auction vaut exactement le highBid.
     assertEq(
       mrn.balanceOf(address(auction)),
       FIRST_BID,
-      "avant le settle, l'Auction detient 2 MRN"
+      "avant le settle, l'Auction detient 10.5 MRN"
     );
     uint256 totalSupplyBefore = mrn.totalSupply();
 
@@ -396,19 +396,32 @@ contract AuctionSettleInvariantTest is AuctionTestBase {
     // capture les deltas AVANT l'appel pour mesurer le partage.
     _warpToBidSilenceWindow(1);
     uint256 poolBalanceBefore = mrn.balanceOf(address(pool));
+    uint256 callerBalanceBefore = mrn.balanceOf(address(this));
     auction.settle();
     uint256 poolBalanceAfter = mrn.balanceOf(address(pool));
+    uint256 callerBalanceAfter = mrn.balanceOf(address(this));
     uint256 totalSupplyAfter = mrn.totalSupply();
 
-    // Le partage : 30 % brule (sur SPLIT_DEN = 10000), 70 % au pool.
+    // Le partage : 30 % brule (sur SPLIT_DEN = 10000), 70 % au pool,
+    // desquels 0,1 % partent au caller de settle (SETTLE_REWARD_BPS = 10).
     uint256 expectedBurn = FIRST_BID * 3000 / 10000;
     uint256 expectedLp = FIRST_BID - expectedBurn;
+    uint256 expectedReward = expectedLp * 10 / 10000;
+    uint256 expectedPoolAfterReward = expectedLp - expectedReward;
 
-    // 1) Le pool a recu EXACTEMENT 70 % de pendingAmount.
+    // 1) Le pool a recu EXACTEMENT 99,9 % de lpAmount (les 70 % du
+    //    pending, moins la prime du caller de settle).
     assertEq(
       poolBalanceAfter - poolBalanceBefore,
-      expectedLp,
-      "le pool doit avoir recu exactement 70 % du pendingAmount, pas tout ni rien"
+      expectedPoolAfterReward,
+      "le pool doit avoir recu 99,9 % de lpAmount, le 0,1 % allant au caller de settle"
+    );
+
+    // 1bis) Le caller de settle() (le contrat de test) a recu la prime.
+    assertEq(
+      callerBalanceAfter - callerBalanceBefore,
+      expectedReward,
+      "le caller de settle doit avoir recu 0,1 % de lpAmount en MRN"
     );
 
     // 2) Le totalSupply a ete reduit du montant brule (ERC20Burnable).
@@ -426,11 +439,35 @@ contract AuctionSettleInvariantTest is AuctionTestBase {
     assertEq(auction.highBidder(), address(0), "highBidder doit etre remis a zero apres settle");
 
     // 4) Sanity check : l'Auction ne detient plus de MRN (tout a ete
-    // brule ou transfere au pool).
+    // brule, transfere au pool, ou verse au caller de settle).
     assertEq(
       mrn.balanceOf(address(auction)),
       0,
-      "apres settle, l'Auction ne detient plus de MRN : tout a ete brule ou transfere"
+      "apres settle, l'Auction ne detient plus de MRN : tout a ete brule, transfere, ou prime"
+    );
+  }
+
+  function test_SettlePaysCallerReward() public {
+    // Le caller de settle() recoit 0,1 % de lpAmount en MRN, preleve sur
+    // le flux qui va aux LP. Le caller ici est `address(this)` (le contrat
+    // de test) parce que settle() est permissionless. Le test verifie la
+    // prime en isolation : un delta de MRN positif du caller, exactement
+    // egal a 0,1 % de lpAmount (= 0,1 % de 70 % de FIRST_BID).
+    _warpToEpoch(0);
+    _bidAs(BIDDER_A, FIRST_BID);
+    _warpToBidSilenceWindow(1);
+
+    uint256 expectedLp = FIRST_BID * 7000 / 10000;
+    uint256 expectedReward = expectedLp * 10 / 10000;
+
+    uint256 callerBalanceBefore = mrn.balanceOf(address(this));
+    auction.settle();
+    uint256 callerBalanceAfter = mrn.balanceOf(address(this));
+
+    assertEq(
+      callerBalanceAfter - callerBalanceBefore,
+      expectedReward,
+      "le caller de settle doit avoir recu 0,1 % de lpAmount en MRN, depuis le solde de l'Auction"
     );
   }
 
@@ -499,7 +536,7 @@ contract AuctionSettleInvariantTest is AuctionTestBase {
 contract AuctionWithdrawRefundCEITest is AuctionTestBase {
 
   function test_WithdrawRefundTransfersAndZeroesTheRegistry() public {
-    // Test executable : BIDDER_A est dépassé, credite de 2 MRN, tire
+    // Test executable : BIDDER_A est dépassé, credite de 10.5 MRN (FIRST_BID), tire
     // son refund. Le registre passe a zero, le solde MRN de BIDDER_A
     // augmente du montant attendu, et un second appel reverte
     // `NoBidToRefund`.
@@ -517,7 +554,7 @@ contract AuctionWithdrawRefundCEITest is AuctionTestBase {
     assertEq(
       balanceAfter - balanceBefore,
       FIRST_BID,
-      "le solde MRN de BIDDER_A doit augmenter de 2 MRN apres withdrawRefund"
+      "le solde MRN de BIDDER_A doit augmenter de 10.5 MRN apres withdrawRefund"
     );
     assertEq(
       auction.refunds(BIDDER_A),

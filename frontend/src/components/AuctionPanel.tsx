@@ -270,7 +270,7 @@ export default function AuctionPanel() {
       <div>Enchérisseur en tête : {highBidder && highBidder !== ZERO_ADDRESS ? highBidder : '(aucun)'}</div>
       <div>Mise minimale suivante : {minNextBid === undefined ? '—' : `${formatUnits(minNextBid, MRN_DECIMALS)} MRN`}</div>
       <div>
-        Mandat en attente de règlement : {pendingEpoch !== undefined && pendingEpoch > 0n
+        Mandat à settle : {pendingEpoch !== undefined && pendingEpoch > 0n
           ? `#${pendingEpoch} (${formatUnits(pendingAmount ?? 0n, MRN_DECIMALS)} MRN)`
           : '(aucun)'}
       </div>
@@ -309,7 +309,16 @@ export default function AuctionPanel() {
         <p className='text-xs pt-1'>
           {currentBid !== undefined && currentBid > 0n
             ? <>Fenêtre fermée : gestionnaire {pendingEpoch !== undefined && pendingEpoch > 0n ? 'désigné' : 'à settle'}</>
-            : <>Enchère inactive, misez pour ouvrir la fenêtre d&apos;enchères</>}
+            // Cas « aucune enchère en cours, fenêtre fermée ». La fermeture
+            // a deux causes temporelles distinctes sous la meme UI :
+            //   (1) AVANT l'ouverture : `now < startOfEpoch(sellingEpoch - 1)`
+            //       — le créneau n'a pas encore commencé ;
+            //   (2) APRES la fermeture : `now >= closesAt`
+            //       — le créneau est fini sans enchérisseur.
+            // Dans les deux cas, `placeBid` revert `WindowClosed` et le
+            // bouton est désactivé par `windowOpen !== true`. Inviter à
+            // attendre la prochaine epoch, pas à miser maintenant.
+            : <>Enchère inactive, fenêtre fermée : attendez la prochaine epoch pour miser</>}
         </p>
       )}
       {errors.bid && <p className='text-xs pt-1 text-red-700'>{errors.bid}</p>}

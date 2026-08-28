@@ -103,7 +103,7 @@ contract Auction {
   // L'argument de deploiement qui n'a pas d'ancre on-chain : on l'immutable
   // sur l'Auction, et il vit dans le record de deploiement (ignition) et
   // dans les tests. Voir build-auction.md 2.2 et 5.0 bis pour les valeurs
-  // de demonstration (15 min, 0, 0, 1 MRN a 18 decimales).
+  // de demonstration (15 min, 0, 0, 10 MRN a 18 decimales, restated 2026-08-28).
   uint256 public immutable auctionWindow;
   uint256 public immutable maxExtension;
   uint256 public immutable bidSilence;
@@ -147,6 +147,17 @@ contract Auction {
   uint256 constant public SPLIT_DEN = 10000;
   uint256 constant public LP_BPS = 7000;
   uint256 constant public BURN_BPS = 3000;
+
+  // Prime au caller de `settle()` (le bot qui nomme le gestionnaire) :
+  // 0,1 % de lpAmount, paye en MRN depuis le solde de l'Auction, preleve
+  // sur le flux qui va aux LP. Ferme l'incitation faible documentee par
+  // la revue I.7 : sans elle, seul le futur gestionnaire a un interet
+  // direct a appeler settle(), et l'enchere peut rester en suspens
+  // (managerOf[epoch] reste a address(0), les LP ne touchent pas la rente,
+  // le mandat suivant ne demarre qu'apres une nouvelle mise qui capture
+  // l'ancien etat). Le denominateur est BPS_DEN, partage avec HIGH_BID_BPS
+  // (regle du projet : un seul denominateur par calcul, jamais partage).
+  uint256 constant public SETTLE_REWARD_BPS = 10;
 
   // -------------------------------------------------------------------------
   // Storage mutable
@@ -505,6 +516,14 @@ contract Auction {
     uint256 burnAmount = pendingAmount * BURN_BPS / SPLIT_DEN;
     uint256 lpAmount = pendingAmount - burnAmount;
     ERC20Burnable(address(mrn)).burn(burnAmount);
+    // Prime au caller de `settle()` : 0,1 % de lpAmount en MRN, preleve
+    // sur le flux qui va aux LP. C'est un PUSH (pas un credit/pull comme
+    // les `refunds`) : le caller est ici le bot qui nomme le gestionnaire,
+    // pas un enchérisseur, donc hors du vecteur d'attaque R2 que la note
+    // d'en-tete (point (2)) defend. Le reliquat `lpAmount - settleReward`
+    // part au Pool via `notifyRent`.
+    uint256 settleReward = lpAmount * SETTLE_REWARD_BPS / BPS_DEN;
+    mrn.safeTransfer(msg.sender, settleReward);
     // M2 (I.7) : l'Auction ne POUSSE plus le MRN vers le Pool. C'est
     // `Pool.notifyRent` qui TIRE, en pull, sur l'approbation posee au
     // constructeur de l'Auction (cf. constructeur, I.7 #10). La garde
@@ -513,8 +532,9 @@ contract Auction {
     // `ERC20InsufficientAllowance` et la totalite du settle (incluant
     // le burn ci-dessus) est annulee, laissant l'Auction et le Pool
     // dans l'etat d'avant. Le reseau economique de la part 70/30 reste
-    // inchange (cf. I.7 #8) : 30 % detruits, 70 % arrives au Pool.
-    pool.notifyRent(lpAmount);
+    // inchange (cf. I.7 #8) : 30 % detruits, 70 % arrives au Pool,
+    // desquels 0,1 % partent maintenant au caller de settle.
+    pool.notifyRent(lpAmount - settleReward);
 
     // Nomination du manager par `pool.setManager` (R3, point (3) de
     // l'entete). Appelee UNE SEULE FOIS par enchere, au moment du
