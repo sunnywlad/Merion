@@ -9,6 +9,10 @@ import { deployedAuction } from '@/constants/addresses';
 import { secondsLeft, formatCountdown } from '@/lib/mandateWindow';
 import AuctionPanel from '@/components/AuctionPanel';
 import MandatePanel from '@/components/MandatePanel';
+import {
+  computeMandateStatus,
+  computeLateWindow,
+} from '@/components/_mandateStatus';
 import Chevron from '@/components/ui/Chevron';
 import Disclosure from '@/components/ui/Disclosure';
 import { Badge, type BadgeVariant } from '@/components/ui/Badge';
@@ -64,26 +68,15 @@ export default function AuctionBar() {
     startTime !== undefined && endTime !== undefined
       ? Number(endTime - startTime)
       : undefined;
-  const lateWindow =
-    totalDuration !== undefined
-      ? Math.floor(totalDuration * 0.15)
-      : undefined;
-
-  let timelineStatus: 'new' | 'active' | 'late' | 'closed' = 'closed';
-  if (
-    startTime !== undefined &&
-    endTime !== undefined &&
-    lateWindow !== undefined &&
-    now !== null
-  ) {
-    const nowSec = Number(now);
-    const startSec = Number(startTime);
-    const endSec = Number(endTime);
-    if (nowSec < startSec) timelineStatus = 'new';
-    else if (nowSec <= endSec - lateWindow) timelineStatus = 'active';
-    else if (nowSec < endSec) timelineStatus = 'late';
-    else timelineStatus = 'closed';
-  }
+  const lateWindow = computeLateWindow(totalDuration);
+  // Source unique du `timelineStatus` (note §11, tâche 5) — la
+  // formule est partagée avec `MandatePanel` via `_mandateStatus.ts`.
+  const timelineStatus = computeMandateStatus({
+    now,
+    start: startTime,
+    end: endTime,
+    lateWindow,
+  });
 
   const STATUS_VARIANT: Record<typeof timelineStatus, BadgeVariant> = {
     new: 'new',

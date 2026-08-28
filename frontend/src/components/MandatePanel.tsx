@@ -13,7 +13,11 @@ import { secondsLeft, formatCountdown } from '@/lib/mandateWindow';
 import { rentClaimable } from '@/lib/rentClaimable';
 import { collectReadErrors } from '@/lib/readErrors';
 import AmountLine from '@/components/AmountLine';
-import MandateTimeline from '@/components/MandateTimeline';
+import { MandateTimeline } from '@/components/MandateTimeline';
+import {
+  computeMandateStatus,
+  computeLateWindow,
+} from '@/components/_mandateStatus';
 import { AppStateBoundary } from '@/components/ui/AppStateBoundary';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -110,24 +114,20 @@ export default function MandatePanel() {
   const totalDuration = startTime !== undefined && endTime !== undefined
     ? Number(endTime - startTime)
     : undefined;
-  const lateWindow = totalDuration !== undefined
-    ? Math.floor(totalDuration * 0.15)
-    : undefined;
+  const lateWindow = computeLateWindow(totalDuration);
   const silence = constants.bidSilence !== undefined
     ? Number(constants.bidSilence)
     : totalDuration !== undefined
       ? Math.floor(totalDuration * 0.05)
       : undefined;
-  let timelineStatus: 'new' | 'active' | 'late' | 'closed' = 'closed';
-  if (startTime !== undefined && endTime !== undefined && lateWindow !== undefined && now !== null) {
-    const nowSec = Number(now);
-    const startSec = Number(startTime);
-    const endSec = Number(endTime);
-    if (nowSec < startSec) timelineStatus = 'new';
-    else if (nowSec <= endSec - lateWindow) timelineStatus = 'active';
-    else if (nowSec < endSec) timelineStatus = 'late';
-    else timelineStatus = 'closed';
-  }
+  // Source unique du `timelineStatus` (note §11, tâche 5) — la
+  // formule est partagée avec `AuctionBar` via `_mandateStatus.ts`.
+  const timelineStatus = computeMandateStatus({
+    now,
+    start: startTime,
+    end: endTime,
+    lateWindow,
+  });
 
   const rentEntries = rent.data;
   const rentValues = rentEntries?.every((entry) => entry.status === 'success')

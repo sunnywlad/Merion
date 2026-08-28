@@ -177,3 +177,57 @@ body {
     scroll-behavior: auto !important;
   }
 }
+
+/* =============================================================
+   Timeline du mandat — note §11, tâche 5.
+
+   Trois zones (body / late / silence) dont l'opacité dépend du
+   statut temporel courant via `data-status` posé sur le wrapper. Les
+   passages entre zones sont nets (un switch via les règles CSS, pas
+   un gradient) — la seule transition continue est le curseur du
+   présent, qui glisse entre deux positions sur `left` (250 ms).
+   ============================================================= */
+
+.merion-timeline-zone-body,
+.merion-timeline-zone-late,
+.merion-timeline-zone-silence {
+  /* Switch net entre zones — pas de transition de couleur, c'est
+     `data-status` qui dicte l'apparence. */
+  transition: none;
+}
+
+/* NEW — le mandat n'a pas encore commencé : la zone body est en
+   attente (opacité réduite), le curseur est collé au début. */
+.merion-timeline[data-status="new"] .merion-timeline-zone-body {
+  opacity: 0.5;
+}
+
+/* ACTIVE — phase courante, opacité pleine. */
+.merion-timeline[data-status="active"] .merion-timeline-zone-body {
+  opacity: 1;
+}
+
+/* LATE — fenêtre tardive, emphase visuelle sur la zone warning. */
+.merion-timeline[data-status="late"] .merion-timeline-zone-body {
+  opacity: 0.5;
+}
+.merion-timeline[data-status="late"] .merion-timeline-zone-late {
+  opacity: 1;
+  /* Emphase : bordure interne pour creuser la zone sans grossir la
+     barre (qui doit rester 12 px de haut). */
+  box-shadow: inset 0 0 0 1px var(--color-warning);
+}
+
+/* CLOSED — mandat terminé : tout est atténué, le curseur est collé à
+   la fin. */
+.merion-timeline[data-status="closed"] .merion-timeline-zone-body,
+.merion-timeline[data-status="closed"] .merion-timeline-zone-late,
+.merion-timeline[data-status="closed"] .merion-timeline-zone-silence {
+  opacity: 0.4;
+}
+
+/* Curseur du présent — transition CSS sur `left`, 250 ms. Le killswitch
+   `prefers-reduced-motion` plus haut ramène la durée à 0 ms. */
+.merion-timeline-cursor {
+  transition: left 250ms ease-in-out;
+}
