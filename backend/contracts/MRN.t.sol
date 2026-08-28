@@ -35,4 +35,21 @@ contract MRNTest is Test {
     assertEq(mrn.balanceOf(address(this)), FIXED_SUPPLY - 1000 * 10 ** 18);
     assertEq(mrn.totalSupply(), FIXED_SUPPLY);
   }
+
+  // I.3 — MRN herite ERC20Burnable pour permettre le partage 70 / 30 du
+  // produit de l'enchere (build-auction.md 4.5) : `mrn.burn(30 %)` exige
+  // une reduction du totalSupply, et un ERC-20 sans `burn` ne peut pas
+  // le faire sans mentir. Le test verifie les deux effets : le solde
+  // du bruler baisse, ET le totalSupply baisse, ce qui distingue
+  // ERC20Burnable d'un simple transfert vers 0x...dEaD (qui ne touche
+  // pas le totalSupply).
+  function test_burnReducesTotalSupply() public {
+    uint256 burnAmount = 1000 * 10 ** 18;
+    uint256 supplyBefore = mrn.totalSupply();
+
+    mrn.burn(burnAmount);
+
+    assertEq(mrn.totalSupply(), supplyBefore - burnAmount);
+    assertEq(mrn.balanceOf(address(this)), FIXED_SUPPLY - burnAmount);
+  }
 }

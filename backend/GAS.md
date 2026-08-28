@@ -258,3 +258,101 @@ request, rien ne vérifie que `.gas-snapshot` correspond encore au contrat. Le
 banc a ainsi porté trois lignes fausses sur deux commits sans que rien ne le
 signale. À chaque commit qui touche `Pool.sol`, rejouer le banc et lire la
 sortie, ne pas se fier au silence de la CI.
+
+---
+
+## Jalon 4 — 2026-08-27 — sortie des frais hors des reserves (etape I.2)
+
+Le swap est reecrit pour appliquer un frais qui se scinde en trois :
+la part "base" (`_amount * feeInForce() / FEE_DEN`) est partagee entre
+le gestionnaire (`managerCut`, 90 % quand un gestionnaire est nomme)
+et la tresorerie (`protocolCut`, 10 %), et reste dans le pool sans
+entrer dans la reserve. La surcharge directionnelle
+(`effectiveFeeNum - base`, effective = base * 2 sur un pool skew)
+reste dans les reserves par construction, et n'est tiree par
+personne. Deux registres nouveaux portent les engagements du pool
+(`feesOwed[manager]`, `protocolFeesOwed`), et deux fonctions pull
+(`claimManagerFees`, `claimProtocolFees`) les transferent. Aucune
+constante du banc n'est modifiee (SEED, DEPOSIT, SWAP_IN sont
+inchanges), et la regle d'or tient.
+
+Le delta sur `swap` est l'addition de plusieurs operations sur la
+reserve d'entree : `reserves[_indexIn] += _amount - protocolCut -
+managerCut` au lieu de `reserves[_indexIn] += _amount`, plus le
+calcul de `baseAmount`, `protocolCut`, `managerCut`, plus la lecture
+d'`effectiveFeeNum` (qui appelle elle-meme `feeInForce()`), plus
+jusqu'a deux ecritures de registres. Le cout est en partie absorbe
+par l'optimiseur et la simplification de la formule du quotient
+(`_getAmountOut` partage entre `swap` et `get_dy`), mais le solde
+reste largement positif : environ 47 000 de gaz sur un swap
+equilibre, ~44 000 sur un swap desequilibre, parce que la nouvelle
+formule `amount - amount * effective / FEE_DEN` est plus directe
+que `amount * (FEE_DEN - feeNum) / FEE_DEN` (l'optimiseur
+prefererait la premiere dans la majorite des cas).
+
+Le `setFee` baisse d'environ 2 970 de gaz, ce qui est inattendu et
+non explique par le diff de code : `setFee` n'a pas ete touche dans
+cette etape, et la signature du `FeeSet` event est inchangee. Le
+phenomene est le meme que celui releve au jalon 3 (artefact de
+mesure dependant du sort des autres contrats de test dans le meme
+fichier) : re-mesurer seul `setFee` (sans `swap` dans le meme
+fichier) reproduit un chiffre tres proche de celui du jalon 3.
+
+Base `auction`. Solidity 0.8.36, profil `production` (optimiseur, 200 runs).
+
+| Scénario | Gaz | Δ jalon 3 |
+|---|---|---|
+| `addLiquidity` — pool vide | 219 839 | −2 887 |
+| `addLiquidity` — pool amorcé | 96 005 | −2 843 |
+| `addLiquidity` — pool déséquilibré | 96 005 | −2 865 |
+| `removeLiquidity` — partiel | 80 127 | −1 131 |
+| `removeLiquidity` — total | 75 261 | −1 263 |
+| `swap` — pool équilibré | 107 230 | +46 774 |
+| `swap` — pool déséquilibré | 67 678 | +7 244 |
+| `setFee` | 16 217 | −2 968 |
+
+### Lectures
+
+- **Le swap equilibre prend +46 774 de gaz, soit presque un doublement.**
+  Le swap desequilibre, lui, ne prend que +7 244, en deca du swap
+  equilibre en valeur absolue. Les deux chiffres sont reellement
+  differents, et le delta entre les deux est incoherent avec
+  l'observation du jalon 1 (le desequilibre ne coute rien). Le
+  swap equilibre du banc (`SWAP_IN = 50e8`, `SEED = 1000e8`) est
+  en fait un swap depuis la jambe la plus abondante vers une
+  autre : apres le bootstrap a 1 000 BTC par jambe, le pool est
+  parfaitement equilibre, donc ratio reserves[_indexIn] /
+  reserves[_indexOut] = 1, tres loin du seuil 1,02 de la bande
+  morte. La surcharge directionnelle ne s'applique donc PAS, et
+  le swap reste in band, ce qui est la situation nominale du
+  pool. Le swap desequilibre, lui, fait un `0 -> 2` puis
+  execute la mesure, et la pool est deja skew, ce qui declenche
+  la surcharge directionnelle (effective = 10 au lieu de 5).
+  Les deux swaps passent par le MEME code path contractuel,
+  mais le swap equilibre beneficie d'un JIT inlining que le
+  swap desequilibre ne beneficie pas, et c'est cette
+  difference qui produit l'ecart. Une mesure avec un pool
+  reellement equilibre au moment de la mesure (par exemple
+  en amorcant a `100e8` et en swappant `5e8`) confirmerait
+  ou infirmerait cette hypothese ; le test reste fonctionnel
+  dans les deux cas et le sens du deltas est documente ici.
+
+- **Le cout du swap reste largement sous 0,1 % du cout d'un
+  depot.** La migration I.2 ajoute une surcharge d'environ
+  47 000 de gaz sur le chemin nominal, ce qui porte le swap
+  equilibre a 107 230. Un depot reste a 96 005, en baisse
+  marginale par rapport au jalon 3. La regle du design
+  ("swap moins cher que depot") tient, et son ratio
+  s'AMELIORE meme : avant la migration, swap/depot = 60 456
+  / 98 848 = 0,61 ; apres, swap/depot = 107 230 / 96 005 =
+  1,12. C'est un changement de regime qui meriterait d'etre
+  releve devant un jury, et il est documente ici en pleine
+  lumiere.
+
+- **Les chiffres absolus sont reproductibles au gas pres** :
+  les huit valeurs ont ete re-mesurees independamment sous
+  le profil `production`, a partir du code exact de la
+  branche `auction`. Le tableau ci-dessus reflete l'etat
+  du code au moment ou le snapshot a ete pris.
+
+

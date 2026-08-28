@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {PoolTestBase} from "./PoolTestBase.sol";
 import {Pool} from "../contracts/Pool.sol";
 import {MockWrappedBTC} from "../contracts/MockWrappedBTC.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 // Ce que les bandes valent face a une decote reelle d'un des trois wrappers.
 //
@@ -194,10 +195,16 @@ contract PoolDepegBandsTest is Test, PoolTestBase {
     indexOut = (legIndex + 2) % 3;
   }
 
-  // La formule du contrat (Pool.sol:139-140), rejouee pour servir d'oracle a
-  // la sonde acceptee.
+  // La formule du contrat (Pool.sol:359-360), rejouee pour servir d'oracle a
+  // la sonde acceptee. Le ceilDiv suit la regle E7 de build-auction.md : la
+  // division ronde en faveur du pool. La forme reduite `amount *
+  // (FEE_DEN - feeNum) / FEE_DEN` (FLOOR) sous-estime d'au plus une unite
+  // quand `amount * feeNum % FEE_DEN != 0` ; sur les valeurs divisibles de
+  // cette sonde, les deux formes coincident, mais la forme ceilDiv reste la
+  // formulation qui matche exactement le swap apres Minimax 2.
   function _expectedAmountOut(uint256 indexIn, uint256 amount, uint256 indexOut) internal view returns (uint256) {
-    uint256 amountAfterFee = amount * (pool.FEE_DEN() - pool.feeNum()) / pool.FEE_DEN();
+    uint256 effective = pool.effectiveFeeNum(indexIn, indexOut);
+    uint256 amountAfterFee = amount - Math.ceilDiv(amount * effective, pool.FEE_DEN());
     return amountAfterFee * pool.reserves(indexOut) / (amountAfterFee + pool.reserves(indexIn));
   }
 

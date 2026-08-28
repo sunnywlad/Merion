@@ -3,12 +3,14 @@ pragma solidity 0.8.36;
 
 import {Pool} from '../contracts/Pool.sol';
 import {MockWrappedBTC} from '../contracts/MockWrappedBTC.sol';
+import {MRN} from '../contracts/MRN.sol';
 import {Test} from "forge-std/Test.sol";
 
 contract PoolTestBase {
   MockWrappedBTC public wbtc;
   MockWrappedBTC public cbbtc;
   MockWrappedBTC public lbtc;
+  MRN public mrn;
   Pool public pool;
 
   function setUp() virtual public {
@@ -19,8 +21,10 @@ contract PoolTestBase {
     address[3] memory tokens = [address(wbtc), address(cbbtc), address(lbtc)];
     uint256 feeNum = 5;
     address feeSetter = address(this);
+    address treasury = address(0xBEEF);
 
-    pool = new Pool(tokens, feeNum, feeSetter);
+    mrn = new MRN();
+    pool = new Pool(tokens, 14400, 12, 1, feeNum, treasury, address(mrn), feeSetter);
 
     wbtc.mint(address(this), 21_000_000 * 10 ** 8);
     cbbtc.mint(address(this), 21_000_000 * 10 ** 8);

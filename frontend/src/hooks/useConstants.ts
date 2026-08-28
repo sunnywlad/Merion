@@ -19,7 +19,7 @@ export function useConstants() {
       {
         address: deployedPool,
         abi: poolAbi,
-        functionName: 'MIN_SET_FEE_DELAY',
+        functionName: 'MIN_FEE_NUM',
         args: []
       }
     ] as const,
@@ -28,7 +28,7 @@ export function useConstants() {
   return {
     feeDen: data?.[0],
     maxFeeNum: data?.[1],
-    minSetFeeDelay: data?.[2],
+    minFeeNum: data?.[2],
     isLoading,
     error
   }

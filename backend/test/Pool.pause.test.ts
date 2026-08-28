@@ -46,7 +46,9 @@ const { viem, networkHelpers } = await network.create();
 // ---------------------------------------------------------------------------
 
 const DEFAULT_FEE_NUM = 5n; // reprend la valeur du Pool.t.sol d'origine
-const MIN_SET_FEE_DELAY = 24n * 60n * 60n; // 1 days, Pool.sol:24
+const MIN_FEE_NUM = 1n; // _minFeeNum passe au constructeur, cf. PoolTestBase.sol
+const EPOCH_DURATION = 14400n; // 4h, cf. build-auction.md 5.0 bis
+const PRIORITY_WINDOW = 12n; // cf. build-auction.md 5.0 bis
 // Sur les fixtures de cette suite, les reserves valent au plus 1e10 : aucun
 // amountOut ne peut donc jamais atteindre UINT72_MAX, ce qui en fait un
 // _minOut insatisfaisable par construction. C'est ce qui rend le test
@@ -65,23 +67,30 @@ const UINT72_MAX = 2n ** 72n - 1n;
 // ---------------------------------------------------------------------------
 
 async function deployTokensAndPool(feeNum: bigint) {
-  const [deployer, depositor, other] = await viem.getWalletClients();
+  const [deployer, depositor, other, treasury] = await viem.getWalletClients();
 
   const wbtc = await viem.deployContract("MockWrappedBTC", ["Wrapped BTC", "wBTC"]);
   const cbbtc = await viem.deployContract("MockWrappedBTC", ["Coinbase BTC", "cbBTC"]);
   const lbtc = await viem.deployContract("MockWrappedBTC", ["Lombard BTC", "lBTC"]);
+  const mrn = await viem.deployContract("MRN", []);
   const tokens = [wbtc, cbbtc, lbtc] as const;
 
-  // Le troisieme argument du constructeur est le _feeSetter, qui devient
-  // l'owner (Ownable(_feeSetter), Pool.sol:42) : dans toute cette suite,
-  // `deployer` est donc l'owner, et `other` le tiers non autorise.
+  // Le dernier argument du constructeur est le _owner (Ownable(_owner),
+  // Pool.sol:42) : dans toute cette suite, `deployer` est donc l'owner, et
+  // `other` le tiers non autorise. Le 7e argument, juste avant _owner, est
+  // l'adresse MRN que le Pool utilise pour verser le loyer LP (I.4).
   const pool = await viem.deployContract("Pool", [
     [wbtc.address, cbbtc.address, lbtc.address],
+    EPOCH_DURATION,
+    PRIORITY_WINDOW,
+    MIN_FEE_NUM,
     feeNum,
+    treasury.account.address,
+    mrn.address,
     deployer.account.address,
   ]);
 
-  return { deployer, depositor, other, wbtc, cbbtc, lbtc, tokens, pool };
+  return { deployer, depositor, other, wbtc, cbbtc, lbtc, mrn, tokens, pool };
 }
 
 async function deployTokensAndPoolFixture() {
@@ -193,15 +202,16 @@ const EXPECTED_AMOUNTS_OUT_WHILE_PAUSED: [bigint, bigint, bigint] = [
 
 // _amount du swap nominal de la section III : 10% de SEED_AMOUNT.
 const NOMINAL_SWAP_AMOUNT_IN = SEED_AMOUNT / 10n; // 1 000 000 000
-// Calcul a la main (feeNum = 5, reserves = [1e10, 1e10, 1e10], swap 0 -> 2) :
-//   amountAfterFee = 1e9 * (1000 - 5) / 1000 = 995 000 000
-//   amountOut = 995 000 000 * 1e10 / (995 000 000 + 1e10)
-//             = 9 950 000 000 000 000 000 / 10 995 000 000
-//             = 904 956 798 (tronque vers le bas)
+// Calcul a la main (feeNum = 5, FEE_DEN = 10000, reserves = [1e10, 1e10, 1e10],
+// swap 0 -> 2) :
+//   amountAfterFee = 1e9 * (10000 - 5) / 10000 = 999 500 000
+//   amountOut = 999 500 000 * 1e10 / (999 500 000 + 1e10)
+//             = 9 995 000 000 000 000 000 / 10 999 500 000
+//             = 908 677 667 (tronque vers le bas)
 // C'est exactement la valeur attendue sur une pool jamais mise en pause
 // (elle est posee a l'identique dans Pool.swap.test.ts) : la retrouver apres
 // un cycle pause / unpause est precisement ce que la section III affirme.
-const NOMINAL_SWAP_AMOUNT_OUT = 904_956_798n;
+const NOMINAL_SWAP_AMOUNT_OUT = 908_677_667n;
 
 // _amount du depot nominal de la section III : 10% de SEED_AMOUNT, ancre sur
 // token0.
@@ -215,7 +225,8 @@ const NOMINAL_MINTED_SHARES = 3_000_000_000n;
 
 // Nouveau taux pose par le test de setFee en pause (section II.D),
 // different de DEFAULT_FEE_NUM pour que l'assertion ait quelque chose a
-// distinguer, et sous MAX_FEE_NUM (10, Pool.sol:20).
+// distinguer, et dans la bande du gestionnaire, [MIN_FEE_NUM,
+// MAX_FEE_NUM / UNBALANCE_FACTOR] = [1, 25].
 const NEW_FEE_NUM = 7n;
 
 describe("Pool.pause", async function () {
@@ -396,26 +407,33 @@ describe("Pool.pause", async function () {
     });
 
     describe("D) setFee reste appelable", function () {
-      it("l'owner appelle setFee en pause : l'appel passe et feeNum prend la nouvelle valeur", async function () {
+      it("le gestionnaire du mandat courant appelle setFee en pause : l'appel passe et feeNum prend la nouvelle valeur", async function () {
         // Choix delibere : la pause sert a preparer la reprise, et bloquer
         // setFee forcerait a depauser d'abord puis fixer le taux ensuite,
         // laissant une fenetre ou la pool rouvre au taux que la crise a rendu
-        // inadapte.
+        // inadapte. La promesse testee ici est donc inchangee : en pause, le
+        // tarif reste modifiable.
         //
-        // Le delai de setFee (MIN_SET_FEE_DELAY, Pool.sol:28) court sur
-        // block.timestamp et lastFeeUpdate est initialise a la construction :
-        // il faut donc avancer le temps avant l'appel, sinon ce test echoue
-        // sur FeeUpdateTooSoon et ne prouve plus rien sur la pause. C'est
-        // aussi la contrepartie a connaitre de ce choix de conception : le
-        // delai tourne pendant la pause, donc consommer le droit la veille de
-        // la reprise le rend indisponible pour les vingt-quatre heures qui
-        // suivent la reouverture.
-        const { pool, deployer } = await networkHelpers.loadFixture(deployPausedSeededPoolFixture);
-        await networkHelpers.time.increase(Number(MIN_SET_FEE_DELAY));
+        // Ce qui a change est l'APPELANT. setFee n'est plus un pouvoir de
+        // l'owner, c'est le seul levier du gestionnaire du mandat courant,
+        // dans sa fenetre de priorite. La mise en situation en decoule :
+        // l'owner designe un gestionnaire pour l'epoch 1 (il le peut tant que
+        // `auction` est nulle, Pool.setManager), puis le temps est amene
+        // exactement sur la premiere seconde de ce mandat, ou l'offset dans
+        // l'epoch vaut 0, strictement sous PRIORITY_WINDOW.
+        //
+        // setNextBlockTimestamp plutot qu'un increase relatif : la fenetre
+        // vaut douze secondes et un delta relatif deriverait de la seconde
+        // consommee par la transaction de setManager.
+        const { pool, deployer, other } = await networkHelpers.loadFixture(deployPausedSeededPoolFixture);
+        const genesis = await pool.read.GENESIS();
 
-        await pool.write.setFee([NEW_FEE_NUM], { account: deployer.account });
+        await pool.write.setManager([1n, other.account.address], { account: deployer.account });
+        await networkHelpers.time.setNextBlockTimestamp(genesis + EPOCH_DURATION);
 
-        const feeNum = await pool.read.feeNum();
+        await pool.write.setFee([NEW_FEE_NUM], { account: other.account });
+
+        const feeNum = BigInt(await pool.read.feeNum());
         assert.equal(
           feeNum,
           NEW_FEE_NUM,

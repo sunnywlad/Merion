@@ -6,6 +6,7 @@ import {MockWrappedBTC} from '../contracts/MockWrappedBTC.sol';
 import {Test} from "forge-std/Test.sol";
 import {PoolTestBase} from './PoolTestBase.sol';
 import {stdError} from 'forge-std/StdError.sol';
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 
 contract SwapFuzz is Test, PoolTestBase {
@@ -21,8 +22,20 @@ contract SwapFuzz is Test, PoolTestBase {
     if (indexOut >= indexIn) indexOut += 1;
   }
 
+  // I.2 — le swap utilise effectiveFeeNum, pas feeNum, pour la lecture du
+  // frais effectif. La formule d'amountAfterFee n'est plus
+  // amount * (FEE_DEN - feeNum) / FEE_DEN (celle-ci suppose que feeNum est
+  // un numerateur "direct", hors de la troncature), mais
+  // amount - Math.ceilDiv(amount * effective, FEE_DEN), qui reflete
+  // exactement le calcul du contrat (Pool.sol:360). Le ceilDiv est la
+  // regle E7 de build-auction.md : la division ronde en faveur du pool,
+  // jamais en faveur de l'appelant. Sur la fixture de ce contrat
+  // (reserves egales, donc effective == feeNum == 5), les deux formules
+  // donnent le meme resultat qu'au debut du chantier, SAUF sur les tout
+  // petits montants ou la troncature joue.
   function expectedAmountOut(uint256 indexIn, uint256 amount, uint256 indexOut) internal view returns (uint256) {
-    uint256 amountAfterFee = amount * (pool.FEE_DEN() - pool.feeNum()) / pool.FEE_DEN();
+    uint256 effective = pool.effectiveFeeNum(indexIn, indexOut);
+    uint256 amountAfterFee = amount - Math.ceilDiv(amount * effective, pool.FEE_DEN());
     return amountAfterFee * pool.reserves(indexOut) / (amountAfterFee + pool.reserves(indexIn));
   }
 
@@ -47,7 +60,12 @@ contract SwapFuzz is Test, PoolTestBase {
   //
   // La constante est verifiee par test_MaxInBandAmountIsExactlyTheBoundary,
   // qui echouera si l'amorcage, les frais ou les bandes changent.
-  uint256 constant MAX_IN_BAND_AMOUNT = 76_716_541_675;
+  // Apres Minimax 2 (defaut 4), la bande verifie le meme etat que l'ecriture
+  // (NET du frais partage, pas BRUT), ce qui elargit la frontiere haute :
+  // recherche par dichotomie (script /tmp/boundary2.mjs), setup sans
+  // gestionnaire (managerCut = 0, protocolCut = baseAmount / 10, ceilDiv sur
+  // le feeAmount du swap). Valeur exacte : 76 627 560 281.
+  uint256 constant MAX_IN_BAND_AMOUNT = 76_627_560_281;
 
   function test_FuzzSwapReturnsExpectedAmountOut(uint256 _indexIn, uint256 amount, uint256 _indexOut) public {
     (uint256 indexIn, uint256 indexOut) = boundIndices(_indexIn, _indexOut);

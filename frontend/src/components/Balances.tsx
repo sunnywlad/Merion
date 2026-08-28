@@ -3,12 +3,12 @@
 import { useUserBalances } from '@/hooks/useUserBalances';
 import { useLpBalance } from '@/hooks/useLpBalance';
 import { useReserves } from '@/hooks/useReserves';
-import {tokensInfo} from '@/constants/addresses';
+import {MRN_DECIMALS, tokensInfo} from '@/constants/addresses';
 import AmountLine from '@/components/AmountLine';
 
 export default function Balances() {
 
-  const { data, isLoading, error } = useUserBalances();
+  const { btcBalances, mrnBalance, refundBalance, isLoading, error } = useUserBalances();
 
   const { data: dataLp, isLoading: isLoadingLp, error: errorLp } = useLpBalance();
   const { supply: supplyEntry, isLoading: isLoadingR, error: errorR } = useReserves();
@@ -26,7 +26,7 @@ export default function Balances() {
       <h2 className='text-sm font-semibold pb-2'>Votre position</h2>
       <ul className='text-sm'>
         {tokensInfo.map((token, i) => {
-          const entry = data?.[i];
+          const entry = btcBalances[i];
           return (
             <AmountLine
               key={token.name}
@@ -39,6 +39,25 @@ export default function Balances() {
             />
           );
         })}
+
+        {/* MRN est libelle a 18 decimales (cf. addresses.ts MRN_DECIMALS), les
+            BTCs a 8. AmountLine formate via `formatUnits` avec le decimals
+            prop, donc chaque ligne passe son echelle. */}
+        <AmountLine
+          label="Votre montant de MRN"
+          isLoading={isLoading}
+          error={error ?? mrnBalance?.error}
+          value={mrnBalance?.status === 'success' ? mrnBalance.result : undefined}
+          decimals={MRN_DECIMALS}
+        />
+
+        <AmountLine
+          label="Votre remboursement à retirer"
+          isLoading={isLoading}
+          error={error ?? refundBalance?.error}
+          value={refundBalance?.status === 'success' ? refundBalance.result : undefined}
+          decimals={MRN_DECIMALS}
+        />
 
         <AmountLine
           label="Vos parts LP"

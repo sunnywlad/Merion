@@ -3,6 +3,7 @@ pragma solidity 0.8.36;
 
 import {Pool} from "./Pool.sol";
 import {MockWrappedBTC} from "./MockWrappedBTC.sol";
+import {MRN} from "./MRN.sol";
 import {Test} from "forge-std/Test.sol";
 
 /// BANC DE MESURE DU GAZ — CE N'EST PAS UNE SUITE DE TESTS.
@@ -33,6 +34,7 @@ abstract contract PoolGasBase is Test {
   MockWrappedBTC public wbtc;
   MockWrappedBTC public cbbtc;
   MockWrappedBTC public lbtc;
+  MRN public mrn;
   Pool public pool;
 
   // Montants figés du banc. NE PAS MODIFIER.
@@ -47,7 +49,8 @@ abstract contract PoolGasBase is Test {
     lbtc = new MockWrappedBTC("Lombard BTC", "lBTC");
 
     address[3] memory tokens = [address(wbtc), address(cbbtc), address(lbtc)];
-    pool = new Pool(tokens, FEE_NUM, address(this));
+    mrn = new MRN();
+    pool = new Pool(tokens, 14400, 12, 1, FEE_NUM, address(0xBEEF), address(mrn), address(this));
 
     // Marge large : aucun approve manquant ne doit fausser une mesure.
     uint256 funding = SEED * 100;
@@ -84,9 +87,13 @@ contract PoolGasSeededPool is PoolGasBase {
     pool.addLiquidity(0, SEED, 0);
     allShares = pool.balanceOf(address(this));
     halfShares = allShares / 2;
-    // Le délai de setFee court depuis le déploiement : on le purge ici pour
-    // que la mesure de setFee ne dépende pas de l'ordre des tests.
-    vm.warp(block.timestamp + 1 days);
+    // setFee est désormais le levier du gestionnaire du mandat courant, dans
+    // sa fenêtre de priorité : la mise en situation consiste donc à se faire
+    // désigner gestionnaire de l'epoch 1, puis à se placer sur sa première
+    // seconde. L'offset dans l'epoch vaut alors 0, strictement sous
+    // PRIORITY_WINDOW.
+    pool.setManager(1, address(this));
+    vm.warp(pool.GENESIS() + pool.EPOCH_DURATION());
   }
 
   function test_gas_AddLiquidity() public {

@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {Pool} from "../contracts/Pool.sol";
 import {MockWrappedBTC} from "../contracts/MockWrappedBTC.sol";
 import {MockMisbehavingBTC} from "../contracts/MockMisbehavingBTC.sol";
+import {MRN} from "../contracts/MRN.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 // Couvre G1 : Pool utilise `SafeERC20` (using SafeERC20 for IERC20, Pool.sol:7)
@@ -27,6 +28,7 @@ contract PoolSafeERC20Test is Test {
   MockMisbehavingBTC public misbehaving;
   MockWrappedBTC public cbbtc;
   MockWrappedBTC public lbtc;
+  MRN public mrn;
   Pool public pool;
 
   uint256 constant SEED = 1000e8;
@@ -38,7 +40,8 @@ contract PoolSafeERC20Test is Test {
     lbtc = new MockWrappedBTC("Lombard BTC", "lBTC");
 
     address[3] memory tokens = [address(misbehaving), address(cbbtc), address(lbtc)];
-    pool = new Pool(tokens, 5, address(this));
+    mrn = new MRN();
+    pool = new Pool(tokens, 14400, 12, 1, 5, address(0xBEEF), address(mrn), address(this));
 
     misbehaving.mint(address(this), MINT_HEADROOM);
     cbbtc.mint(address(this), MINT_HEADROOM);
@@ -130,13 +133,30 @@ contract PoolSafeERC20Test is Test {
     pool.addLiquidity(0, SEED, 0);
     misbehaving.setTransferFromMode(MockMisbehavingBTC.ReturnMode.Nothing);
     uint256 amount = 100e8;
-    uint256 amountAfterFee = amount * (pool.FEE_DEN() - pool.feeNum()) / pool.FEE_DEN();
+    // I.2 — le swap utilise effectiveFeeNum, pas feeNum, pour la lecture du
+    // frais effectif. Sur une pool equilibree (reserves[_indexIn] ==
+    // reserves[_indexOut]), la regle d'UNBALANCE_TOL_BPS place la direction
+    // "in band" et effective = feeInForce() = feeNum = 5. Mais la formule
+    // du quotient n'est plus amount * (FEE_DEN - feeNum) / FEE_DEN, c'est
+    // amount - amount * effective / FEE_DEN, avec une troncature differente
+    // (l'ordre des operations change d'une unite au pire).
+    uint256 effective = pool.effectiveFeeNum(0, 1);
+    uint256 amountAfterFee = amount - amount * effective / pool.FEE_DEN();
     uint256 expectedOut = amountAfterFee * pool.reserves(1) / (amountAfterFee + pool.reserves(0));
 
     uint256 amountOut = pool.swap(0, amount, 1, 0);
 
     assertEq(amountOut, expectedOut);
-    assertEq(pool.reserves(0), SEED + amount);
+    // I.2 — la reserve du token d'entree ne recoit plus le _amount entier :
+    // elle absorbe _amount - protocolCut - managerCut. Sur cette fixture
+    // (pas de gestionnaire, feeNum = 5, FEE_DEN = 10000, PROTOCOL_FEE_BPS =
+    // 1000, SPLIT_DEN = 10000) : baseAmount = 100e8 * 5 / 10000 = 5e6 ;
+    // protocolCut = 5e6 * 1000 / 10000 = 5e5 = 500_000. La nouvelle
+    // reserve vaut donc SEED + amount - 500_000.
+    uint256 baseAmount = amount * pool.feeInForce() / pool.FEE_DEN();
+    uint256 protocolCut = baseAmount * pool.PROTOCOL_FEE_BPS() / pool.SPLIT_DEN();
+    uint256 managerCut = pool.manager() == address(0) ? 0 : baseAmount - protocolCut;
+    assertEq(pool.reserves(0), SEED + amount - protocolCut - managerCut);
   }
 
   // ---------------------------------------------------------------------

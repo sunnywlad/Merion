@@ -14,7 +14,7 @@ export type Quote = {
 
 export const getQuote = ({
   userAsk: {side, typedAmount, indexIn, indexOut, toleranceInput},
-  poolState: {reserves, feeNum, feeDen}
+  poolState: {reserves, effectiveFeeNum, feeDen}
   }: {
     userAsk: {side: 'in' | 'out' | null,
       typedAmount: string,
@@ -22,7 +22,13 @@ export const getQuote = ({
       indexOut: 0 | 1 | 2,
       toleranceInput: string},
     poolState: {reserves: readonly bigint[],
-      feeNum: bigint,
+      // The fee numerator the pool would actually charge for THIS direction, i.e.
+      // `effectiveFeeNum(indexIn, indexOut)`. Not `feeInForce()`, which is only the mandate's base
+      // rate, and certainly not the raw `feeNum` storage slot: the pool surcharges the direction
+      // that worsens the imbalance, so a quote built on the base rate under-charges exactly the
+      // trades the surcharge exists to price. The swap and `get_dy` both route through that view,
+      // which is what makes the executed quote and the quotable quote agree.
+      effectiveFeeNum: bigint,
       feeDen: bigint}
   }): QuoteResult<Quote> => {
 
@@ -44,19 +50,19 @@ export const getQuote = ({
 
     if (side === 'in') {
       amountIn = amount;
-      const amountAfterFee =  amountIn * (feeDen - feeNum) / feeDen;
+      const amountAfterFee =  amountIn * (feeDen - effectiveFeeNum) / feeDen;
       amountOut = amountAfterFee * reserves[indexOut] / (amountAfterFee + reserves[indexIn]);
     } else {
       amountOut = amount;
       if (amountOut >= reserves[indexOut]) return {quote: null, reason: `Réserve insuffisante pour cette opération, max : ${formatUnits(reserves[indexOut] - 1n, 8)}`};
       const num = feeDen * amountOut * reserves[indexIn];
-      const den = (feeDen - feeNum) * (reserves[indexOut] - amountOut);
+      const den = (feeDen - effectiveFeeNum) * (reserves[indexOut] - amountOut);
       amountIn = (num + den - 1n) / den;
     }
 
     // Recomputed here rather than carried out of the branch above: the 'out' branch never held
     // it, and this line reproduces the contract's own truncation on the input side.
-    const amountAfterFee = amountIn * (feeDen - feeNum) / feeDen;
+    const amountAfterFee = amountIn * (feeDen - effectiveFeeNum) / feeDen;
     const fee = amountIn - amountAfterFee;
 
     // What the swap would yield if the pool traded at the spot ratio of its reserves, that is,
