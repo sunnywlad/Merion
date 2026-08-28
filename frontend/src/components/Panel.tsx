@@ -43,7 +43,7 @@ export function Panel({
   return (
     <section
       className={
-        `flex flex-col rounded-lg border border-cloud/10 p-4 min-w-0 ` +
+        `merion-panel flex flex-col rounded-lg border border-cloud/10 p-4 min-w-0 ` +
         `${TONE_BG[tone]} text-cloud ${className}`
       }
     >

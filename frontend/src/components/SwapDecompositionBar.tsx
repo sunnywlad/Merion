@@ -158,14 +158,14 @@ export function SwapDecompositionBar({
         {segments.map((s) => (
           <div
             key={s.key}
-            className={s.className}
+            className={`merion-decomp-segment ${s.className}`}
             style={{ width: `${s.width * scale * 100}%` }}
             title={`${s.label}: ${s.valueText}`}
           />
         ))}
         {untouchedW > 0 ? (
           <div
-            className="bg-cloud/10"
+            className="merion-decomp-segment bg-cloud/10"
             style={{ width: `${untouchedW * scale * 100}%` }}
             aria-hidden="true"
           />

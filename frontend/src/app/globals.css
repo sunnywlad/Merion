@@ -231,3 +231,49 @@ body {
 .merion-timeline-cursor {
   transition: left 250ms ease-in-out;
 }
+
+/* =============================================================
+   Apparition des panneaux — note §9 (entrée subtile).
+
+   Tous les `<Panel>` entrent avec une animation `opacity 0 → 1` +
+   `translateY(4px → 0)`, 200 ms ease-out. `animation-fill-mode: both`
+   garantit que l'état initial (opacity 0) s'applique dès le premier
+   paint — sans ça, le panneau apparaîtrait à opacity 1 une frame avant
+   de démarrer l'animation, donnant un flash.
+
+   Le killswitch `prefers-reduced-motion` ramène `animation-duration`
+   à 0 ms : le panneau apparaît alors instantanément, sans fade ni
+   translateY. Couvre aussi l'arrivée des panneaux d'état (loading,
+   wallet non connecté, mauvais réseau, pool en pause, mandat sans
+   gestionnaire) qui partagent la même surface.
+   ============================================================= */
+
+@keyframes merion-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.merion-panel {
+  animation: merion-panel-in 200ms ease-out 1 both;
+}
+
+/* =============================================================
+   Segments de la barre de décomposition Swap — note §6 (tâche 6).
+
+   La largeur de chaque segment est une fraction calculée à chaque
+   quote ; un swap qui change la quote voit sa barre se redessiner.
+   La transition `width` 300 ms ease-out lisse ce redessin — sans
+   elle, chaque quote saute d'une largeur à l'autre.
+
+   Le killswitch `prefers-reduced-motion` ramène la durée à 0 ms.
+   ============================================================= */
+
+.merion-decomp-segment {
+  transition: width 300ms ease-out;
+}
