@@ -50,14 +50,6 @@ export function Panel({
   );
 }
 
-// Compatibilité descendante : les huit imports existants utilisent
-// `import Panel from '@/components/Panel'`. Le shim garde l'API historique
-// `{ children }` opérationnelle.
-export type LegacyPanelProps = { children: ReactNode };
-export function LegacyPanel({ children }: LegacyPanelProps) {
-  return <Panel>{children}</Panel>;
-}
-
 /**
  * @deprecated Conserver pour les imports existants ; préférez `Panel`.
  */

@@ -10,7 +10,7 @@ type LoadingStateProps = {
 /**
  * Merion loading state — uniform placeholder while a read is in flight.
  *
- * Same surface as every other state in this set (Panel Slate, H5 title, body
+ * Same surface as every other state in this set (Panel Slate, H4 title, body
  * description). An optional contour icon sits on the left; geometry stays
  * simple per brand book §8.
  *
@@ -23,7 +23,7 @@ export function LoadingState({
   icon,
 }: LoadingStateProps) {
   return (
-    <Panel>
+    <Panel className="max-w-lg">
       <div
         role="status"
         aria-live="polite"
@@ -40,5 +40,3 @@ export function LoadingState({
     </Panel>
   );
 }
-
-export default LoadingState;

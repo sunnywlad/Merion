@@ -17,6 +17,7 @@ import { parseAmount } from '@/lib/parseAmount';
 import { collectReadErrors } from '@/lib/readErrors';
 import ReadErrors from '@/components/ReadErrors';
 import Panel from '@/components/Panel';
+import { Button } from '@/components/ui/Button';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 // Bande du gestionnaire : `MAX_FEE_NUM / UNBALANCE_FACTOR`, dérivée côté
@@ -76,17 +77,17 @@ export default function AuctionPanel() {
   if (deployedAuction === null) {
     return (
       <Panel>
-        <p className='font-semibold pb-2'>Enchère</p>
-        <p>Non déployée sur cette chaîne.</p>
+        <p className='font-semibold pb-2'>Auction</p>
+        <p>Not deployed on this chain.</p>
       </Panel>
     );
   }
 
   const failedReads = collectReadErrors([
-    { message: "Erreur de lecture de l'état de l'enchère", error: auction.error },
-    { message: "Erreur de lecture des constantes de l'enchère", error: constants.error },
-    { message: 'Erreur de lecture du gestionnaire en exercice', error: managerNow.error },
-    { message: 'Erreur de lecture du remboursement', error: refund.error }
+    { message: 'Failed to read the auction state', error: auction.error },
+    { message: 'Failed to read the auction constants', error: constants.error },
+    { message: 'Failed to read the current manager', error: managerNow.error },
+    { message: 'Failed to read the refund', error: refund.error }
   ]);
   if (failedReads.length > 0) return <ReadErrors sources={failedReads} />;
 
@@ -172,7 +173,7 @@ export default function AuctionPanel() {
   const handlePlaceBid = async () => {
     if (!user || !publicClient) return;
     const amount = parseAmount(bidInput, MRN_DECIMALS);
-    if (amount === null) { setActionError('bid', 'Montant invalide'); return; }
+    if (amount === null) { setActionError('bid', 'Invalid amount'); return; }
     setActionError('bid', null);
     try {
       setPending('bid');
@@ -239,7 +240,7 @@ export default function AuctionPanel() {
   const handleSetFee = async () => {
     if (!user || !publicClient) return;
     const feeNum = parseAmount(feeInput, 2);
-    if (feeNum === null) { setActionError('setFee', 'Tarif invalide'); return; }
+    if (feeNum === null) { setActionError('setFee', 'Invalid fee'); return; }
     setActionError('setFee', null);
     try {
       setPending('setFee');
@@ -259,32 +260,32 @@ export default function AuctionPanel() {
 
   return (
     <Panel>
-      <p className='font-semibold pb-2'>Enchère pour le mandat suivant</p>
+      <p className='font-semibold pb-2'>Auction for the next mandate</p>
 
-      <div>Mandat mis aux enchères : {sellingEpoch === undefined ? '—' : String(sellingEpoch)}</div>
-      <div>Fenêtre : {windowOpen === undefined ? '—' : (windowOpen ? 'ouverte' : 'fermée')}</div>
+      <div>Mandate for sale: {sellingEpoch === undefined ? '—' : String(sellingEpoch)}</div>
+      <div>Window: {windowOpen === undefined ? '—' : (windowOpen ? 'open' : 'closed')}</div>
       {windowOpen && closesAt !== undefined && (
-        <div>Clôture dans {formatCountdown(timeLeft)}</div>
+        <div>Closes in {formatCountdown(timeLeft)}</div>
       )}
-      <div>Mise haute : {currentBid === undefined ? '—' : `${formatUnits(currentBid, MRN_DECIMALS)} MRN`}</div>
-      <div>Enchérisseur en tête : {highBidder && highBidder !== ZERO_ADDRESS ? highBidder : '(aucun)'}</div>
-      <div>Mise minimale suivante : {minNextBid === undefined ? '—' : `${formatUnits(minNextBid, MRN_DECIMALS)} MRN`}</div>
+      <div>High bid: {currentBid === undefined ? '—' : `${formatUnits(currentBid, MRN_DECIMALS)} MRN`}</div>
+      <div>Top bidder: {highBidder && highBidder !== ZERO_ADDRESS ? highBidder : '(none)'}</div>
+      <div>Next minimum bid: {minNextBid === undefined ? '—' : `${formatUnits(minNextBid, MRN_DECIMALS)} MRN`}</div>
       <div>
-        Mandat à settle : {pendingEpoch !== undefined && pendingEpoch > 0n
+        Mandate to settle: {pendingEpoch !== undefined && pendingEpoch > 0n
           ? `#${pendingEpoch} (${formatUnits(pendingAmount ?? 0n, MRN_DECIMALS)} MRN)`
-          : '(aucun)'}
+          : '(none)'}
       </div>
       {timeToStart !== null && (
-        <div>Démarre dans {formatCountdown(timeToStart)}</div>
+        <div>Starts in {formatCountdown(timeToStart)}</div>
       )}
       <div>
-        Remboursement réclamable : {user
+        Refund to claim: {user
           ? (refundOwed === undefined ? '—' : `${formatUnits(refundOwed, MRN_DECIMALS)} MRN`)
-          : 'connectez-vous pour le lire'}
+          : 'connect to read'}
       </div>
 
       <div className='flex flex-wrap gap-4 items-center pt-4'>
-        <label htmlFor="auction-bid">Miser (MRN) : </label>
+        <label htmlFor="auction-bid">Bid (MRN): </label>
         <input
           id="auction-bid"
           type="text"
@@ -293,22 +294,23 @@ export default function AuctionPanel() {
           disabled={pending !== null}
           onChange={(e) => { setBidInput(e.target.value); setActionError('bid', null); }}
         />
-        <button
-          className='border rounded px-4 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50'
+        <Button
+          level="primary"
           onClick={handlePlaceBid}
+          aria-busy={pending === 'bid' || undefined}
           disabled={!user || pending !== null || bidInput === '' || bidBelowMinimum || windowOpen !== true}>
-          {pending === 'bid' ? 'Approve + mise en cours' : 'Approuver et miser'}
-        </button>
+          {pending === 'bid' ? 'Approve + bid in progress' : 'Approve and bid'}
+        </Button>
       </div>
       {bidBelowMinimum && minNextBid !== undefined && (
         <p className='text-xs pt-1'>
-          Mise trop basse : minimum {formatUnits(minNextBid, MRN_DECIMALS)} MRN.
+          Bid too low: minimum {formatUnits(minNextBid, MRN_DECIMALS)} MRN.
         </p>
       )}
       {windowOpen === false && (
         <p className='text-xs pt-1'>
           {currentBid !== undefined && currentBid > 0n
-            ? <>Fenêtre fermée : gestionnaire {pendingEpoch !== undefined && pendingEpoch > 0n ? 'désigné' : 'à settle'}</>
+            ? <>Window closed: manager {pendingEpoch !== undefined && pendingEpoch > 0n ? 'designated' : 'pending settlement'}</>
             // Cas « aucune enchère en cours, fenêtre fermée ». La fermeture
             // a deux causes temporelles distinctes sous la meme UI :
             //   (1) AVANT l'ouverture : `now < startOfEpoch(sellingEpoch - 1)`
@@ -318,44 +320,46 @@ export default function AuctionPanel() {
             // Dans les deux cas, `placeBid` revert `WindowClosed` et le
             // bouton est désactivé par `windowOpen !== true`. Inviter à
             // attendre la prochaine epoch, pas à miser maintenant.
-            : <>Enchère inactive, fenêtre fermée : attendez la prochaine epoch pour miser</>}
+            : <>Auction inactive, window closed: wait for the next epoch to bid</>}
         </p>
       )}
-      {errors.bid && <p className='text-xs pt-1 text-red-700'>{errors.bid}</p>}
+      {errors.bid && <p className='text-xs pt-1 text-danger'>{errors.bid}</p>}
 
       <div className='pt-2'>
-        <button
-          className='border rounded px-4 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50'
+        <Button
+          level="secondary"
           onClick={handleWithdrawRefund}
+          aria-busy={pending === 'refund' || undefined}
           disabled={!user || pending !== null || !hasRefund}>
-          {pending === 'refund' ? 'Retrait en cours' : 'Retirer mon remboursement'}
-        </button>
+          {pending === 'refund' ? 'Withdrawal in progress' : 'Withdraw my refund'}
+        </Button>
       </div>
-      {errors.refund && <p className='text-xs pt-1 text-red-700'>{errors.refund}</p>}
+      {errors.refund && <p className='text-xs pt-1 text-danger'>{errors.refund}</p>}
 
       <div className='pt-2'>
-        <button
-          className='border rounded px-4 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50'
+        <Button
+          level="secondary"
           onClick={handleSettle}
+          aria-busy={pending === 'settle' || undefined}
           disabled={!user || pending !== null || !hasBidToSettle}>
-          {pending === 'settle' ? 'Règlement en cours' : 'Régler (settle)'}
-        </button>
+          {pending === 'settle' ? 'Settlement in progress' : 'Settle'}
+        </Button>
       </div>
       {!hasBidToSettle && (
         <p className='text-xs pt-1'>
-          Aucune enchère à régler : la première mise ouvre le créneau.
+          No bid to settle: the first bid opens the window.
         </p>
       )}
-      {errors.settle && <p className='text-xs pt-1 text-red-700'>{errors.settle}</p>}
+      {errors.settle && <p className='text-xs pt-1 text-danger'>{errors.settle}</p>}
 
       {/* Bloc setFee : toujours présent pour signaler la mécanique, grisé
           tant que l'utilisateur n'est pas gestionnaire dans la fenêtre de
           priorité du mandat courant. La raison de la désactivation est
           nommée à côté du bouton pour ne pas laisser l'utilisateur deviner. */}
       <div className='pt-4 border-t mt-4'>
-        <p className='font-semibold pb-2'>Tarif du gestionnaire</p>
+        <p className='font-semibold pb-2'>Manager fee</p>
         <div className='flex flex-wrap gap-4 items-center'>
-          <label htmlFor="auction-setfee">Tarif (%) : </label>
+          <label htmlFor="auction-setfee">Fee (%): </label>
           <input
             id="auction-setfee"
             type="text"
@@ -364,30 +368,31 @@ export default function AuctionPanel() {
             disabled={!canSetFee || pending !== null}
             onChange={(e) => { setFeeInput(e.target.value); setActionError('setFee', null); }}
           />
-          <button
-            className='border rounded px-4 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50'
+          <Button
+            level="secondary"
             onClick={handleSetFee}
+            aria-busy={pending === 'setFee' || undefined}
             disabled={!canSetFee || pending !== null || feeInput === ''}>
-            {pending === 'setFee' ? 'Application du tarif' : 'Fixer le tarif'}
-          </button>
+            {pending === 'setFee' ? 'Applying fee' : 'Set fee'}
+          </Button>
         </div>
         <p className='text-xs pt-1'>
           {minFeeNum !== undefined && maxManagerFeeNum !== undefined
-            ? <>Borne : {String(minFeeNum / 100n)} % — {String(maxManagerFeeNum / 100n)} %</>
-            : 'Bornes en cours de lecture…'}
+            ? <>Range: {String(minFeeNum / 100n)} % — {String(maxManagerFeeNum / 100n)} %</>
+            : 'Reading bounds…'}
         </p>
         <p className='text-xs'>
           {!user
-            ? 'Connectez-vous pour agir.'
+            ? 'Connect to act.'
             : !isManagerOfCurrent
-              ? 'Sourde tant que vous n’êtes pas gestionnaire du mandat courant.'
+              ? 'Inactive until you are the manager of the current mandate.'
               : feeAlreadySet
-                ? 'Tarif déjà fixé pour ce mandat.'
+                ? 'Fee already set for this mandate.'
                 : !inPriorityWindow
-                  ? 'Fenêtre de priorité fermée : agissez dans les premières secondes de l’époque.'
-                  : 'Fenêtre de priorité ouverte.'}
+                  ? 'Priority window closed: act within the first seconds of the epoch.'
+                  : 'Priority window open.'}
         </p>
-        {errors.setFee && <p className='text-xs pt-1 text-red-700'>{errors.setFee}</p>}
+        {errors.setFee && <p className='text-xs pt-1 text-danger'>{errors.setFee}</p>}
       </div>
     </Panel>
   );

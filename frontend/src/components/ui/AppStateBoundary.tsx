@@ -1,9 +1,9 @@
-import LoadingState from './LoadingState';
-import ErrorState from './ErrorState';
-import WalletNotConnectedState from './WalletNotConnectedState';
-import WrongNetworkState from './WrongNetworkState';
-import PoolPausedState from './PoolPausedState';
-import MandateNoManagerState from './MandateNoManagerState';
+import { LoadingState } from './LoadingState';
+import { ErrorState } from './ErrorState';
+import { WalletNotConnectedState } from './WalletNotConnectedState';
+import { WrongNetworkState } from './WrongNetworkState';
+import { PoolPausedState } from './PoolPausedState';
+import { MandateNoManagerState } from './MandateNoManagerState';
 
 /**
  * Discriminated union of the six app states the boundary can render.
@@ -64,5 +64,3 @@ export function AppStateBoundary({ state }: { state: AppState }) {
       return <MandateNoManagerState />;
   }
 }
-
-export default AppStateBoundary;

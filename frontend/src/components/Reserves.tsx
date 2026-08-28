@@ -25,19 +25,19 @@ export default function Reserves() {
   }
 
   // I.5 — Le tarif n'est plus affiché ici : `MandatePanel`, juste en dessous
-  // dans la même colonne, porte la même valeur sous « Tarif de base en
-  // vigueur », et il la donne par direction. Deux libellés pour un seul chiffre
+  // dans la même colonne, porte la même valeur sous « Base fee in force »,
+  // et il la donne par direction. Deux libellés pour un seul chiffre
   // se lisaient comme deux tarifs.
   return (
     <section className='min-w-0'>
-      <h2 className='text-sm font-semibold pb-2'>Réserves du pool</h2>
+      <h2 className='text-sm font-semibold pb-2'>Pool reserves</h2>
       <ul className='text-sm'>
         {tokensInfo.map((token, i) => {
           const entry = reserves?.[i];
           return (
             <AmountLine
               key={token.name}
-              label={`Réserves de ${token.name}`}
+              label={`${token.name} reserves`}
               isLoading={isLoading}
               error={error ?? entry?.error}
               value={entry?.status === 'success' ? entry.result : undefined}
@@ -46,7 +46,7 @@ export default function Reserves() {
         })}
 
         <AmountLine
-          label="Total des parts LP"
+          label="Total LP shares"
           isLoading={isLoading}
           error={error ?? supply?.error}
           value={supply?.status === 'success' ? supply.result : undefined}

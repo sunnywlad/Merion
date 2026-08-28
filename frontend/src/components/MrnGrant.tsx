@@ -10,11 +10,10 @@ import Panel from '@/components/Panel';
 import { Button } from '@/components/ui/Button';
 import { KpiCard } from '@/components/ui/KpiCard';
 import { StatusDot } from '@/components/ui/StatusDot';
+import { EXPECTED_CHAIN_ID } from '@/components/ui/deployment';
 import { AppStateBoundary } from '@/components/ui/AppStateBoundary';
 
 // II.2d — chain id the pool is deployed on, mirrored from constants/addresses.
-const EXPECTED_CHAIN_ID = 31337;
-
 // V.0 — Un seul bouton : `drip()` sur le faucet. Plus de « envoyer à mon
 // adresse », qui ne fonctionnait que depuis l'owner et restait silencieusement
 // cassé pour quiconque. Le faucet redistribue depuis un réservoir pré-financé,

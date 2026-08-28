@@ -47,22 +47,22 @@ export default function MandatePanel() {
   if (deployedAuction === null) {
     return (
       <section className='min-w-0'>
-        <h2 className='text-sm font-semibold pb-2'>Mandat en cours</h2>
+        <h2 className='text-sm font-semibold pb-2'>Current mandate</h2>
         <p className='text-sm'>
-          Enchère non déployée sur cette chaîne : le pool trade au tarif nominal,
-          aucun mandat n&apos;est vendu.
+          Auction not deployed on this chain: the pool trades at the base fee,
+          no mandate is sold.
         </p>
       </section>
     );
   }
 
   const failedReads = collectReadErrors([
-    { message: "Erreur de lecture de l'état de l'enchère", error: auction.error },
-    { message: "Erreur de lecture des constantes de l'enchère", error: constants.error },
-    { message: "Erreur de lecture du tarif effectif", error: fees.error },
-    { message: "Erreur de lecture des constantes du pool", error: errorPoolConstants },
-    { message: "Erreur de lecture du gestionnaire en exercice", error: managerNow.error },
-    { message: "Erreur de lecture de votre position de loyer", error: rent.error }
+    { message: 'Failed to read the auction state', error: auction.error },
+    { message: 'Failed to read the auction constants', error: constants.error },
+    { message: 'Failed to read the effective fee', error: fees.error },
+    { message: 'Failed to read the pool constants', error: errorPoolConstants },
+    { message: 'Failed to read the current manager', error: managerNow.error },
+    { message: 'Failed to read your rent position', error: rent.error }
   ]);
   if (failedReads.length > 0) {
     for (const r of failedReads) console.error('[Merion]', r.message, r.error);
@@ -119,28 +119,28 @@ export default function MandatePanel() {
 
   return (
     <section className='min-w-0'>
-      <h2 className='text-sm font-semibold pb-2'>Mandat en cours</h2>
+      <h2 className='text-sm font-semibold pb-2'>Current mandate</h2>
       <ul className='text-sm'>
 
-        <li>Index du mandat : {currentEpoch === undefined ? "—" : String(currentEpoch)}</li>
+        <li>Mandate index: {currentEpoch === undefined ? '—' : String(currentEpoch)}</li>
 
-        {/* Le gestionnaire en exercice. L'absence est écrite comme un état du
-            mécanisme : le mandat n'a pas trouvé preneur, le pool tourne au
-            tarif nominal, et tout fonctionne. Un badge « Vous » apparaît à
-            côté de l'adresse quand l'utilisateur connecté est ce gestionnaire,
-            pour ne pas avoir à comparer mentalement la ligne avec MetaMask. */}
+        {/* The current manager. Absence is read as a state of the mechanism:
+            the mandate found no bidder, the pool runs at the base fee, and
+            everything works. A "You" badge appears next to the address when
+            the connected user is that manager, so the line doesn't have to
+            be mentally compared with MetaMask. */}
         <li>
           {hasManagerNow
-            ? <>Gestionnaire : {short(managerInOffice)}{user !== undefined && managerInOffice === user && (
+            ? <>Manager: {short(managerInOffice)}{user !== undefined && managerInOffice === user && (
                 <span className='ml-2 px-2 py-0.5 text-xs bg-emerald-100 text-emerald-800 rounded'>
-                  Vous
+                  You
                 </span>
               )}</>
-            : <>Mandat invendu, pool au tarif nominal</>}
+            : <>Mandate unsold, pool at base fee</>}
         </li>
 
         <AmountLine
-          label="Tarif de base en vigueur"
+          label="Base fee in force"
           isLoading={fees.isLoading}
           error={null}
           value={percentOf(fees.base)}
@@ -153,7 +153,7 @@ export default function MandatePanel() {
         {fees.base !== undefined && fees.worst !== undefined && fees.worst > fees.base && (
           <>
             <AmountLine
-              label="Tarif surchargé (déséquilibre)"
+              label="Surcharged fee (drift)"
               isLoading={false}
               error={null}
               value={percentOf(fees.worst)}
@@ -161,27 +161,27 @@ export default function MandatePanel() {
               suffix=" %"
             />
             <li>
-              Surcharge active sur : {fees.surcharged.map(([i, j]) => `${nameOf(i)} → ${nameOf(j)}`).join(', ')}
+              Surcharge active on: {fees.surcharged.map(([i, j]) => `${nameOf(i)} → ${nameOf(j)}`).join(', ')}
             </li>
           </>
         )}
 
         {timeToEnd !== null && (
-          <li>Fin du mandat dans {formatCountdown(timeToEnd)}</li>
+          <li>Mandate ends in {formatCountdown(timeToEnd)}</li>
         )}
 
         {/* Le loyer se lit par adresse : sans connexion, la réponse honnête
             n'est pas zéro. */}
         {user
           ? <AmountLine
-              label="Loyer réclamable"
+              label="Claimable rent"
               isLoading={rent.isLoading}
               error={null}
               value={claimable}
               decimals={MRN_DECIMALS}
               suffix=" MRN"
             />
-          : <li className='pt-2'>Loyer réclamable : connectez-vous pour le lire.</li>}
+          : <li className='pt-2'>Claimable rent: connect to read.</li>}
 
       </ul>
     </section>

@@ -10,7 +10,7 @@ import Panel from '@/components/Panel';
  */
 export function MandateNoManagerState() {
   return (
-    <Panel>
+    <Panel className="max-w-lg">
       <div
         role="status"
         aria-live="polite"
@@ -27,5 +27,3 @@ export function MandateNoManagerState() {
     </Panel>
   );
 }
-
-export default MandateNoManagerState;

@@ -15,10 +15,9 @@ import { Button } from "@/components/ui/Button";
 import { StatusDot } from "@/components/ui/StatusDot";
 import { KpiCard } from "@/components/ui/KpiCard";
 import { AppStateBoundary } from "@/components/ui/AppStateBoundary";
+import { EXPECTED_CHAIN_ID } from '@/components/ui/deployment';
 
 // II.2d — chain id the pool is deployed on, mirrored from constants/addresses.
-const EXPECTED_CHAIN_ID = 31337;
-
 const inputClass =
   'w-full rounded border border-cloud/10 bg-slate px-3 py-2 ' +
   'text-code text-cloud placeholder:text-cloud/40 ' +

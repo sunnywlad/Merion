@@ -17,10 +17,9 @@ import { collectReadErrors } from "@/lib/readErrors";
 import { Button } from "@/components/ui/Button";
 import { StatusDot } from "@/components/ui/StatusDot";
 import { AppStateBoundary } from "@/components/ui/AppStateBoundary";
+import { EXPECTED_CHAIN_ID } from '@/components/ui/deployment';
 
 // II.2d — chain id the pool is deployed on, mirrored from constants/addresses.
-const EXPECTED_CHAIN_ID = 31337;
-
 // Re-stylage des inputs natifs : fond Slate, bordure Cloud à 10 %, focus
 // Merion Blue 2 px (cf. brand book §7). Les valeurs monétaires passent en
 // `font-mono` pour respecter §4 du brand book.
@@ -69,18 +68,18 @@ const Swap = () => {
   const userAddress = connection.address;
 
   const failedReads = collectReadErrors([
-    {message: "Erreur de lecture des réserves du pool", error: errorReserves},
+    {message: "Could not read the pool reserves.", error: errorReserves},
     ...(reserveEntries ?? []).map((entry, i) => ({
-      message: `Erreur de lecture de la réserve du token ${tokensInfo[i].name}`,
+      message: `Could not read the ${tokensInfo[i].name} reserve.`,
       error: entry?.error
     })),
-    {message: "Erreur de lecture du tarif effectif", error: errorFees},
+    {message: "Could not read the effective fee.", error: errorFees},
     {
-      message: `Erreur de lecture du tarif effectif ${tokensInfo[indexIn].name} → ${tokensInfo[indexOut].name}`,
+      message: `Could not read the effective fee ${tokensInfo[indexIn].name} → ${tokensInfo[indexOut].name}.`,
       error: errorFor(indexIn, indexOut)
     },
-    {message: "Erreur de lecture des constantes du pool", error: errorConstants},
-    {message: "Erreur de lecture des fees (den)", error: feeDenData?.error},
+    {message: "Could not read the pool constants.", error: errorConstants},
+    {message: "Could not read the fee denominator.", error: feeDenData?.error},
   ]);
   if (failedReads.length > 0) {
     for (const r of failedReads) console.error('[Merion]', r.message, r.error);
@@ -165,8 +164,8 @@ const Swap = () => {
     // Rounding aside, this comes back to the tolerance the user typed. Displaying it anyway keeps
     // the three lines readable side by side, and makes the chosen figure visible where it bites.
     maxSlippageBps: shareBps(quote.tokenOut.amount - quote.tokenOut.minAmount, quote.tokenOut.amount),
-    balanceError: ((balanceIn || balanceIn === 0n) && quote.tokenIn.amount > balanceIn) ? "Solde insuffisant" : null,
-    zeroOut: quote.tokenOut.amount === 0n ? "Sortie du swap nulle" : null
+    balanceError: ((balanceIn || balanceIn === 0n) && quote.tokenIn.amount > balanceIn) ? "Insufficient balance." : null,
+    zeroOut: quote.tokenOut.amount === 0n ? "Swap output is zero." : null
   } : null;
 
   const quoteTone: 'success' | 'danger' | 'neutral' = !quote

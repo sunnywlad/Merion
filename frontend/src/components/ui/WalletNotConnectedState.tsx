@@ -10,7 +10,7 @@ import Panel from '@/components/Panel';
  */
 export function WalletNotConnectedState() {
   return (
-    <Panel>
+    <Panel className="max-w-lg">
       <div
         role="status"
         aria-live="polite"
@@ -30,5 +30,3 @@ export function WalletNotConnectedState() {
     </Panel>
   );
 }
-
-export default WalletNotConnectedState;

@@ -8,9 +8,7 @@ import AmountLine from '@/components/AmountLine';
 import { AppStateBoundary } from '@/components/ui/AppStateBoundary';
 
 export default function Balances() {
-
   const { btcBalances, mrnBalance, refundBalance, isLoading, error } = useUserBalances();
-
   const { data: dataLp, isLoading: isLoadingLp, error: errorLp } = useLpBalance();
   const { supply: supplyEntry, isLoading: isLoadingR, error: errorR } = useReserves();
   const supply = supplyEntry?.status === 'success' ? supplyEntry.result : undefined;
@@ -39,14 +37,14 @@ export default function Balances() {
 
   return (
     <section className='min-w-0'>
-      <h2 className='text-sm font-semibold pb-2'>Votre position</h2>
+      <h2 className='text-sm font-semibold pb-2'>Your position</h2>
       <ul className='text-sm'>
         {tokensInfo.map((token, i) => {
           const entry = btcBalances[i];
           return (
             <AmountLine
               key={token.name}
-              label={`Votre montant de ${token.name}`}
+              label={`Your ${token.name} balance`}
               isLoading={isLoading}
               // Two error levels folded into one: the whole multicall may die, or this single
               // call may have failed while its siblings succeeded.
@@ -60,7 +58,7 @@ export default function Balances() {
             BTCs a 8. AmountLine formate via `formatUnits` avec le decimals
             prop, donc chaque ligne passe son echelle. */}
         <AmountLine
-          label="Votre montant de MRN"
+          label="Your MRN balance"
           isLoading={isLoading}
           error={error ?? mrnBalance?.error}
           value={mrnBalance?.status === 'success' ? mrnBalance.result : undefined}
@@ -68,7 +66,7 @@ export default function Balances() {
         />
 
         <AmountLine
-          label="Votre remboursement à retirer"
+          label="Your refund to claim"
           isLoading={isLoading}
           error={error ?? refundBalance?.error}
           value={refundBalance?.status === 'success' ? refundBalance.result : undefined}
@@ -76,14 +74,14 @@ export default function Balances() {
         />
 
         <AmountLine
-          label="Vos parts LP"
+          label="Your LP shares"
           isLoading={isLoadingLp}
           error={errorLp}
           value={dataLp}
         />
 
         <AmountLine
-          label="Votre part du pool"
+          label="Your pool share"
           isLoading={isLoadingLp || isLoadingR}
           error={errorLp ?? errorR}
           value={sharePercent}

@@ -28,7 +28,7 @@ export function ErrorState({
   retry,
 }: ErrorStateProps) {
   return (
-    <Panel>
+    <Panel className="max-w-lg">
       <div
         role="alert"
         className="flex items-start gap-4 min-w-0"
@@ -56,5 +56,3 @@ export function ErrorState({
     </Panel>
   );
 }
-
-export default ErrorState;

@@ -110,7 +110,7 @@ export default function Home() {
                 Body — IBM Plex Sans, 16 px, 1.6 leading. Used for narrative
                 content and form labels.
               </p>
-              <p className="text-code text-merion-blue">
+              <p className="text-code text-cloud/70">
                 Code — IBM Plex Mono, 14 px. Reserved for addresses, amounts
                 and on-chain values.
               </p>
