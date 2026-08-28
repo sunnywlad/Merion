@@ -10,7 +10,7 @@ if (!rawProjectId) {
   throw new Error('Project ID is not defined')
 }
 export const projectId: string = rawProjectId
-export const networks: [AppKitNetwork, ...AppKitNetwork[]] = [hardhat]
+export const networks: [AppKitNetwork, ...AppKitNetwork[]] = [baseSepolia]
 
 //Set up the Wagmi Adapter (Config)
 export const wagmiAdapter = new WagmiAdapter({
