@@ -16,7 +16,7 @@ import { KpiCard } from "@/components/ui/KpiCard";
 import { AppStateBoundary } from "@/components/ui/AppStateBoundary";
 import { EXPECTED_CHAIN_ID } from '@/components/ui/deployment';
 import Chevron from "@/components/ui/Chevron";
-import Retractable from "@/components/ui/Retractable";
+import Disclosure from "@/components/ui/Disclosure";
 
 // II.2d — chaîne id du pool, miroir de constants/addresses.
 // py-1.5 : compaction uniforme des formulaires (cf. AddLiquidity).
@@ -36,7 +36,6 @@ const inputClass =
  * `Add Liquidity` ouvert et on replie `Remove Liquidity`.
  */
 const RemoveLiquidity = () => {
-  const [open, setOpen] = useState(false);
   const [typedAmount, setTypedAmount] = useState("");
   const [anchor, setAnchor] = useState<0 | 1 | 2 | 3 | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -134,23 +133,27 @@ const RemoveLiquidity = () => {
 
   return (
     <div className="rounded-lg border border-cloud/10 bg-midnight text-cloud overflow-hidden">
-      <button
-        type="button"
-        aria-expanded={open}
-        aria-controls="remove-liquidity-body"
-        onClick={() => setOpen((v) => !v)}
-        className={
-          `flex w-full items-center justify-between gap-3 px-4 py-2 text-left ` +
-          `transition-colors duration-150 ` +
-          `hover:bg-cloud/5 ` +
-          `focus:outline-none focus-visible:border-merion-blue focus-visible:border-2`
-        }
+      <Disclosure
+        id="remove-liquidity-body"
+        defaultOpen={false}
+        trigger={(open, toggle) => (
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-controls="disclosure-remove-liquidity-body"
+            onClick={toggle}
+            className={
+              `flex w-full items-center justify-between gap-3 px-4 py-2 text-left ` +
+              `transition-colors duration-150 ` +
+              `hover:bg-cloud/5 ` +
+              `focus:outline-none focus-visible:border-merion-blue focus-visible:border-2`
+            }
+          >
+            <span className="text-h4 font-medium">Remove Liquidity</span>
+            <Chevron open={open} />
+          </button>
+        )}
       >
-        <span className="text-h4 font-medium">Remove Liquidity</span>
-        <Chevron open={open} />
-      </button>
-
-      <Retractable id="remove-liquidity-body" open={open}>
         <div className="border-t border-cloud/10 p-4 flex flex-col gap-4">
           <div className="flex flex-col gap-2">
             {tokensInfo.map((token) => {
@@ -270,7 +273,7 @@ const RemoveLiquidity = () => {
             </p>
           )}
         </div>
-      </Retractable>
+      </Disclosure>
     </div>
   );
 }

@@ -1,6 +1,5 @@
 'use client';
 
-import { useState } from 'react';
 import { useAuctionState } from '@/hooks/useAuctionState';
 import { useAuctionConstants } from '@/hooks/useAuctionConstants';
 import { useEffectiveFees } from '@/hooks/useEffectiveFees';
@@ -11,7 +10,7 @@ import { secondsLeft, formatCountdown } from '@/lib/mandateWindow';
 import AuctionPanel from '@/components/AuctionPanel';
 import MandatePanel from '@/components/MandatePanel';
 import Chevron from '@/components/ui/Chevron';
-import Retractable from '@/components/ui/Retractable';
+import Disclosure from '@/components/ui/Disclosure';
 import { Badge, type BadgeVariant } from '@/components/ui/Badge';
 
 /**
@@ -35,9 +34,6 @@ import { Badge, type BadgeVariant } from '@/components/ui/Badge';
  * « Mandate » du rail — le mandat quitte le rail (cf. §7).
  */
 export default function AuctionBar() {
-  const [open, setOpen] = useState(false);
-  const toggle = () => setOpen((v) => !v);
-
   const auction = useAuctionState();
   const constants = useAuctionConstants();
   const fees = useEffectiveFees();
@@ -134,58 +130,62 @@ export default function AuctionBar() {
 
   return (
     <div className="bg-slate border border-cloud/10 rounded-lg overflow-hidden">
-      <button
-        type="button"
-        aria-expanded={open}
-        aria-controls="auction-bar-panel"
-        onClick={toggle}
-        className={
-          `group flex w-full items-center justify-between gap-6 px-4 py-2 text-left ` +
-          `transition-colors duration-150 ` +
-          `hover:bg-cloud/5 ` +
-          `focus:outline-none focus-visible:border-merion-blue focus-visible:border-2`
-        }
+      <Disclosure
+        id="auction-bar-panel"
+        defaultOpen={false}
+        trigger={(open, toggle) => (
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-controls="disclosure-auction-bar-panel"
+            onClick={toggle}
+            className={
+              `group flex w-full items-center justify-between gap-6 px-4 py-2 text-left ` +
+              `transition-colors duration-150 ` +
+              `hover:bg-cloud/5 ` +
+              `focus:outline-none focus-visible:border-merion-blue focus-visible:border-2`
+            }
+          >
+            <div className="flex items-center gap-4 min-w-0">
+              <span className="text-h4 font-medium text-cloud">Auction</span>
+              <span className="text-caption uppercase tracking-wide text-cloud/60 num-tabular">
+                {indexLabel}
+              </span>
+              {!auctionDeployed ? (
+                <Badge variant="deprecated">No auction</Badge>
+              ) : (
+                <Badge variant={STATUS_VARIANT[timelineStatus]}>
+                  {STATUS_LABEL[timelineStatus]}
+                </Badge>
+              )}
+            </div>
+            <div className="flex items-center gap-6">
+              <div className="flex items-baseline gap-3">
+                <span className="text-caption uppercase tracking-wide text-cloud/60">
+                  Base fee
+                </span>
+                <span className="font-mono text-code text-cloud num-tabular">
+                  {baseLabel}
+                </span>
+              </div>
+              <div className="flex items-baseline gap-3">
+                <span className="text-caption uppercase tracking-wide text-cloud/60">
+                  Ends in
+                </span>
+                <span className="font-mono text-code text-cloud num-tabular">
+                  {timeLabel}
+                </span>
+              </div>
+              <Chevron open={open} label={open ? 'Hide details' : 'Show details'} />
+            </div>
+          </button>
+        )}
       >
-        <div className="flex items-center gap-4 min-w-0">
-          <span className="text-h4 font-medium text-cloud">Auction</span>
-          <span className="text-caption uppercase tracking-wide text-cloud/60 num-tabular">
-            {indexLabel}
-          </span>
-          {!auctionDeployed ? (
-            <Badge variant="deprecated">No auction</Badge>
-          ) : (
-            <Badge variant={STATUS_VARIANT[timelineStatus]}>
-              {STATUS_LABEL[timelineStatus]}
-            </Badge>
-          )}
-        </div>
-        <div className="flex items-center gap-6">
-          <div className="flex items-baseline gap-3">
-            <span className="text-caption uppercase tracking-wide text-cloud/60">
-              Base fee
-            </span>
-            <span className="font-mono text-code text-cloud num-tabular">
-              {baseLabel}
-            </span>
-          </div>
-          <div className="flex items-baseline gap-3">
-            <span className="text-caption uppercase tracking-wide text-cloud/60">
-              Ends in
-            </span>
-            <span className="font-mono text-code text-cloud num-tabular">
-              {timeLabel}
-            </span>
-          </div>
-          <Chevron open={open} label={open ? 'Hide details' : 'Show details'} />
-        </div>
-      </button>
-
-      <Retractable id="auction-bar-panel" open={open}>
         <div className="border-t border-cloud/10 px-4 py-4 flex flex-col gap-6">
           <AuctionPanel />
           {auctionDeployed ? <MandatePanel /> : null}
         </div>
-      </Retractable>
+      </Disclosure>
     </div>
   );
 }
