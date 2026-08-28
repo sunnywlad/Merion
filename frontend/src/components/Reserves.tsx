@@ -1,40 +1,98 @@
 'use client';
 
-import {useReserves} from '@/hooks/useReserves';
+import { useReserves } from '@/hooks/useReserves';
 import { tokensInfo } from '@/constants/addresses';
 import AmountLine from '@/components/AmountLine';
+import { AppStateBoundary } from '@/components/ui/AppStateBoundary';
+import ReservesBar from '@/components/ReservesBar';
 
+/**
+ * Merion pool reserves — sous-section du rail « Pool » (cf. PoolRail).
+ *
+ * Lecture sur les mêmes hooks que la page `/pool`. La détection d'erreur
+ * suit le motif de la voie C (§II.2d) : un échec global court-circuite
+ * vers la borne d'état ; les erreurs par entrée restent visibles en
+ * ligne via `AmountLine`, où elles ont leur place.
+ *
+ * Affichage : barres relatives d'abord (la question « est-ce équilibré ? »),
+ * tableau de valeurs absolues ensuite (les montants sous-jacents). Le
+ * tout plafonne dans la colonne du rail.
+ */
 export default function Reserves() {
   const { reserves, supply, isLoading, error } = useReserves();
 
-  // I.5 — Le tarif n'est plus affiché ici : `MandatePanel`, juste en dessous
-  // dans la même colonne, porte la même valeur sous « Tarif de base en
-  // vigueur », et il la donne par direction. Deux libellés pour un seul chiffre
-  // se lisaient comme deux tarifs.
+  if (error) {
+    return (
+      <AppStateBoundary
+        state={{
+          kind: 'error',
+          title: 'Could not read reserves',
+          description: 'Unable to read the reserves.',
+          cause: error.message,
+        }}
+      />
+    );
+  }
+
+  const reserveResults =
+    reserves?.length === tokensInfo.length
+      ? reserves.map((entry) =>
+          entry?.status === 'success' ? entry.result : undefined,
+        )
+      : undefined;
+  const allLoaded =
+    reserveResults !== undefined &&
+    reserveResults.every((v) => v !== undefined);
+  const totalReserves = allLoaded
+    ? reserveResults!.reduce<bigint>((acc, v) => acc + (v ?? 0n), 0n)
+    : 0n;
+  const shares = tokensInfo.map((_token, i) => {
+    const v = reserveResults?.[i];
+    if (v === undefined || totalReserves === 0n) return 0;
+    return Number((v * 10000n) / totalReserves) / 10000;
+  });
+
   return (
-    <section className='min-w-0'>
-      <h2 className='text-sm font-semibold pb-2'>Réserves du pool</h2>
-      <ul className='text-sm'>
+    <section className="flex flex-col gap-3 min-w-0">
+      <h3 className="text-h5 font-medium text-cloud/80">Pool reserves</h3>
+
+      <div className="flex flex-col gap-2">
+        {tokensInfo.map((token, i) => (
+          <ReservesBar
+            key={token.name}
+            tokenSymbol={token.name}
+            share={shares[i]}
+          />
+        ))}
+      </div>
+
+      <ul className="border-t border-cloud/10 pt-2">
         {tokensInfo.map((token, i) => {
           const entry = reserves?.[i];
           return (
             <AmountLine
               key={token.name}
-              label={`Réserves de ${token.name}`}
+              label={`${token.name} reserves`}
               isLoading={isLoading}
               error={error ?? entry?.error}
               value={entry?.status === 'success' ? entry.result : undefined}
+              displayDecimals={4}
+              tokenDecimals={8}
+              unit={token.name}
             />
           );
         })}
 
         <AmountLine
-          label="Total des parts LP"
+          label="Total LP shares"
           isLoading={isLoading}
           error={error ?? supply?.error}
           value={supply?.status === 'success' ? supply.result : undefined}
+          displayDecimals={4}
+          tokenDecimals={8}
+          unit="LP"
         />
       </ul>
     </section>
-  )
+  );
 }

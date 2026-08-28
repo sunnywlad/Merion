@@ -13,7 +13,12 @@ import { secondsLeft, formatCountdown } from '@/lib/mandateWindow';
 import { rentClaimable } from '@/lib/rentClaimable';
 import { collectReadErrors } from '@/lib/readErrors';
 import AmountLine from '@/components/AmountLine';
-import ReadErrors from '@/components/ReadErrors';
+import { MandateTimeline } from '@/components/MandateTimeline';
+import {
+  computeMandateStatus,
+  computeLateWindow,
+} from '@/components/_mandateStatus';
+import { AppStateBoundary } from '@/components/ui/AppStateBoundary';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
@@ -47,24 +52,37 @@ export default function MandatePanel() {
   if (deployedAuction === null) {
     return (
       <section className='min-w-0'>
-        <h2 className='text-sm font-semibold pb-2'>Mandat en cours</h2>
+        <h2 className='text-sm font-semibold pb-2'>Current mandate</h2>
         <p className='text-sm'>
-          Enchère non déployée sur cette chaîne : le pool trade au tarif nominal,
-          aucun mandat n&apos;est vendu.
+          Auction not deployed on this chain: the pool trades at the base fee,
+          no mandate is sold.
         </p>
       </section>
     );
   }
 
   const failedReads = collectReadErrors([
-    { message: "Erreur de lecture de l'état de l'enchère", error: auction.error },
-    { message: "Erreur de lecture des constantes de l'enchère", error: constants.error },
-    { message: "Erreur de lecture du tarif effectif", error: fees.error },
-    { message: "Erreur de lecture des constantes du pool", error: errorPoolConstants },
-    { message: "Erreur de lecture du gestionnaire en exercice", error: managerNow.error },
-    { message: "Erreur de lecture de votre position de loyer", error: rent.error }
+    { message: 'Failed to read the auction state', error: auction.error },
+    { message: 'Failed to read the auction constants', error: constants.error },
+    { message: 'Failed to read the effective fee', error: fees.error },
+    { message: 'Failed to read the pool constants', error: errorPoolConstants },
+    { message: 'Failed to read the current manager', error: managerNow.error },
+    { message: 'Failed to read your rent position', error: rent.error }
   ]);
-  if (failedReads.length > 0) return <ReadErrors sources={failedReads} />;
+  if (failedReads.length > 0) {
+    for (const r of failedReads) console.error('[Merion]', r.message, r.error);
+    const cause = failedReads.find((r) => r.error)?.error?.message ?? 'unknown';
+    return (
+      <AppStateBoundary
+        state={{
+          kind: 'error',
+          title: 'Could not read mandate data',
+          description: `Unable to read the mandate. ${failedReads.map((r) => r.message).join('; ')}`,
+          cause,
+        }}
+      />
+    );
+  }
 
   const feeDen = feeDenEntry?.status === 'success' ? feeDenEntry.result : undefined;
   // Le pourcentage se lit en points de base, donc `decimals={2}` rend un
@@ -81,7 +99,35 @@ export default function MandatePanel() {
     && constants.epochDuration !== undefined
       ? constants.genesis + (currentEpoch + 1n) * constants.epochDuration
       : undefined;
+  const startTime = currentEpoch !== undefined
+    && constants.genesis !== undefined
+    && constants.epochDuration !== undefined
+      ? constants.genesis + currentEpoch * constants.epochDuration
+      : undefined;
   const timeToEnd = now !== null && endTime !== undefined ? secondsLeft(endTime, now) : null;
+
+  // II.5 — Frise d'enchère. `lateWindow` n'est pas un constant du contrat :
+  // on prend 15 % de la durée du mandat comme proxy (motivation dans le
+  // rapport). `silence` utilise `bidSilence` lu par useAuctionConstants
+  // s'il est disponible, sinon retombe sur 5 % de la durée (proportion
+  // d'exemple du brief).
+  const totalDuration = startTime !== undefined && endTime !== undefined
+    ? Number(endTime - startTime)
+    : undefined;
+  const lateWindow = computeLateWindow(totalDuration);
+  const silence = constants.bidSilence !== undefined
+    ? Number(constants.bidSilence)
+    : totalDuration !== undefined
+      ? Math.floor(totalDuration * 0.05)
+      : undefined;
+  // Source unique du `timelineStatus` (note §11, tâche 5) — la
+  // formule est partagée avec `AuctionBar` via `_mandateStatus.ts`.
+  const timelineStatus = computeMandateStatus({
+    now,
+    start: startTime,
+    end: endTime,
+    lateWindow,
+  });
 
   const rentEntries = rent.data;
   const rentValues = rentEntries?.every((entry) => entry.status === 'success')
@@ -106,71 +152,115 @@ export default function MandatePanel() {
 
   return (
     <section className='min-w-0'>
-      <h2 className='text-sm font-semibold pb-2'>Mandat en cours</h2>
-      <ul className='text-sm'>
+      <h2 className='text-sm font-semibold pb-2'>Current mandate</h2>
 
-        <li>Index du mandat : {currentEpoch === undefined ? "—" : String(currentEpoch)}</li>
-
-        {/* Le gestionnaire en exercice. L'absence est écrite comme un état du
-            mécanisme : le mandat n'a pas trouvé preneur, le pool tourne au
-            tarif nominal, et tout fonctionne. Un badge « Vous » apparaît à
-            côté de l'adresse quand l'utilisateur connecté est ce gestionnaire,
-            pour ne pas avoir à comparer mentalement la ligne avec MetaMask. */}
-        <li>
-          {hasManagerNow
-            ? <>Gestionnaire : {short(managerInOffice)}{user !== undefined && managerInOffice === user && (
-                <span className='ml-2 px-2 py-0.5 text-xs bg-emerald-100 text-emerald-800 rounded'>
-                  Vous
-                </span>
-              )}</>
-            : <>Mandat invendu, pool au tarif nominal</>}
-        </li>
-
-        <AmountLine
-          label="Tarif de base en vigueur"
-          isLoading={fees.isLoading}
-          error={null}
-          value={percentOf(fees.base)}
-          decimals={2}
-          suffix=" %"
+      {/* II.5 — Frise d'enchère. L'inline « Mandate unsold, pool at base fee »
+          plus bas reste : il porte l'absence de gestionnaire (cas nominal),
+          la frise porte l'état temporel du mandat. Les deux sont complémentaires. */}
+      {startTime !== undefined && endTime !== undefined && lateWindow !== undefined && silence !== undefined && now !== null ? (
+        <MandateTimeline
+          start={Number(startTime)}
+          end={Number(endTime)}
+          now={Number(now)}
+          lateWindow={lateWindow}
+          silence={silence}
+          status={timelineStatus}
+          className="pb-4"
         />
+      ) : null}
 
-        {/* La surcharge est directionnelle : un seul chiffre mentirait pour les
-            autres sens. Les directions concernées sont nommées. */}
-        {fees.base !== undefined && fees.worst !== undefined && fees.worst > fees.base && (
-          <>
-            <AmountLine
-              label="Tarif surchargé (déséquilibre)"
-              isLoading={false}
-              error={null}
-              value={percentOf(fees.worst)}
-              decimals={2}
-              suffix=" %"
-            />
-            <li>
-              Surcharge active sur : {fees.surcharged.map(([i, j]) => `${nameOf(i)} → ${nameOf(j)}`).join(', ')}
-            </li>
-          </>
-        )}
+      {/* Tâche 3 fix — légendes hors `<ul>`.
+          Raison : un `<li>` légende inséré au milieu d'une liste déplace
+          l'index des `<li>` suivants. Quand l'état SSR et le premier rendu
+          client divergent sur la valeur d'un item (ex. `currentEpoch`
+          encore en `undefined` côté serveur, chargé côté client), React
+          apparie par index et déclenche un mismatch d'hydratation. En
+          sortant la légende du `<ul>` (devenue `<h5>` sœur), la structure
+          reste identique des deux côtés et les `<li>` portent les
+          mêmes données au même rang. */}
 
-        {timeToEnd !== null && (
-          <li>Fin du mandat dans {formatCountdown(timeToEnd)}</li>
-        )}
+      <div className='text-sm'>
+        <h5 className='pt-2 pb-1 text-h5 text-cloud/80'>
+          Mandate
+        </h5>
+        <ul>
 
-        {/* Le loyer se lit par adresse : sans connexion, la réponse honnête
-            n'est pas zéro. */}
-        {user
-          ? <AmountLine
-              label="Loyer réclamable"
-              isLoading={rent.isLoading}
-              error={null}
-              value={claimable}
-              decimals={MRN_DECIMALS}
-              suffix=" MRN"
-            />
-          : <li className='pt-2'>Loyer réclamable : connectez-vous pour le lire.</li>}
+          <li>Mandate index: {currentEpoch === undefined ? '—' : String(currentEpoch)}</li>
 
-      </ul>
+          {/* The current manager. Absence is read as a state of the mechanism:
+              the mandate found no bidder, the pool runs at the base fee, and
+              everything works. A "You" badge appears next to the address when
+              the connected user is that manager, so the line doesn't have to
+              be mentally compared with MetaMask. */}
+          <li>
+            {hasManagerNow
+              ? <>Manager: {short(managerInOffice)}{user !== undefined && managerInOffice === user && (
+                  <span className='ml-2 px-2 py-0.5 text-xs bg-emerald-100 text-emerald-800 rounded'>
+                    You
+                  </span>
+                )}</>
+              : <>Mandate unsold, pool at base fee</>}
+          </li>
+
+          <AmountLine
+            label="Base fee in force"
+            isLoading={fees.isLoading}
+            error={null}
+            value={percentOf(fees.base)}
+            displayDecimals={2}
+            tokenDecimals={2}
+            unit="%"
+          />
+
+          {/* La surcharge est directionnelle : un seul chiffre mentirait pour les
+              autres sens. Les directions concernées sont nommées. */}
+          {fees.base !== undefined && fees.worst !== undefined && fees.worst > fees.base && (
+            <>
+              <AmountLine
+                label="Surcharged fee (drift)"
+                isLoading={false}
+                error={null}
+                value={percentOf(fees.worst)}
+                displayDecimals={2}
+                tokenDecimals={2}
+                unit="%"
+              />
+              <li>
+                Surcharge active on: {fees.surcharged.map(([i, j]) => `${nameOf(i)} → ${nameOf(j)}`).join(', ')}
+              </li>
+            </>
+          )}
+
+          {timeToEnd !== null && (
+            <li>Mandate ends in {formatCountdown(timeToEnd)}</li>
+          )}
+
+        </ul>
+      </div>
+
+      <div className='text-sm pt-3'>
+        <h5 className='pb-1 text-h5 text-cloud/80'>
+          Settlement
+        </h5>
+        <ul>
+
+          {/* Le loyer se lit par adresse : sans connexion, la réponse honnête
+              n'est pas zéro. */}
+          {user
+            ? <AmountLine
+                label="Claimable rent"
+                isLoading={rent.isLoading}
+                error={null}
+                value={claimable}
+                displayDecimals={2}
+                tokenDecimals={MRN_DECIMALS}
+                grouping="fr"
+                unit="MRN"
+              />
+            : <li>Claimable rent: connect to read.</li>}
+
+        </ul>
+      </div>
     </section>
   );
 }

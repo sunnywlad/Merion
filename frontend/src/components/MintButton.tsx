@@ -5,6 +5,8 @@ import {parseUnits, Address} from 'viem';
 import {mockWrappedBTCAbi} from '@/constants/abi';
 import { useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { Button } from '@/components/ui/Button';
+import { StatusDot } from '@/components/ui/StatusDot';
 
 const mintedAmount = parseUnits("10", 8);
 const BTC_MOCK_DECIMALS = 8; // I.6 — les trois mocks BTC codent `decimals()` en dur à 8.
@@ -32,22 +34,44 @@ const MintButton = ({name, address}: {name: string, address: Address}) => {
     }
   }, [isSuccess, queryClient, watchAsset, address, name]);
 
+  const stateTone: 'success' | 'warning' | 'danger' | 'neutral' = error
+    ? 'danger'
+    : waiting
+      ? 'warning'
+      : isSuccess
+        ? 'success'
+        : 'neutral';
+  const stateLabel = error
+    ? 'Mint failed'
+    : waiting
+      ? 'Mint in progress'
+      : isSuccess
+        ? 'Mint confirmed'
+        : 'Ready to mint';
+
   return (
-    <div>
-      <button
-      className='border rounded px-4 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50'
-      onClick={() => {
-        if (!userAddress) return;
-        mutate({
-        address: address,
-        abi: mockWrappedBTCAbi,
-        functionName: "mint",
-        args: [userAddress, mintedAmount]
-      })}}
-      disabled={waiting || !userAddress}>
-        {waiting ? "Mint en cours" : `Mint 10 ${name}`}
-      </button>
-      {error && <p>{error.message}</p>}
+    <div className="flex flex-col gap-2">
+      <Button
+        level="primary"
+        onClick={() => {
+          if (!userAddress) return;
+          mutate({
+            address: address,
+            abi: mockWrappedBTCAbi,
+            functionName: "mint",
+            args: [userAddress, mintedAmount]
+          });
+        }}
+        aria-busy={waiting || undefined}
+        disabled={waiting || !userAddress}>
+        {waiting ? "Mint pending" : `Mint 10 ${name}`}
+      </Button>
+      <StatusDot tone={stateTone} label={stateLabel} />
+      {error && (
+        <p className="text-caption text-danger" role="alert">
+          {error.message}
+        </p>
+      )}
     </div>
   )
 }

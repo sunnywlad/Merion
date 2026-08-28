@@ -1,26 +1,279 @@
 @import "tailwindcss";
 
+/* =============================================================
+   Merion design tokens — étape II.1, nuit 2026-08-28
+   Source de vérité : 03-reference/brandbook-extrait.md
+
+   Régimes :
+     - mode sombre assumé, fond Midnight, texte Cloud
+     - Info (#2563EB) et Merion Blue (#1E4BFF) sont deux bleus
+       proches et distincts, jamais substituer l'un à l'autre
+     - seuls les deux dégradés de §3 sont autorisés
+     - IBM Plex Sans pour l'UI, IBM Plex Mono pour code et données
+   ============================================================= */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Dégradés approuvés — §3, rien d'autre n'est autorisé. */
+  --gradient-blue: linear-gradient(135deg, #1E4BFF 0%, #0B1220 100%);
+  --gradient-midnight: linear-gradient(135deg, #0B1220 0%, #1A2235 100%);
+}
+
+@theme {
+  /* Palette primaire — §1 */
+  --color-midnight: #0B1220;
+  --color-slate: #1A2235;
+  --color-cloud: #F3F5F8;
+  --color-white: #ffffff;
+  --color-merion-blue: #1E4BFF;
+
+  /* Palette sémantique — §2 */
+  --color-success: #16A34A;
+  --color-warning: #F59E0B;
+  --color-danger: #EF4444;
+  --color-info: #2563EB;
+  --color-neutral: #6B7280;
+
+  /* Échelle typographique — §4.
+     Chaque token expose taille, interlignage, interlettrage, graisse.
+     Les utilitaires text-h1, text-body, text-code, ... sont générés. */
+  --text-h1: 4rem;
+  --text-h1--line-height: 0.98;
+  --text-h1--letter-spacing: -0.02em;
+  --text-h1--font-weight: 700;
+
+  --text-h2: 3rem;
+  --text-h2--line-height: 0.98;
+  --text-h2--letter-spacing: -0.01em;
+  --text-h2--font-weight: 600;
+
+  --text-h3: 2rem;
+  --text-h3--line-height: 1;
+  --text-h3--letter-spacing: 0em;
+  --text-h3--font-weight: 600;
+
+  --text-h4: 1.5rem;
+  --text-h4--line-height: 1;
+  --text-h4--letter-spacing: 0em;
+  --text-h4--font-weight: 500;
+
+  --text-h5: 1.25rem;
+  --text-h5--line-height: 1;
+  --text-h5--letter-spacing: 0.01em;
+  --text-h5--font-weight: 500;
+
+  --text-body-lg: 1.125rem;
+  --text-body-lg--line-height: 1.6;
+  --text-body-lg--letter-spacing: 0em;
+  --text-body-lg--font-weight: 400;
+
+  --text-body: 1rem;
+  --text-body--line-height: 1.6;
+  --text-body--letter-spacing: 0em;
+  --text-body--font-weight: 400;
+
+  --text-small: 0.875rem;
+  --text-small--line-height: 1.6;
+  --text-small--letter-spacing: 0em;
+  --text-small--font-weight: 400;
+
+  --text-caption: 0.75rem;
+  --text-caption--line-height: 1.4;
+  --text-caption--letter-spacing: 0em;
+  --text-caption--font-weight: 400;
+
+  --text-code-lg: 1rem;
+  --text-code-lg--line-height: 1.5;
+  --text-code-lg--letter-spacing: 0em;
+  --text-code-lg--font-weight: 400;
+
+  --text-code: 0.875rem;
+  --text-code--line-height: 1.5;
+  --text-code--letter-spacing: 0em;
+  --text-code--font-weight: 400;
+
+  --text-code-sm: 0.75rem;
+  --text-code-sm--line-height: 1.4;
+  --text-code-sm--letter-spacing: 0em;
+  --text-code-sm--font-weight: 400;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  /* Polices — IBM Plex Sans + Mono. Les variables viennent de
+     next/font et sont posées sur <body> par app/layout.tsx.
+     `inline` garde la référence var() pour que next/font résolve
+     à l'exécution. */
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: #0B1220; /* Midnight, fond par défaut */
+  color: #F3F5F8; /* Cloud, premier plan par défaut */
+  font-family: var(--font-sans), system-ui, sans-serif;
+}
+
+/* =============================================================
+   Voie C, tâche 2 — grille et densité.
+
+   Trois familles de règles, toutes référencées par la note
+   d'inspiration front du 2026-08-28 (§9 animations et §6
+   prefers-reduced-motion) :
+     1. `.num-tabular` — chiffres monospace, alignement vertical.
+     2. `.merion-chevron` + `[data-open="true"]` — chevron 12 px,
+        rotation 180° à l'ouverture, transition 200 ms.
+     3. `.merion-retractable` + `[data-open]` — technique
+        `grid-template-rows: 0fr ↔ 1fr`, jamais `max-height`.
+   Toutes ces transitions passent à 0 ms sous prefers-reduced-motion
+   (killswitch global en bas du fichier).
+   ============================================================= */
+
+.num-tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+.merion-chevron {
+  display: inline-block;
+  font-size: 0.75rem;        /* 12 px — note §8 */
+  line-height: 1;
+  color: var(--color-neutral);
+  transition: transform 200ms ease-in-out;
+}
+
+.merion-chevron[data-open="true"] {
+  transform: rotate(180deg);
+}
+
+.merion-retractable {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 200ms ease-in-out;
+}
+
+.merion-retractable[data-open="true"] {
+  grid-template-rows: 1fr;
+}
+
+.merion-retractable > .merion-retractable-inner {
+  /* The inner div is the row's only child; overflow-hidden on the inner
+     keeps the content clipped while the row collapses, no max-height
+     trickery. */
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* =============================================================
+   Killswitch prefers-reduced-motion — note §9.
+   Toute transition/animation passe à 0 ms, scroll-behavior à auto.
+   Encadre la media query ; aucune exception.
+   ============================================================= */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* =============================================================
+   Timeline du mandat — note §11, tâche 5.
+
+   Trois zones (body / late / silence) dont l'opacité dépend du
+   statut temporel courant via `data-status` posé sur le wrapper. Les
+   passages entre zones sont nets (un switch via les règles CSS, pas
+   un gradient) — la seule transition continue est le curseur du
+   présent, qui glisse entre deux positions sur `left` (250 ms).
+   ============================================================= */
+
+.merion-timeline-zone-body,
+.merion-timeline-zone-late,
+.merion-timeline-zone-silence {
+  /* Switch net entre zones — pas de transition de couleur, c'est
+     `data-status` qui dicte l'apparence. */
+  transition: none;
+}
+
+/* NEW — le mandat n'a pas encore commencé : la zone body est en
+   attente (opacité réduite), le curseur est collé au début. */
+.merion-timeline[data-status="new"] .merion-timeline-zone-body {
+  opacity: 0.5;
+}
+
+/* ACTIVE — phase courante, opacité pleine. */
+.merion-timeline[data-status="active"] .merion-timeline-zone-body {
+  opacity: 1;
+}
+
+/* LATE — fenêtre tardive, emphase visuelle sur la zone warning. */
+.merion-timeline[data-status="late"] .merion-timeline-zone-body {
+  opacity: 0.5;
+}
+.merion-timeline[data-status="late"] .merion-timeline-zone-late {
+  opacity: 1;
+  /* Emphase : bordure interne pour creuser la zone sans grossir la
+     barre (qui doit rester 12 px de haut). */
+  box-shadow: inset 0 0 0 1px var(--color-warning);
+}
+
+/* CLOSED — mandat terminé : tout est atténué, le curseur est collé à
+   la fin. */
+.merion-timeline[data-status="closed"] .merion-timeline-zone-body,
+.merion-timeline[data-status="closed"] .merion-timeline-zone-late,
+.merion-timeline[data-status="closed"] .merion-timeline-zone-silence {
+  opacity: 0.4;
+}
+
+/* Curseur du présent — transition CSS sur `left`, 250 ms. Le killswitch
+   `prefers-reduced-motion` plus haut ramène la durée à 0 ms. */
+.merion-timeline-cursor {
+  transition: left 250ms ease-in-out;
+}
+
+/* =============================================================
+   Apparition des panneaux — note §9 (entrée subtile).
+
+   Tous les `<Panel>` entrent avec une animation `opacity 0 → 1` +
+   `translateY(4px → 0)`, 200 ms ease-out. `animation-fill-mode: both`
+   garantit que l'état initial (opacity 0) s'applique dès le premier
+   paint — sans ça, le panneau apparaîtrait à opacity 1 une frame avant
+   de démarrer l'animation, donnant un flash.
+
+   Le killswitch `prefers-reduced-motion` ramène `animation-duration`
+   à 0 ms : le panneau apparaît alors instantanément, sans fade ni
+   translateY. Couvre aussi l'arrivée des panneaux d'état (loading,
+   wallet non connecté, mauvais réseau, pool en pause, mandat sans
+   gestionnaire) qui partagent la même surface.
+   ============================================================= */
+
+@keyframes merion-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.merion-panel {
+  animation: merion-panel-in 200ms ease-out 1 both;
+}
+
+/* =============================================================
+   Segments de la barre de décomposition Swap — note §6 (tâche 6).
+
+   La largeur de chaque segment est une fraction calculée à chaque
+   quote ; un swap qui change la quote voit sa barre se redessiner.
+   La transition `width` 300 ms ease-out lisse ce redessin — sans
+   elle, chaque quote saute d'une largeur à l'autre.
+
+   Le killswitch `prefers-reduced-motion` ramène la durée à 0 ms.
+   ============================================================= */
+
+.merion-decomp-segment {
+  transition: width 300ms ease-out;
 }
