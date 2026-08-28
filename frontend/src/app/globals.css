@@ -1,26 +1,113 @@
 @import "tailwindcss";
 
+/* =============================================================
+   Merion design tokens — étape II.1, nuit 2026-08-28
+   Source de vérité : 03-reference/brandbook-extrait.md
+
+   Régimes :
+     - mode sombre assumé, fond Midnight, texte Cloud
+     - Info (#2563EB) et Merion Blue (#1E4BFF) sont deux bleus
+       proches et distincts, jamais substituer l'un à l'autre
+     - seuls les deux dégradés de §3 sont autorisés
+     - IBM Plex Sans pour l'UI, IBM Plex Mono pour code et données
+   ============================================================= */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Dégradés approuvés — §3, rien d'autre n'est autorisé. */
+  --gradient-blue: linear-gradient(135deg, #1E4BFF 0%, #0B1220 100%);
+  --gradient-midnight: linear-gradient(135deg, #0B1220 0%, #1A2235 100%);
+}
+
+@theme {
+  /* Palette primaire — §1 */
+  --color-midnight: #0B1220;
+  --color-slate: #1A2235;
+  --color-cloud: #F3F5F8;
+  --color-white: #ffffff;
+  --color-merion-blue: #1E4BFF;
+
+  /* Palette sémantique — §2 */
+  --color-success: #16A34A;
+  --color-warning: #F59E0B;
+  --color-danger: #EF4444;
+  --color-info: #2563EB;
+  --color-neutral: #6B7280;
+
+  /* Échelle typographique — §4.
+     Chaque token expose taille, interlignage, interlettrage, graisse.
+     Les utilitaires text-h1, text-body, text-code, ... sont générés. */
+  --text-h1: 4rem;
+  --text-h1--line-height: 0.98;
+  --text-h1--letter-spacing: -0.02em;
+  --text-h1--font-weight: 700;
+
+  --text-h2: 3rem;
+  --text-h2--line-height: 0.98;
+  --text-h2--letter-spacing: -0.01em;
+  --text-h2--font-weight: 600;
+
+  --text-h3: 2rem;
+  --text-h3--line-height: 1;
+  --text-h3--letter-spacing: 0em;
+  --text-h3--font-weight: 600;
+
+  --text-h4: 1.5rem;
+  --text-h4--line-height: 1;
+  --text-h4--letter-spacing: 0em;
+  --text-h4--font-weight: 500;
+
+  --text-h5: 1.25rem;
+  --text-h5--line-height: 1;
+  --text-h5--letter-spacing: 0.01em;
+  --text-h5--font-weight: 500;
+
+  --text-body-lg: 1.125rem;
+  --text-body-lg--line-height: 1.6;
+  --text-body-lg--letter-spacing: 0em;
+  --text-body-lg--font-weight: 400;
+
+  --text-body: 1rem;
+  --text-body--line-height: 1.6;
+  --text-body--letter-spacing: 0em;
+  --text-body--font-weight: 400;
+
+  --text-small: 0.875rem;
+  --text-small--line-height: 1.6;
+  --text-small--letter-spacing: 0em;
+  --text-small--font-weight: 400;
+
+  --text-caption: 0.75rem;
+  --text-caption--line-height: 1.4;
+  --text-caption--letter-spacing: 0em;
+  --text-caption--font-weight: 400;
+
+  --text-code-lg: 1rem;
+  --text-code-lg--line-height: 1.5;
+  --text-code-lg--letter-spacing: 0em;
+  --text-code-lg--font-weight: 400;
+
+  --text-code: 0.875rem;
+  --text-code--line-height: 1.5;
+  --text-code--letter-spacing: 0em;
+  --text-code--font-weight: 400;
+
+  --text-code-sm: 0.75rem;
+  --text-code-sm--line-height: 1.4;
+  --text-code-sm--letter-spacing: 0em;
+  --text-code-sm--font-weight: 400;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  /* Polices — IBM Plex Sans + Mono. Les variables viennent de
+     next/font et sont posées sur <body> par app/layout.tsx.
+     `inline` garde la référence var() pour que next/font résolve
+     à l'exécution. */
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: #0B1220; /* Midnight, fond par défaut */
+  color: #F3F5F8; /* Cloud, premier plan par défaut */
+  font-family: var(--font-sans), system-ui, sans-serif;
 }
