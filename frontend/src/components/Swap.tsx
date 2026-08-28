@@ -17,6 +17,7 @@ import { collectReadErrors } from "@/lib/readErrors";
 import { Button } from "@/components/ui/Button";
 import { StatusDot } from "@/components/ui/StatusDot";
 import { AppStateBoundary } from "@/components/ui/AppStateBoundary";
+import { SwapDecompositionBar } from "@/components/SwapDecompositionBar";
 import { EXPECTED_CHAIN_ID } from '@/components/ui/deployment';
 
 // II.2d — chain id the pool is deployed on, mirrored from constants/addresses.
@@ -263,9 +264,31 @@ const Swap = () => {
         </div>
 
         <Panel title="Decomposition" tone="muted">
-          <p className="text-small text-cloud/60">
-            II.4 — Swap decomposition bar (fees, impact, slippage) lands in the next pass.
-          </p>
+          <SwapDecompositionBar
+            input={
+              quote
+                ? Number(formatUnits(quote.tokenIn.amount, 8))
+                : 0
+            }
+            fee={
+              quote
+                ? Number(formatUnits(quote.tokenIn.fee, 8))
+                : 0
+            }
+            priceImpact={
+              quote
+                ? Number(formatUnits(quote.tokenOut.priceImpact, 8))
+                : 0
+            }
+            slippage={tolerance === '' ? 0 : Number(tolerance) || 0}
+            amountOut={
+              quote
+                ? Number(formatUnits(quote.tokenOut.amount, 8))
+                : undefined
+            }
+            feeUnit={nameOf(indexIn) ?? ''}
+            impactUnit={nameOf(indexOut) ?? ''}
+          />
         </Panel>
 
         <div className="flex items-center gap-3">

@@ -165,7 +165,6 @@ export default function AuctionPanel() {
   // Les lectures de `useConstants` rendent l'union status/result ; on les
   // déplie ici une fois pour ne pas refaire la discrimination à chaque
   // borne affichée.
-  const feeDen = poolConstants.feeDen?.status === 'success' ? poolConstants.feeDen.result : undefined;
   const maxFeeNum = poolConstants.maxFeeNum?.status === 'success' ? poolConstants.maxFeeNum.result : undefined;
   const minFeeNum = poolConstants.minFeeNum?.status === 'success' ? poolConstants.minFeeNum.result : undefined;
   const maxManagerFeeNum = maxFeeNum !== undefined ? maxFeeNum / UNBALANCE_FACTOR : undefined;
