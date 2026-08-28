@@ -1,6 +1,7 @@
 'use client';
 
 import MintButton from './MintButton';
+import MintAllButton from './MintAllButton';
 import Panel from '@/components/Panel';
 import {tokensInfo} from '@/constants/addresses';
 
@@ -12,6 +13,7 @@ const Faucet = () => {
         {tokensInfo.map((token) => {
           return <MintButton key={token.name} name={token.name} address={token.address} />
         })}
+        <MintAllButton tokens={tokensInfo} />
       </div>
     </Panel>
   )

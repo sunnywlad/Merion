@@ -19,7 +19,8 @@ export function useAuctionConstants() {
       { address: deployedAuction ?? undefined, abi: auctionAbi, functionName: 'HIGH_BID_BPS', args: [] },
       { address: deployedAuction ?? undefined, abi: auctionAbi, functionName: 'BPS_DEN', args: [] },
       { address: deployedPool, abi: poolAbi, functionName: 'GENESIS', args: [] },
-      { address: deployedPool, abi: poolAbi, functionName: 'EPOCH_DURATION', args: [] }
+      { address: deployedPool, abi: poolAbi, functionName: 'EPOCH_DURATION', args: [] },
+      { address: deployedPool, abi: poolAbi, functionName: 'PRIORITY_WINDOW', args: [] }
     ] as const,
     query: {
       enabled: deployedAuction !== null,
@@ -27,7 +28,7 @@ export function useAuctionConstants() {
     }
   });
 
-  // Déballés ici, contrairement à `useAuctionState` : aucune de ces six
+  // Déballés ici, contrairement à `useAuctionState` : aucune de ces sept
   // lectures n'a d'échec qui veuille dire quelque chose. Elles réussissent
   // toutes ou la chaîne est injoignable, et l'appelant n'a que faire du statut
   // par entrée. L'échec d'une entrée est donc replié dans une seule erreur.
@@ -43,6 +44,7 @@ export function useAuctionConstants() {
     bpsDen: value(3),
     genesis: value(4),
     epochDuration: value(5),
+    priorityWindow: value(6),
     isLoading,
     error: error ?? data?.find((entry) => entry.status === 'failure')?.error
   };

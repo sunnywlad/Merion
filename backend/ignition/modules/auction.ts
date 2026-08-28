@@ -13,7 +13,7 @@ import MRNModule from "./mrn.js";
 const AUCTION_WINDOW = 900; // 15 min, build-auction.md 2.2 / 5.0 bis
 const MAX_EXTENSION = 0; // A1 roadmap, pas livre a I.3
 const BID_SILENCE = 60; // 60 s, fenetre de settle avant la fin de l'epoch
-const MIN_OPENING_BID = 1_000_000_000_000_000_000n; // 1 MRN a 18 decimales
+const MIN_OPENING_BID = 10_000_000_000_000_000_000n; // 10 MRN a 18 decimales (restated 2026-08-28, MRN target moved from $0.10 to $0.01, dollar floor unchanged at $0.10)
 
 export default buildModule("AuctionModule", (m) => {
   const { pool } = m.useModule(PoolModule);
