@@ -3,7 +3,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useWriteContract, useConnection, useWaitForTransactionReceipt, useReadContract, useWatchAsset } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
-import { formatUnits } from 'viem';
 import { deployedFaucet, deployedMrn, MRN_DECIMALS } from '@/constants/addresses';
 import { mrnFaucetAbi } from '@/constants/abi';
 import Panel from '@/components/Panel';
@@ -12,6 +11,7 @@ import { KpiCard } from '@/components/ui/KpiCard';
 import { StatusDot } from '@/components/ui/StatusDot';
 import { EXPECTED_CHAIN_ID } from '@/components/ui/deployment';
 import { AppStateBoundary } from '@/components/ui/AppStateBoundary';
+import { formatAmount } from '@/components/ui/formatAmount';
 
 // II.2d — chain id the pool is deployed on, mirrored from constants/addresses.
 // V.0 — Un seul bouton : `drip()` sur le faucet. Plus de « envoyer à mon
@@ -107,8 +107,16 @@ const MrnGrant = () => {
     : 0;
   const inCooldown = lastDripAt !== undefined && cooldownSeconds > 0;
   const faucetMissing = deployedFaucet === null;
+  // Note §4 « Montants en MRN » : 2 décimales, grouping français,
+  // troncature. Le helper `formatAmount` ne reçoit pas d'unité : on la
+  // rend en `<span>` séparé dans chaque carte ci-dessous, comme pour
+  // les autres panneaux.
   const dripAmountLabel = dripAmount.data !== undefined
-    ? formatUnits(dripAmount.data, MRN_DECIMALS)
+    ? formatAmount(dripAmount.data, {
+        displayDecimals: 2,
+        tokenDecimals: MRN_DECIMALS,
+        grouping: 'fr',
+      })
     : '...';
   const intervalHours = dripInterval.data !== undefined
     ? Number(dripInterval.data) / 3600
@@ -147,16 +155,18 @@ const MrnGrant = () => {
           <KpiCard
             label="Drip amount"
             value={
-              <span className="font-mono">
-                {dripAmountLabel} <span className="text-cloud/60 text-small">MRN</span>
+              <span className="flex items-baseline gap-1.5 font-mono">
+                <span className="text-code num-tabular">{dripAmountLabel}</span>
+                <span className="text-cloud/60 text-code-sm">MRN</span>
               </span>
             }
           />
           <KpiCard
             label="Cooldown"
             value={
-              <span className="font-mono">
-                {intervalHours} <span className="text-cloud/60 text-small">h</span>
+              <span className="flex items-baseline gap-1.5 font-mono">
+                <span className="text-code num-tabular">{intervalHours}</span>
+                <span className="text-cloud/60 text-code-sm">h</span>
               </span>
             }
           />

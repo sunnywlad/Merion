@@ -193,8 +193,9 @@ export default function MandatePanel() {
           isLoading={fees.isLoading}
           error={null}
           value={percentOf(fees.base)}
-          decimals={2}
-          suffix=" %"
+          displayDecimals={2}
+          tokenDecimals={2}
+          unit="%"
         />
 
         {/* La surcharge est directionnelle : un seul chiffre mentirait pour les
@@ -206,8 +207,9 @@ export default function MandatePanel() {
               isLoading={false}
               error={null}
               value={percentOf(fees.worst)}
-              decimals={2}
-              suffix=" %"
+              displayDecimals={2}
+              tokenDecimals={2}
+              unit="%"
             />
             <li>
               Surcharge active on: {fees.surcharged.map(([i, j]) => `${nameOf(i)} → ${nameOf(j)}`).join(', ')}
@@ -227,8 +229,10 @@ export default function MandatePanel() {
               isLoading={rent.isLoading}
               error={null}
               value={claimable}
-              decimals={MRN_DECIMALS}
-              suffix=" MRN"
+              displayDecimals={2}
+              tokenDecimals={MRN_DECIMALS}
+              grouping="fr"
+              unit="MRN"
             />
           : <li className='pt-2'>Claimable rent: connect to read.</li>}
 

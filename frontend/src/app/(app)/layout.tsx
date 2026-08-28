@@ -4,13 +4,25 @@ import AuctionBar from '@/components/AuctionBar';
 /**
  * Coquille applicative — groupe `(app)` (pas de segment d'URL).
  *
- * Structure :
- *   [Navbar]            ← posée par le `app/layout.tsx` racine, pas répétée
- *   [AuctionBar]        ← sous-navbar, au-dessus du pli
- *   [Sidebar | <main>]  ← gauche lecture seule / droite contenu de page
+ * Structure — note d'inspiration §1 :
+ *   [Navbar]                          ← `app/layout.tsx` racine, h-16
+ *   [Rail | Colonne principale]        ← outer flex
+ *     Rail : 320 px (20 rem), bg-slate, padding interne, scrolle si jamais
+ *     Colonne : 1fr, gouttière 24 px (1.5 rem)
+ *       [AuctionBar]                  ← barre d'enchère, pleine largeur colonne
+ *       [main]                        ← wrapper centré, contenu max 640 px
  *
- * Typage manuel : `LayoutProps<"/">` n'est pas garanti pour un groupe `(app)`
- * au moment de la compilation (cf. etat.md, pièges vérifiés). On type à la main.
+ * Marges extérieures : 32 px (2 rem) en haut, en bas, à droite. Le rail
+ * colle au bord gauche (0 px) — sa propre marge interne fait le travail.
+ *
+ * La contrainte dure (note §6) : `scrollHeight ≤ innerHeight` à 1440×900
+ * portefeuille connecté et données chargées, sur `/swap`, `/pool`, `/tools`.
+ * Le `main` n'a pas de `overflow-y-auto` : la page ne scrolle pas quand
+ * AuctionBar est repliée. Quand AuctionBar est dépliée, le défilement
+ * est acceptable (ce n'est plus l'état par défaut).
+ *
+ * Typage manuel : `LayoutProps<"/">` n'est pas garanti pour un groupe
+ * `(app)` (cf. etat.md, pièges vérifiés). On type à la main.
  */
 export default function AppLayout({
   children,
@@ -18,11 +30,15 @@ export default function AppLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-1 min-h-0">
-      <Sidebar />
-      <div className="flex flex-col flex-1 min-w-0">
+    <div className="flex flex-1 min-h-0 py-6 pr-6 gap-5">
+      <Sidebar className="w-80 shrink-0" />
+      <div className="flex flex-col flex-1 min-w-0 gap-5">
         <AuctionBar />
-        <main className="flex-1 min-w-0 p-6">{children}</main>
+        <main className="flex-1 min-w-0 flex justify-center">
+          <div className="w-full max-w-[640px] flex flex-col gap-5">
+            {children}
+          </div>
+        </main>
       </div>
     </div>
   );

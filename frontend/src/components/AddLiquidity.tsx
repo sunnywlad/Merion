@@ -3,7 +3,6 @@
 import { useReserves } from "@/hooks/useReserves";
 import { useMinimumLiquidity } from "@/hooks/useMinimumLiquidity";
 import { useState } from "react";
-import { formatUnits } from "viem";
 import { deployedPool, tokensInfo } from "@/constants/addresses";
 import {mockWrappedBTCAbi, poolAbi} from '@/constants/abi';
 import {useWriteContract, useConnection, usePublicClient} from 'wagmi';
@@ -16,13 +15,22 @@ import { StatusDot } from "@/components/ui/StatusDot";
 import { KpiCard } from "@/components/ui/KpiCard";
 import { AppStateBoundary } from "@/components/ui/AppStateBoundary";
 import { EXPECTED_CHAIN_ID } from '@/components/ui/deployment';
+import { formatAmount } from '@/components/ui/formatAmount';
 
-// II.2d — chain id the pool is deployed on, mirrored from constants/addresses.
+// II.2d — chaîne id du pool, miroir de constants/addresses.
+// py-1.5 (6 px) plutôt que py-2 (8 px) : compaction uniforme des
+// formulaires pour gagner la marge 1440×900 sur /pool. La note §2 borne
+// le padding interne d'un input entre 0.25 et 0.5 rem, on reste dans
+// la fenêtre (1.5/16 = 0.375 rem par côté).
 const inputClass =
-  'w-full rounded border border-cloud/10 bg-slate px-3 py-2 ' +
-  'text-code text-cloud placeholder:text-cloud/40 ' +
+  'w-full rounded border border-cloud/10 bg-slate px-3 py-1.5 ' +
+  'text-code text-cloud placeholder:text-cloud/40 num-tabular ' +
   'focus:outline-none focus:border-merion-blue focus:border-2 ' +
   'disabled:opacity-50 disabled:cursor-not-allowed';
+
+/** BTC wrappé (8 décimales on-chain) à 4 décimales affichées. */
+const btcAmount = (v: bigint) =>
+  formatAmount(v, { displayDecimals: 4, tokenDecimals: 8 });
 
 const AddLiquidity = () => {
   const [typedAmount, setTypedAmount] = useState("");
@@ -39,7 +47,6 @@ const AddLiquidity = () => {
   const supply = supplyEntry?.status === 'success' ? supplyEntry.result : undefined;
   const { data: minLiq, error: errorMinLiq } = useMinimumLiquidity(supply === 0n);
 
-  // II.2d — connection pulled last so all read hooks stay unconditional.
   const connection = useConnection();
   const userAddress = connection.address;
 
@@ -67,8 +74,6 @@ const AddLiquidity = () => {
     );
   }
 
-  // II.2d — wallet gate comes after the reads: deposit needs a signer on the
-  // right chain, but reads stay unconditional so hook order doesn't shift.
   if (connection.status === 'disconnected') {
     return <AppStateBoundary state={{ kind: 'wallet-not-connected' }} />;
   }
@@ -79,7 +84,6 @@ const AddLiquidity = () => {
   if (supply === 0n && minLiq === undefined) return <AppStateBoundary state={{ kind: 'loading', title: 'Loading minimum liquidity…' }} />;
 
   const reserves = reserveEntries.map((r) => r.result).filter((r) => r !== undefined);
-  // On an empty pool the tolerance is ignored, so a stale invalid value must not block the deposit.
   const {quote, reason} = getQuote({
     anchor,
     typedAmount,
@@ -93,7 +97,7 @@ const AddLiquidity = () => {
     if (!userAddress || anchor === null || !quote || !publicClient) return;
     setError(null);
     try {
-      for (let i = 0; i < 3 ; i++) {
+      for (let i = 0 ; i < 3 ; i++) {
         setStep(i);
         const token = tokensInfo.find((t) => Number(t.index) === i);
         if (!token) throw new Error("Token inconnu");
@@ -122,8 +126,6 @@ const AddLiquidity = () => {
     } finally {setStep(null)};
   }
 
-  // A deposit into an empty pool is fully determined: 3 * amount - MINIMUM_LIQUIDITY, no reserve
-  // to drift under our feet, so there is nothing for a tolerance to protect.
   const isEmptyPool = supply === 0n;
   const isPending = step !== null;
 
@@ -140,9 +142,8 @@ const AddLiquidity = () => {
         <div className="flex flex-col gap-2">
           {tokensInfo.map((token) => {
             const i = Number(token.index) as 0 | 1 | 2;
-            let displayed = "";
-            if (anchor === i) displayed = typedAmount;
-            else if (quote) displayed = formatUnits(quote.computed[i], 8);
+            const full =
+              anchor === i ? typedAmount : quote ? btcAmount(quote.computed[i]) : "";
 
             return (
               <div key={token.name} className="flex items-center gap-3">
@@ -154,7 +155,7 @@ const AddLiquidity = () => {
                   type="text"
                   inputMode="decimal"
                   id={`add-${token.name}`}
-                  value={displayed}
+                  value={full}
                   disabled={isPending}
                   onChange={(e) => {
                     setTypedAmount(e.target.value);
@@ -178,8 +179,6 @@ const AddLiquidity = () => {
             type="text"
             inputMode="decimal"
             id="add-tolerance"
-            // Suppressed on an empty pool: the field is neutralised there, and announcing a default
-            // that will never be read would be a lie told in grey.
             placeholder={isEmptyPool ? "" : "0.5"}
             value={isEmptyPool ? "" : tolerance}
             disabled={isEmptyPool || isPending}
@@ -195,11 +194,21 @@ const AddLiquidity = () => {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <KpiCard
               label="LP shares received (expected)"
-              value={<span className="font-mono">{formatUnits(quote.expected, 8)}</span>}
+              value={
+                <span className="font-mono num-tabular">
+                  {btcAmount(quote.expected)}
+                  <span className="text-cloud/60 text-small"> LP</span>
+                </span>
+              }
             />
             <KpiCard
               label="LP shares received (minimum)"
-              value={<span className="font-mono">{formatUnits(quote.minExpected, 8)}</span>}
+              value={
+                <span className="font-mono num-tabular">
+                  {btcAmount(quote.minExpected)}
+                  <span className="text-cloud/60 text-small"> LP</span>
+                </span>
+              }
             />
           </div>
         )}

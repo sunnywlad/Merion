@@ -9,22 +9,34 @@ import {poolAbi} from '@/constants/abi';
 import {useWriteContract, useConnection, usePublicClient} from 'wagmi';
 import { useQueryClient } from "@tanstack/react-query";
 import { getQuote } from "@/lib/quoteRemoveLiquidity";
-import Panel from "@/components/Panel";
 import { collectReadErrors } from "@/lib/readErrors";
 import { Button } from "@/components/ui/Button";
 import { StatusDot } from "@/components/ui/StatusDot";
 import { KpiCard } from "@/components/ui/KpiCard";
 import { AppStateBoundary } from "@/components/ui/AppStateBoundary";
 import { EXPECTED_CHAIN_ID } from '@/components/ui/deployment';
+import Chevron from "@/components/ui/Chevron";
+import Retractable from "@/components/ui/Retractable";
 
-// II.2d — chain id the pool is deployed on, mirrored from constants/addresses.
+// II.2d — chaîne id du pool, miroir de constants/addresses.
+// py-1.5 : compaction uniforme des formulaires (cf. AddLiquidity).
 const inputClass =
-  'w-full rounded border border-cloud/10 bg-slate px-3 py-2 ' +
+  'w-full rounded border border-cloud/10 bg-slate px-3 py-1.5 ' +
   'text-code text-cloud placeholder:text-cloud/40 ' +
   'focus:outline-none focus:border-merion-blue focus:border-2 ' +
   'disabled:opacity-50 disabled:cursor-not-allowed';
 
+/**
+ * Merion remove liquidity — note d'inspiration §6 + §8.
+ *
+ * Replié par défaut : `/pool` ne peut pas tenir en viewport 1440×900 si
+ * les deux formulaires sont ouverts en même temps. L'en-tête de carte
+ * est cliquable en entier (note §8), avec un chevron 12 px Neutral
+ * pivotant à 180°. L'action la plus fréquente étant l'ajout, on garde
+ * `Add Liquidity` ouvert et on replie `Remove Liquidity`.
+ */
 const RemoveLiquidity = () => {
+  const [open, setOpen] = useState(false);
   const [typedAmount, setTypedAmount] = useState("");
   const [anchor, setAnchor] = useState<0 | 1 | 2 | 3 | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -39,7 +51,6 @@ const RemoveLiquidity = () => {
   const supply = supplyEntry?.status === 'success' ? supplyEntry.result : undefined;
   const { data: maxShares, error: errorLpBalance } = useLpBalance();
 
-  // II.2d — connection pulled last so all read hooks stay unconditional.
   const connection = useConnection();
   const userAddress = connection.address;
 
@@ -67,7 +78,6 @@ const RemoveLiquidity = () => {
     );
   }
 
-  // II.2d — wallet gate after the reads so hook order stays stable.
   if (connection.status === 'disconnected') {
     return <AppStateBoundary state={{ kind: 'wallet-not-connected' }} />;
   }
@@ -75,8 +85,6 @@ const RemoveLiquidity = () => {
     return <AppStateBoundary state={{ kind: 'wrong-network' }} />;
   }
   if (!reserveEntries || supply === undefined) return <AppStateBoundary state={{ kind: 'loading', title: 'Loading pool data…' }} />;
-  // `useLpBalance` is disabled without a wallet, so `maxShares` would stay undefined forever
-  // for a disconnected visitor: only wait on it once a wallet is actually connected.
   if (userAddress && maxShares === undefined) return <AppStateBoundary state={{ kind: 'loading', title: 'Loading LP balance…' }} />;
 
   const reserves = reserveEntries.map((r) => r.result).filter((r) => r !== undefined);
@@ -125,117 +133,146 @@ const RemoveLiquidity = () => {
       : 'success';
 
   return (
-    <Panel title="Remove Liquidity">
-      <div className="flex flex-col gap-4">
+    <div className="rounded-lg border border-cloud/10 bg-midnight text-cloud overflow-hidden">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls="remove-liquidity-body"
+        onClick={() => setOpen((v) => !v)}
+        className={
+          `flex w-full items-center justify-between gap-3 px-4 py-2 text-left ` +
+          `transition-colors duration-150 ` +
+          `hover:bg-cloud/5 ` +
+          `focus:outline-none focus-visible:border-merion-blue focus-visible:border-2`
+        }
+      >
+        <span className="text-h4 font-medium">Remove Liquidity</span>
+        <Chevron open={open} />
+      </button>
 
-        <div className="flex flex-col gap-2">
-          {tokensInfo.map((token) => {
-            const i = Number(token.index) as 0 | 1 | 2;
-            return (
-              <div key={token.name} className="flex items-center gap-3">
-                <label htmlFor={`rem-${token.name}`} className="w-20 shrink-0 text-small text-cloud/80">
-                  {token.name}
-                </label>
-                <input
-                  className={`${inputClass} font-mono`}
-                  type="text"
-                  inputMode="decimal"
-                  id={`rem-${token.name}`}
-                  value={displayAmount(i)}
-                  disabled={isPending}
-                  onChange={(e) => {
-                    setTypedAmount(e.target.value);
-                    setAnchor(i);
-                    setError(null);
-                  }}/>
-              </div>
-            );
-          })}
-        </div>
-
-        <div className="flex flex-col gap-2">
-          <label htmlFor="rem-lpShares" className="text-small text-cloud/80">
-            LP shares to burn
-          </label>
-          <input
-            className={`${inputClass} font-mono`}
-            type="text"
-            inputMode="decimal"
-            id="rem-lpShares"
-            value={displayAmount(3)}
-            disabled={isPending}
-            onChange={(e) => {
-              setTypedAmount(e.target.value);
-              setAnchor(3);
-              setError(null);
-            }} />
-        </div>
-
-        <div className="flex flex-col gap-2">
-          <label htmlFor="rem-tolerance" className="text-small text-cloud/80">
-            Slippage tolerance (%)
-          </label>
-          <input
-            className={`${inputClass} font-mono`}
-            type="text"
-            inputMode="decimal"
-            id="rem-tolerance"
-            placeholder="0.5"
-            value={tolerance}
-            disabled={isPending}
-            onChange={(e) => {setTolerance(e.target.value); setError(null)}}/>
-        </div>
-
-        {minDisplay && (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <KpiCard
-              label={`Min ${tokensInfo[0].name}`}
-              value={<span className="font-mono">{minDisplay[0]}</span>}
-            />
-            <KpiCard
-              label={`Min ${tokensInfo[1].name}`}
-              value={<span className="font-mono">{minDisplay[1]}</span>}
-            />
-            <KpiCard
-              label={`Min ${tokensInfo[2].name}`}
-              value={<span className="font-mono">{minDisplay[2]}</span>}
-            />
+      <Retractable id="remove-liquidity-body" open={open}>
+        <div className="border-t border-cloud/10 p-4 flex flex-col gap-4">
+          <div className="flex flex-col gap-2">
+            {tokensInfo.map((token) => {
+              const i = Number(token.index) as 0 | 1 | 2;
+              const full = displayAmount(i);
+              // Tronque l'affichage à 4 décimales (note §4) ; la valeur reste
+              // saisie en interne, l'arrondi ne sert qu'à l'écran.
+              const shown = full === '' ? '' : (Number(full).toFixed(4).replace(/\.?0+$/, '') || '0');
+              return (
+                <div key={token.name} className="flex items-center gap-3">
+                  <label htmlFor={`rem-${token.name}`} className="w-20 shrink-0 text-small text-cloud/80">
+                    {token.name}
+                  </label>
+                  <input
+                    className={`${inputClass} font-mono num-tabular`}
+                    type="text"
+                    inputMode="decimal"
+                    id={`rem-${token.name}`}
+                    value={shown}
+                    disabled={isPending}
+                    onChange={(e) => {
+                      setTypedAmount(e.target.value);
+                      setAnchor(i);
+                      setError(null);
+                    }}/>
+                </div>
+              );
+            })}
           </div>
-        )}
 
-        <div className="flex items-center gap-3">
-          <StatusDot
-            tone={quoteTone}
-            label={
-              quoteTone === 'success'
-                ? 'Quote ready'
-                : quoteTone === 'danger'
-                  ? (reason ?? 'Quote rejected')
-                  : 'Awaiting quote'
-            }
-          />
-          <Button
-            level="primary"
-            onClick={handleRem}
-            aria-busy={isPending || undefined}
-            disabled={isPending || !userAddress || !quote}>
-            {isPending ? "Withdrawal pending" : "Remove Liquidity"}
-          </Button>
+          <div className="flex flex-col gap-2">
+            <label htmlFor="rem-lpShares" className="text-small text-cloud/80">
+              LP shares to burn
+            </label>
+            <input
+              className={`${inputClass} font-mono num-tabular`}
+              type="text"
+              inputMode="decimal"
+              id="rem-lpShares"
+              value={
+                (() => {
+                  const v = displayAmount(3);
+                  return v === '' ? '' : (Number(v).toFixed(4).replace(/\.?0+$/, '') || '0');
+                })()
+              }
+              disabled={isPending}
+              onChange={(e) => {
+                setTypedAmount(e.target.value);
+                setAnchor(3);
+                setError(null);
+              }} />
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <label htmlFor="rem-tolerance" className="text-small text-cloud/80">
+              Slippage tolerance (%)
+            </label>
+            <input
+              className={`${inputClass} font-mono num-tabular`}
+              type="text"
+              inputMode="decimal"
+              id="rem-tolerance"
+              placeholder="0.5"
+              value={tolerance}
+              disabled={isPending}
+              onChange={(e) => {setTolerance(e.target.value); setError(null)}}/>
+          </div>
+
+          {minDisplay && (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {minDisplay.map((amount, i) => {
+                const trimmed = Number(amount).toFixed(4).replace(/\.?0+$/, '') || '0';
+                return (
+                  <KpiCard
+                    key={tokensInfo[i].name}
+                    label={`Min ${tokensInfo[i].name}`}
+                    value={
+                      <span className="font-mono num-tabular">
+                        {trimmed}
+                        <span className="text-cloud/60 text-small"> {tokensInfo[i].name}</span>
+                      </span>
+                    }
+                  />
+                );
+              })}
+            </div>
+          )}
+
+          <div className="flex items-center gap-3">
+            <StatusDot
+              tone={quoteTone}
+              label={
+                quoteTone === 'success'
+                  ? 'Quote ready'
+                  : quoteTone === 'danger'
+                    ? (reason ?? 'Quote rejected')
+                    : 'Awaiting quote'
+              }
+            />
+            <Button
+              level="primary"
+              onClick={handleRem}
+              aria-busy={isPending || undefined}
+              disabled={isPending || !userAddress || !quote}>
+              {isPending ? "Withdrawal pending" : "Remove Liquidity"}
+            </Button>
+          </div>
+
+          {reason && (
+            <p className="text-small text-warning" role="status">
+              {reason}
+            </p>
+          )}
+          {error && (
+            <p className="text-small text-danger" role="alert">
+              {error}
+            </p>
+          )}
         </div>
-
-        {reason && (
-          <p className="text-small text-warning" role="status">
-            {reason}
-          </p>
-        )}
-        {error && (
-          <p className="text-small text-danger" role="alert">
-            {error}
-          </p>
-        )}
-      </div>
-    </Panel>
-  )
+      </Retractable>
+    </div>
+  );
 }
 
 export default RemoveLiquidity

@@ -5,7 +5,6 @@ import { useEffectiveFees } from "@/hooks/useEffectiveFees";
 import { useConstants } from "@/hooks/useConstants";
 import { useUserBalances } from "@/hooks/useUserBalances";
 import { useState } from "react";
-import { formatUnits } from "viem";
 import { deployedPool, tokensInfo } from "@/constants/addresses";
 import {mockWrappedBTCAbi, poolAbi} from '@/constants/abi';
 import {useWriteContract, useConnection, usePublicClient} from 'wagmi';
@@ -19,14 +18,16 @@ import { StatusDot } from "@/components/ui/StatusDot";
 import { AppStateBoundary } from "@/components/ui/AppStateBoundary";
 import { SwapDecompositionBar } from "@/components/SwapDecompositionBar";
 import { EXPECTED_CHAIN_ID } from '@/components/ui/deployment';
+import { formatAmount } from '@/components/ui/formatAmount';
 
-// II.2d — chain id the pool is deployed on, mirrored from constants/addresses.
+// II.2d — chaîne id du pool, miroir de constants/addresses.
 // Re-stylage des inputs natifs : fond Slate, bordure Cloud à 10 %, focus
 // Merion Blue 2 px (cf. brand book §7). Les valeurs monétaires passent en
 // `font-mono` pour respecter §4 du brand book.
+// py-1.5 : compaction uniforme des formulaires (cf. AddLiquidity).
 const inputClass =
-  'w-full rounded border border-cloud/10 bg-slate px-3 py-2 ' +
-  'text-code text-cloud placeholder:text-cloud/40 ' +
+  'w-full rounded border border-cloud/10 bg-slate px-3 py-1.5 ' +
+  'text-code text-cloud placeholder:text-cloud/40 num-tabular ' +
   'focus:outline-none focus:border-merion-blue focus:border-2 ' +
   'disabled:opacity-50 disabled:cursor-not-allowed';
 
@@ -35,6 +36,11 @@ const selectClass =
   'text-body text-cloud ' +
   'focus:outline-none focus:border-merion-blue focus:border-2 ' +
   'disabled:opacity-50 disabled:cursor-not-allowed';
+
+/** Formate un montant BTC wrappé (8 décimales on-chain) à 4 décimales
+ *  affichées, sans grouping (note §4 « Montants en BTC wrappé »). */
+const btcAmount = (v: bigint) =>
+  formatAmount(v, { displayDecimals: 4, tokenDecimals: 8 });
 
 const Swap = () => {
   const [typedAmount, setTypedAmount] = useState("");
@@ -54,17 +60,11 @@ const Swap = () => {
   const balanceIn = balanceInData?.result;
 
   const {error: errorReserves, reserves: reserveEntries} = useReserves();
-  // I.5 — Fin de la migration du tarif : le devis lit `effectiveFeeNum(i, j)`,
-  // la vue par laquelle le swap et `get_dy` passent tous les deux. Lire
-  // `feeInForce()` ici sous-facturait exactement les swaps que la surcharge
-  // existe pour tarifer, et le tarif affiché par le panneau de mandat n'aurait
-  // pas été celui que ce formulaire fait payer.
   const {error: errorFees, feeFor, errorFor} = useEffectiveFees();
   const effectiveFeeNum = feeFor(indexIn, indexOut);
   const {error: errorConstants, feeDen: feeDenData} = useConstants();
   const feeDen = feeDenData?.result;
 
-  // II.2d — connection and address pulled last so hooks above stay unconditional.
   const connection = useConnection();
   const userAddress = connection.address;
 
@@ -97,8 +97,6 @@ const Swap = () => {
     );
   }
 
-  // II.2d — wallet gate comes AFTER the reads: a swap needs a signer on the
-  // right chain, but the reads themselves stay unconditional to keep hook order.
   if (connection.status === 'disconnected') {
     return <AppStateBoundary state={{ kind: 'wallet-not-connected' }} />;
   }
@@ -148,7 +146,7 @@ const Swap = () => {
   const expected = quote ? {in: quote.tokenIn.amount, out: quote.tokenOut.amount} : null;
   const displayAmount = (j: 'in' | 'out') => {
     if (side === j) return typedAmount;
-    else if (expected) return formatUnits(expected[j], 8);
+    else if (expected) return btcAmount(expected[j]);
     else return "";
   }
   const nameOf = (index: number) => tokensInfo.find((token) => token.index === BigInt(index))?.name;
@@ -159,11 +157,7 @@ const Swap = () => {
     feeBps: quote.tokenIn.feeBps,
     priceImpact: quote.tokenOut.priceImpact,
     priceImpactBps: quote.tokenOut.priceImpactBps,
-    // The tolerance gap, distinct from the impact above: this one is what the user MAY still
-    // lose between signature and inclusion, not what the curve has already taken.
     maxSlippage: quote.tokenOut.amount - quote.tokenOut.minAmount,
-    // Rounding aside, this comes back to the tolerance the user typed. Displaying it anyway keeps
-    // the three lines readable side by side, and makes the chosen figure visible where it bites.
     maxSlippageBps: shareBps(quote.tokenOut.amount - quote.tokenOut.minAmount, quote.tokenOut.amount),
     balanceError: ((balanceIn || balanceIn === 0n) && quote.tokenIn.amount > balanceIn) ? "Insufficient balance." : null,
     zeroOut: quote.tokenOut.amount === 0n ? "Swap output is zero." : null
@@ -174,6 +168,12 @@ const Swap = () => {
     : infos?.balanceError || infos?.zeroOut
       ? 'danger'
       : 'success';
+
+  // Tronque un pourcentage en bps (entier 0..10000) à 2 décimales avec
+  // séparateur virgule français. `%` collé (note §4 « à l'intérieur du
+  // nombre mono »).
+  const pct = (bps: bigint) =>
+    `${(Number(bps) / 100).toFixed(2).replace('.', ',')}%`;
 
   return (
     <Panel title="Swap">
@@ -209,10 +209,14 @@ const Swap = () => {
               }}/>
           </div>
           {balanceIn !== undefined ? (
-            <div className="flex items-center gap-2 text-caption text-cloud/60">
+            <div className="flex items-baseline gap-2 text-caption text-cloud/60">
               <span>Balance</span>
-              <span className="font-mono text-code-sm">{formatUnits(balanceIn, 8)}</span>
-              <span>{nameOf(indexIn)}</span>
+              <span className="font-mono text-code-sm num-tabular">
+                {btcAmount(balanceIn)}
+              </span>
+              <span className="font-mono text-code-sm text-neutral">
+                {nameOf(indexIn)}
+              </span>
             </div>
           ) : null}
         </div>
@@ -263,33 +267,32 @@ const Swap = () => {
             onChange={(e) => {setTolerance(e.target.value); setError(null)}}/>
         </div>
 
-        <Panel title="Decomposition" tone="muted">
-          <SwapDecompositionBar
-            input={
-              quote
-                ? Number(formatUnits(quote.tokenIn.amount, 8))
-                : 0
-            }
-            fee={
-              quote
-                ? Number(formatUnits(quote.tokenIn.fee, 8))
-                : 0
-            }
-            priceImpact={
-              quote
-                ? Number(formatUnits(quote.tokenOut.priceImpact, 8))
-                : 0
-            }
-            slippage={tolerance === '' ? 0 : Number(tolerance) || 0}
-            amountOut={
-              quote
-                ? Number(formatUnits(quote.tokenOut.amount, 8))
-                : undefined
-            }
-            feeUnit={nameOf(indexIn) ?? ''}
-            impactUnit={nameOf(indexOut) ?? ''}
-          />
-        </Panel>
+        {/*
+          Decomposition — note §6 : « ne réserve son espace qu'une fois
+          une quote reçue ; à vide, elle est réduite à une ligne
+          "Decomposition — awaiting quote", pas une carte à hauteur fixe ».
+          On rend la carte complète quand une quote existe, sinon une
+          ligne d'attente dans la même typographie.
+        */}
+        {quote ? (
+          <Panel title="Decomposition" tone="muted">
+            <SwapDecompositionBar
+              input={Number(btcAmount(quote.tokenIn.amount))}
+              fee={Number(btcAmount(quote.tokenIn.fee))}
+              priceImpact={Number(btcAmount(quote.tokenOut.priceImpact))}
+              slippage={tolerance === '' ? 0 : Number(tolerance) || 0}
+              amountOut={Number(btcAmount(quote.tokenOut.amount))}
+              feeUnit={nameOf(indexIn) ?? ''}
+              impactUnit={nameOf(indexOut) ?? ''}
+            />
+          </Panel>
+        ) : (
+          <p className="text-small text-cloud/60">
+            <span className="text-h5 font-medium text-cloud/80">Decomposition</span>
+            <span aria-hidden="true"> · </span>
+            <span>Awaiting quote</span>
+          </p>
+        )}
 
         <div className="flex items-center gap-3">
           <StatusDot
@@ -337,27 +340,62 @@ const Swap = () => {
           </p>
         )}
         {infos && (
-          <div className="rounded border border-cloud/10 bg-slate p-3 text-small">
+          <div className="rounded border border-cloud/10 bg-slate p-3 text-small flex flex-col gap-1">
             <p className="flex items-baseline justify-between gap-4 py-1">
               <span className="text-cloud/80">Minimum {nameOf(indexOut)} received</span>
-              <span className="font-mono text-code">{formatUnits(infos.minAmount, 8)}</span>
+              <span className="flex items-baseline gap-1.5 min-w-0">
+                <span className="font-mono text-code num-tabular text-cloud">
+                  {btcAmount(infos.minAmount)}
+                </span>
+                <span className="font-mono text-code-sm text-neutral">
+                  {' '}
+                  {nameOf(indexOut)}
+                </span>
+              </span>
             </p>
             <p className="flex items-baseline justify-between gap-4 py-1">
               <span className="text-cloud/80">Fee taken</span>
-              <span className="font-mono text-code">
-                {formatUnits(infos.fee, 8)} {nameOf(indexIn)} ({formatUnits(infos.feeBps, 2)}%)
+              <span className="flex items-baseline gap-1.5 min-w-0">
+                <span className="font-mono text-code num-tabular text-cloud">
+                  {btcAmount(infos.fee)}
+                </span>
+                <span className="font-mono text-code-sm text-neutral">
+                  {' '}
+                  {nameOf(indexIn)}
+                </span>
+                <span className="text-cloud/60">
+                  ({pct(infos.feeBps)})
+                </span>
               </span>
             </p>
             <p className="flex items-baseline justify-between gap-4 py-1">
               <span className="text-cloud/80">Loss to price impact</span>
-              <span className="font-mono text-code">
-                {formatUnits(infos.priceImpact, 8)} {nameOf(indexOut)} ({formatUnits(infos.priceImpactBps, 2)}%)
+              <span className="flex items-baseline gap-1.5 min-w-0">
+                <span className="font-mono text-code num-tabular text-cloud">
+                  {btcAmount(infos.priceImpact)}
+                </span>
+                <span className="font-mono text-code-sm text-neutral">
+                  {' '}
+                  {nameOf(indexOut)}
+                </span>
+                <span className="text-cloud/60">
+                  ({pct(infos.priceImpactBps)})
+                </span>
               </span>
             </p>
             <p className="flex items-baseline justify-between gap-4 py-1">
               <span className="text-cloud/80">Max slippage loss</span>
-              <span className="font-mono text-code">
-                {formatUnits(infos.maxSlippage, 8)} {nameOf(indexOut)} ({formatUnits(infos.maxSlippageBps, 2)}%)
+              <span className="flex items-baseline gap-1.5 min-w-0">
+                <span className="font-mono text-code num-tabular text-cloud">
+                  {btcAmount(infos.maxSlippage)}
+                </span>
+                <span className="font-mono text-code-sm text-neutral">
+                  {' '}
+                  {nameOf(indexOut)}
+                </span>
+                <span className="text-cloud/60">
+                  ({pct(infos.maxSlippageBps)})
+                </span>
               </span>
             </p>
           </div>

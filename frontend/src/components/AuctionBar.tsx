@@ -1,59 +1,191 @@
 'use client';
 
 import { useState } from 'react';
+import { useAuctionState } from '@/hooks/useAuctionState';
+import { useAuctionConstants } from '@/hooks/useAuctionConstants';
+import { useEffectiveFees } from '@/hooks/useEffectiveFees';
+import { useConstants } from '@/hooks/useConstants';
+import { useChainNow } from '@/hooks/useChainNow';
+import { deployedAuction } from '@/constants/addresses';
+import { secondsLeft, formatCountdown } from '@/lib/mandateWindow';
 import AuctionPanel from '@/components/AuctionPanel';
+import MandatePanel from '@/components/MandatePanel';
+import Chevron from '@/components/ui/Chevron';
+import Retractable from '@/components/ui/Retractable';
+import { Badge, type BadgeVariant } from '@/components/ui/Badge';
 
 /**
- * Merion AuctionBar — sous-navbar collante, vit dans la coquille `(app)` et
- * reste au-dessus du pli sur toutes les pages applicatives.
+ * Merion AuctionBar — note d'inspiration §7 + §11.
  *
- * C'est le différenciateur du projet : il porte l'état du mandat en cours et
- * les actions d'enchère via le composant `AuctionPanel` (composant applicatif
- * préexistant, sa logique n'est pas retouchée ici).
+ * Barre d'enchère permanente au-dessus du pli, sur les trois routes
+ * applicatives. C'est le différenciateur du produit : sa présence
+ * constante signale que Merion n'est ni un swap pur ni un lend pur.
  *
- * Hauteur : sticky top-16 pour s'aligner juste sous la Navbar du `app/layout.tsx`
- * racine (h-16 = 4 rem = 64 px).
+ * Note §11 — toujours visible, même repliée. La barre résumée montre
+ * en permanence :
+ *   - l'index du mandat (gauche),
+ *   - le statut (`ACTIVE`, `NEXT MANDATE`, `LATE WINDOW`, `CLOSED`),
+ *   - le frais de base en vigueur,
+ *   - le temps restant.
  *
- * État replié (par défaut) : une ligne compacte au-dessus du pli, qui laisse
- * la place aux formulaires applicatifs. Le panneau complet se déplie au clic,
- * sans changer la position collante : la barre reste visible pendant le
- * défilement du contenu détaillé.
+ * Jamais un simple lien « Show details » sans contenu. Le dépliage
+ * montre le panneau d'enchère (saisie d'enchère, refund, settle, setFee)
+ * et le détail du mandat (timeline, surcharge, loyer à réclamer), en
+ * supprimant la duplication observée entre la barre et l'ancien bloc
+ * « Mandate » du rail — le mandat quitte le rail (cf. §7).
  */
 export default function AuctionBar() {
   const [open, setOpen] = useState(false);
+  const toggle = () => setOpen((v) => !v);
+
+  const auction = useAuctionState();
+  const constants = useAuctionConstants();
+  const fees = useEffectiveFees();
+  const poolConstants = useConstants();
+  const now = useChainNow();
+
+  // — Statut du mandat courant, calculé exactement comme dans
+  //   MandatePanel (note §11 : pas de re-calcul, on duplique la lecture
+  //   par souci de clarté de la barre — la requête est dédupliquée par
+  //   wagmi sur le queryKey).
+  const currentEpoch =
+    auction.currentEpoch?.status === 'success'
+      ? auction.currentEpoch.result
+      : undefined;
+  const startTime =
+    currentEpoch !== undefined &&
+    constants.genesis !== undefined &&
+    constants.epochDuration !== undefined
+      ? constants.genesis + currentEpoch * constants.epochDuration
+      : undefined;
+  const endTime =
+    currentEpoch !== undefined &&
+    constants.genesis !== undefined &&
+    constants.epochDuration !== undefined
+      ? constants.genesis + (currentEpoch + 1n) * constants.epochDuration
+      : undefined;
+  const totalDuration =
+    startTime !== undefined && endTime !== undefined
+      ? Number(endTime - startTime)
+      : undefined;
+  const lateWindow =
+    totalDuration !== undefined
+      ? Math.floor(totalDuration * 0.15)
+      : undefined;
+
+  let timelineStatus: 'new' | 'active' | 'late' | 'closed' = 'closed';
+  if (
+    startTime !== undefined &&
+    endTime !== undefined &&
+    lateWindow !== undefined &&
+    now !== null
+  ) {
+    const nowSec = Number(now);
+    const startSec = Number(startTime);
+    const endSec = Number(endTime);
+    if (nowSec < startSec) timelineStatus = 'new';
+    else if (nowSec <= endSec - lateWindow) timelineStatus = 'active';
+    else if (nowSec < endSec) timelineStatus = 'late';
+    else timelineStatus = 'closed';
+  }
+
+  const STATUS_VARIANT: Record<typeof timelineStatus, BadgeVariant> = {
+    new: 'new',
+    active: 'active',
+    late: 'beta',
+    closed: 'deprecated',
+  };
+  const STATUS_LABEL: Record<typeof timelineStatus, string> = {
+    new: 'New',
+    active: 'Active',
+    late: 'Late window',
+    closed: 'Closed',
+  };
+
+  const timeToEnd =
+    now !== null && endTime !== undefined
+      ? secondsLeft(endTime, now)
+      : null;
+
+  // — Frais de base en vigueur, format français (note §4).
+  const feeDenEntry = poolConstants.feeDen;
+  const feeDen =
+    feeDenEntry?.status === 'success' ? feeDenEntry.result : undefined;
+  const basePercent =
+    fees.base !== undefined && feeDen
+      ? Number((fees.base * 10000n) / feeDen) / 100
+      : undefined;
+  // Pourcentages en mono : `%` collé sans espace (note §4 « à l'intérieur
+  // du nombre mono »). On convertit avec `.replace('.', ',')` pour le
+  // séparateur décimal français ; grouping milliers non pertinent sur
+  // ces valeurs (jamais au-delà de 99,99 %).
+  const baseLabel =
+    basePercent !== undefined
+      ? `${basePercent.toFixed(2).replace('.', ',')}%`
+      : '—';
+
+  // — Index + libellé « Mandate #N » ou « — » si pas chargé.
+  const indexLabel =
+    currentEpoch !== undefined ? `Mandate #${String(currentEpoch)}` : 'Mandate —';
+  const timeLabel =
+    timeToEnd !== null ? formatCountdown(timeToEnd) : '—';
+
+  const auctionDeployed = deployedAuction !== null;
 
   return (
-    <div className="sticky top-16 z-40 bg-slate border-b border-cloud/5">
+    <div className="bg-slate border border-cloud/10 rounded-lg overflow-hidden">
       <button
         type="button"
         aria-expanded={open}
         aria-controls="auction-bar-panel"
-        onClick={() => setOpen((v) => !v)}
+        onClick={toggle}
         className={
-          'w-full px-6 py-3 flex items-center justify-between gap-4 ' +
-          'text-left text-cloud hover:bg-cloud/5 ' +
-          'focus:outline-none focus-visible:border-merion-blue focus-visible:border-2 ' +
-          'transition-colors duration-150'
+          `group flex w-full items-center justify-between gap-6 px-4 py-2 text-left ` +
+          `transition-colors duration-150 ` +
+          `hover:bg-cloud/5 ` +
+          `focus:outline-none focus-visible:border-merion-blue focus-visible:border-2`
         }
       >
-        <span className="flex items-center gap-3">
-          <span className="text-h5 font-medium">Auction</span>
-          <span className="text-caption uppercase tracking-wide text-cloud/60">
-            next mandate
+        <div className="flex items-center gap-4 min-w-0">
+          <span className="text-h4 font-medium text-cloud">Auction</span>
+          <span className="text-caption uppercase tracking-wide text-cloud/60 num-tabular">
+            {indexLabel}
           </span>
-        </span>
-        <span className="flex items-center gap-2 text-small text-cloud/70">
-          <span>{open ? 'Hide details' : 'Show details'}</span>
-          <span aria-hidden="true" className="leading-none">
-            {open ? '▴' : '▾'}
-          </span>
-        </span>
-      </button>
-      {open ? (
-        <div id="auction-bar-panel" className="px-6 py-4 border-t border-cloud/10">
-          <AuctionPanel />
+          {!auctionDeployed ? (
+            <Badge variant="deprecated">No auction</Badge>
+          ) : (
+            <Badge variant={STATUS_VARIANT[timelineStatus]}>
+              {STATUS_LABEL[timelineStatus]}
+            </Badge>
+          )}
         </div>
-      ) : null}
+        <div className="flex items-center gap-6">
+          <div className="flex items-baseline gap-3">
+            <span className="text-caption uppercase tracking-wide text-cloud/60">
+              Base fee
+            </span>
+            <span className="font-mono text-code text-cloud num-tabular">
+              {baseLabel}
+            </span>
+          </div>
+          <div className="flex items-baseline gap-3">
+            <span className="text-caption uppercase tracking-wide text-cloud/60">
+              Ends in
+            </span>
+            <span className="font-mono text-code text-cloud num-tabular">
+              {timeLabel}
+            </span>
+          </div>
+          <Chevron open={open} label={open ? 'Hide details' : 'Show details'} />
+        </div>
+      </button>
+
+      <Retractable id="auction-bar-panel" open={open}>
+        <div className="border-t border-cloud/10 px-4 py-4 flex flex-col gap-6">
+          <AuctionPanel />
+          {auctionDeployed ? <MandatePanel /> : null}
+        </div>
+      </Retractable>
     </div>
   );
 }

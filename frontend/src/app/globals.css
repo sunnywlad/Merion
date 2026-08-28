@@ -111,3 +111,69 @@ body {
   color: #F3F5F8; /* Cloud, premier plan par défaut */
   font-family: var(--font-sans), system-ui, sans-serif;
 }
+
+/* =============================================================
+   Voie C, tâche 2 — grille et densité.
+
+   Trois familles de règles, toutes référencées par la note
+   d'inspiration front du 2026-08-28 (§9 animations et §6
+   prefers-reduced-motion) :
+     1. `.num-tabular` — chiffres monospace, alignement vertical.
+     2. `.merion-chevron` + `[data-open="true"]` — chevron 12 px,
+        rotation 180° à l'ouverture, transition 200 ms.
+     3. `.merion-retractable` + `[data-open]` — technique
+        `grid-template-rows: 0fr ↔ 1fr`, jamais `max-height`.
+   Toutes ces transitions passent à 0 ms sous prefers-reduced-motion
+   (killswitch global en bas du fichier).
+   ============================================================= */
+
+.num-tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+.merion-chevron {
+  display: inline-block;
+  font-size: 0.75rem;        /* 12 px — note §8 */
+  line-height: 1;
+  color: var(--color-neutral);
+  transition: transform 200ms ease-in-out;
+}
+
+.merion-chevron[data-open="true"] {
+  transform: rotate(180deg);
+}
+
+.merion-retractable {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 200ms ease-in-out;
+}
+
+.merion-retractable[data-open="true"] {
+  grid-template-rows: 1fr;
+}
+
+.merion-retractable > .merion-retractable-inner {
+  /* The inner div is the row's only child; overflow-hidden on the inner
+     keeps the content clipped while the row collapses, no max-height
+     trickery. */
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* =============================================================
+   Killswitch prefers-reduced-motion — note §9.
+   Toute transition/animation passe à 0 ms, scroll-behavior à auto.
+   Encadre la media query ; aucune exception.
+   ============================================================= */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+}
