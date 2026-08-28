@@ -3,5 +3,5 @@
 // constants/` is out of perimeter, so the value lives here, alongside the
 // UI primitives that consume it.
 
-export const EXPECTED_CHAIN_ID = 31337;
-export const EXPECTED_CHAIN_NAME = 'Anvil 31337';
+export const EXPECTED_CHAIN_ID = 84532;
+export const EXPECTED_CHAIN_NAME = 'Base Sepolia';
