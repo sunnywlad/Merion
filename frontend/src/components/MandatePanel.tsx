@@ -13,6 +13,7 @@ import { secondsLeft, formatCountdown } from '@/lib/mandateWindow';
 import { rentClaimable } from '@/lib/rentClaimable';
 import { collectReadErrors } from '@/lib/readErrors';
 import AmountLine from '@/components/AmountLine';
+import MandateTimeline from '@/components/MandateTimeline';
 import { AppStateBoundary } from '@/components/ui/AppStateBoundary';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -94,7 +95,39 @@ export default function MandatePanel() {
     && constants.epochDuration !== undefined
       ? constants.genesis + (currentEpoch + 1n) * constants.epochDuration
       : undefined;
+  const startTime = currentEpoch !== undefined
+    && constants.genesis !== undefined
+    && constants.epochDuration !== undefined
+      ? constants.genesis + currentEpoch * constants.epochDuration
+      : undefined;
   const timeToEnd = now !== null && endTime !== undefined ? secondsLeft(endTime, now) : null;
+
+  // II.5 — Frise d'enchère. `lateWindow` n'est pas un constant du contrat :
+  // on prend 15 % de la durée du mandat comme proxy (motivation dans le
+  // rapport). `silence` utilise `bidSilence` lu par useAuctionConstants
+  // s'il est disponible, sinon retombe sur 5 % de la durée (proportion
+  // d'exemple du brief).
+  const totalDuration = startTime !== undefined && endTime !== undefined
+    ? Number(endTime - startTime)
+    : undefined;
+  const lateWindow = totalDuration !== undefined
+    ? Math.floor(totalDuration * 0.15)
+    : undefined;
+  const silence = constants.bidSilence !== undefined
+    ? Number(constants.bidSilence)
+    : totalDuration !== undefined
+      ? Math.floor(totalDuration * 0.05)
+      : undefined;
+  let timelineStatus: 'new' | 'active' | 'late' | 'closed' = 'closed';
+  if (startTime !== undefined && endTime !== undefined && lateWindow !== undefined && now !== null) {
+    const nowSec = Number(now);
+    const startSec = Number(startTime);
+    const endSec = Number(endTime);
+    if (nowSec < startSec) timelineStatus = 'new';
+    else if (nowSec <= endSec - lateWindow) timelineStatus = 'active';
+    else if (nowSec < endSec) timelineStatus = 'late';
+    else timelineStatus = 'closed';
+  }
 
   const rentEntries = rent.data;
   const rentValues = rentEntries?.every((entry) => entry.status === 'success')
@@ -120,6 +153,22 @@ export default function MandatePanel() {
   return (
     <section className='min-w-0'>
       <h2 className='text-sm font-semibold pb-2'>Current mandate</h2>
+
+      {/* II.5 — Frise d'enchère. L'inline « Mandate unsold, pool at base fee »
+          plus bas reste : il porte l'absence de gestionnaire (cas nominal),
+          la frise porte l'état temporel du mandat. Les deux sont complémentaires. */}
+      {startTime !== undefined && endTime !== undefined && lateWindow !== undefined && silence !== undefined && now !== null ? (
+        <MandateTimeline
+          start={Number(startTime)}
+          end={Number(endTime)}
+          now={Number(now)}
+          lateWindow={lateWindow}
+          silence={silence}
+          status={timelineStatus}
+          className="pb-4"
+        />
+      ) : null}
+
       <ul className='text-sm'>
 
         <li>Mandate index: {currentEpoch === undefined ? '—' : String(currentEpoch)}</li>
