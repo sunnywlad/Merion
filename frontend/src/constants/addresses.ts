@@ -16,6 +16,25 @@ const addresses = {
     // `MrnFaucetModule#MrnFaucet` à chaque redéploiement.
     faucet: "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9" as `0x${string}` | null,
     mrn: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
+  },
+  // V.3 / Tache 16 (voie deploiement) — Entree Base Sepolia (chainId 84532)
+  // deployee le 2026-08-28 par `npx hardhat ignition deploy MerionModule
+  // --network baseSepolia --reset`. Sept adresses, une par contrat, plus
+  // le bloc final 46080606 et la transaction `Pool.setAuction`
+  // (0x3558488ff4b0043a15b490bc487da1866cb40a01deeabda1017de07376f127c7)
+  // consignes dans `01-suivi/nuit-2026-08-29/journal-nuit.md`. Le
+  // `chainId` au-dessus reste 31337 ; la tache 18 rebascule sur 84532
+  // apres verification Basescan.
+  84532: {
+    tokens: {
+      wbtc: {name : "wBTC", address: "0x070c5032577FBA6e5E6D5A6072b2Fd7E597CBAA7" as `0x${string}` | null, index: 0n},
+      cbbtc: {name : "cbBTC", address: "0xABAa17eBAD405331cBCe6209886C3B90a54c1e37" as `0x${string}` | null, index: 1n},
+      lbtc: {name : "LBTC", address: "0x8eA819fd72F27a486fC98533535B9DE2E31bd8F4" as `0x${string}` | null, index: 2n}
+    },
+    pool: "0x352be1F6649BD86015D54288440466878424b165" as `0x${string}` | null,
+    auction: "0x639FC7B13129BB546152d9Af402fF0319bF46b0f" as `0x${string}` | null,
+    faucet: "0x793ac63fe5Df272e141dd43BD6602BB89dfA9aE0" as `0x${string}` | null,
+    mrn: "0x7904893B731484508B1f62F28A9b1393862d1390" as `0x${string}` | null
   }
 } as const;
 
