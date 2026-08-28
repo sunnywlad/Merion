@@ -13,7 +13,7 @@ import { secondsLeft, formatCountdown } from '@/lib/mandateWindow';
 import { rentClaimable } from '@/lib/rentClaimable';
 import { collectReadErrors } from '@/lib/readErrors';
 import AmountLine from '@/components/AmountLine';
-import ReadErrors from '@/components/ReadErrors';
+import { AppStateBoundary } from '@/components/ui/AppStateBoundary';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
@@ -64,7 +64,20 @@ export default function MandatePanel() {
     { message: "Erreur de lecture du gestionnaire en exercice", error: managerNow.error },
     { message: "Erreur de lecture de votre position de loyer", error: rent.error }
   ]);
-  if (failedReads.length > 0) return <ReadErrors sources={failedReads} />;
+  if (failedReads.length > 0) {
+    for (const r of failedReads) console.error('[Merion]', r.message, r.error);
+    const cause = failedReads.find((r) => r.error)?.error?.message ?? 'unknown';
+    return (
+      <AppStateBoundary
+        state={{
+          kind: 'error',
+          title: 'Could not read mandate data',
+          description: `Unable to read the mandate. ${failedReads.map((r) => r.message).join('; ')}`,
+          cause,
+        }}
+      />
+    );
+  }
 
   const feeDen = feeDenEntry?.status === 'success' ? feeDenEntry.result : undefined;
   // Le pourcentage se lit en points de base, donc `decimals={2}` rend un

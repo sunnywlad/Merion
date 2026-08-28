@@ -11,10 +11,13 @@ import { useQueryClient } from "@tanstack/react-query";
 import { getQuote } from "@/lib/quoteRemoveLiquidity";
 import Panel from "@/components/Panel";
 import { collectReadErrors } from "@/lib/readErrors";
-import ReadErrors from "@/components/ReadErrors";
 import { Button } from "@/components/ui/Button";
 import { StatusDot } from "@/components/ui/StatusDot";
 import { KpiCard } from "@/components/ui/KpiCard";
+import { AppStateBoundary } from "@/components/ui/AppStateBoundary";
+
+// II.2d — chain id the pool is deployed on, mirrored from constants/addresses.
+const EXPECTED_CHAIN_ID = 31337;
 
 const inputClass =
   'w-full rounded border border-cloud/10 bg-slate px-3 py-2 ' +
@@ -29,7 +32,6 @@ const RemoveLiquidity = () => {
   const [tolerance, setTolerance] = useState("");
   const [isPending, setIsPending] = useState(false);
 
-  const userAddress = useConnection().address;
   const { mutateAsync } = useWriteContract();
   const publicClient = usePublicClient();
   const queryClient = useQueryClient();
@@ -37,6 +39,10 @@ const RemoveLiquidity = () => {
   const { reserves: reserveEntries, supply: supplyEntry, error: errorReserves } = useReserves();
   const supply = supplyEntry?.status === 'success' ? supplyEntry.result : undefined;
   const { data: maxShares, error: errorLpBalance } = useLpBalance();
+
+  // II.2d — connection pulled last so all read hooks stay unconditional.
+  const connection = useConnection();
+  const userAddress = connection.address;
 
   const failedReads = collectReadErrors([
     {message: "Erreur de lecture des réserves du pool", error: errorReserves},
@@ -47,11 +53,32 @@ const RemoveLiquidity = () => {
     {message: "Erreur de lecture du total des parts LP", error: supplyEntry?.error},
     {message: "Erreur de lecture de vos parts LP", error: errorLpBalance},
   ]);
-  if (failedReads.length > 0) return <ReadErrors sources={failedReads} />;
-  if (!reserveEntries || supply === undefined) return <Panel><p>Chargement...</p></Panel>;
+  if (failedReads.length > 0) {
+    for (const r of failedReads) console.error('[Merion]', r.message, r.error);
+    const cause = failedReads.find((r) => r.error)?.error?.message ?? 'unknown';
+    return (
+      <AppStateBoundary
+        state={{
+          kind: 'error',
+          title: 'Could not read pool data',
+          description: `Unable to read the pool. ${failedReads.map((r) => r.message).join('; ')}`,
+          cause,
+        }}
+      />
+    );
+  }
+
+  // II.2d — wallet gate after the reads so hook order stays stable.
+  if (connection.status === 'disconnected') {
+    return <AppStateBoundary state={{ kind: 'wallet-not-connected' }} />;
+  }
+  if (connection.status === 'connected' && connection.chainId !== EXPECTED_CHAIN_ID) {
+    return <AppStateBoundary state={{ kind: 'wrong-network' }} />;
+  }
+  if (!reserveEntries || supply === undefined) return <AppStateBoundary state={{ kind: 'loading', title: 'Loading pool data…' }} />;
   // `useLpBalance` is disabled without a wallet, so `maxShares` would stay undefined forever
   // for a disconnected visitor: only wait on it once a wallet is actually connected.
-  if (userAddress && maxShares === undefined) return <Panel><p>Chargement...</p></Panel>;
+  if (userAddress && maxShares === undefined) return <AppStateBoundary state={{ kind: 'loading', title: 'Loading LP balance…' }} />;
 
   const reserves = reserveEntries.map((r) => r.result).filter((r) => r !== undefined);
   const {quote, reason} = getQuote({

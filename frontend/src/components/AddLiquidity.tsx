@@ -11,10 +11,13 @@ import { useQueryClient } from "@tanstack/react-query";
 import { getQuote } from "@/lib/quoteAddLiquidity";
 import Panel from "@/components/Panel";
 import { collectReadErrors } from "@/lib/readErrors";
-import ReadErrors from "@/components/ReadErrors";
 import { Button } from "@/components/ui/Button";
 import { StatusDot } from "@/components/ui/StatusDot";
 import { KpiCard } from "@/components/ui/KpiCard";
+import { AppStateBoundary } from "@/components/ui/AppStateBoundary";
+
+// II.2d — chain id the pool is deployed on, mirrored from constants/addresses.
+const EXPECTED_CHAIN_ID = 31337;
 
 const inputClass =
   'w-full rounded border border-cloud/10 bg-slate px-3 py-2 ' +
@@ -29,7 +32,6 @@ const AddLiquidity = () => {
   const [error, setError] = useState<string | null>(null);
   const [tolerance, setTolerance] = useState("");
 
-  const userAddress = useConnection().address;
   const { mutateAsync } = useWriteContract();
   const publicClient = usePublicClient();
   const queryClient = useQueryClient();
@@ -37,6 +39,10 @@ const AddLiquidity = () => {
   const { reserves: reserveEntries, supply: supplyEntry, error: errorReserves } = useReserves();
   const supply = supplyEntry?.status === 'success' ? supplyEntry.result : undefined;
   const { data: minLiq, error: errorMinLiq } = useMinimumLiquidity(supply === 0n);
+
+  // II.2d — connection pulled last so all read hooks stay unconditional.
+  const connection = useConnection();
+  const userAddress = connection.address;
 
   const failedReads = collectReadErrors([
     {message: "Erreur de lecture des réserves du pool", error: errorReserves},
@@ -47,9 +53,31 @@ const AddLiquidity = () => {
     {message: "Erreur de lecture du total des parts LP", error: supplyEntry?.error},
     {message: "Erreur de lecture de la liquidité minimale", error: errorMinLiq},
   ]);
-  if (failedReads.length > 0) return <ReadErrors sources={failedReads} />;
-  if (!reserveEntries || supply === undefined) return <Panel><p>Chargement...</p></Panel>;
-  if (supply === 0n && minLiq === undefined) return <Panel><p>Chargement...</p></Panel>;
+  if (failedReads.length > 0) {
+    for (const r of failedReads) console.error('[Merion]', r.message, r.error);
+    const cause = failedReads.find((r) => r.error)?.error?.message ?? 'unknown';
+    return (
+      <AppStateBoundary
+        state={{
+          kind: 'error',
+          title: 'Could not read pool data',
+          description: `Unable to read the pool. ${failedReads.map((r) => r.message).join('; ')}`,
+          cause,
+        }}
+      />
+    );
+  }
+
+  // II.2d — wallet gate comes after the reads: deposit needs a signer on the
+  // right chain, but reads stay unconditional so hook order doesn't shift.
+  if (connection.status === 'disconnected') {
+    return <AppStateBoundary state={{ kind: 'wallet-not-connected' }} />;
+  }
+  if (connection.status === 'connected' && connection.chainId !== EXPECTED_CHAIN_ID) {
+    return <AppStateBoundary state={{ kind: 'wrong-network' }} />;
+  }
+  if (!reserveEntries || supply === undefined) return <AppStateBoundary state={{ kind: 'loading', title: 'Loading pool data…' }} />;
+  if (supply === 0n && minLiq === undefined) return <AppStateBoundary state={{ kind: 'loading', title: 'Loading minimum liquidity…' }} />;
 
   const reserves = reserveEntries.map((r) => r.result).filter((r) => r !== undefined);
   // On an empty pool the tolerance is ignored, so a stale invalid value must not block the deposit.

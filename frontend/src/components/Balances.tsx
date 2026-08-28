@@ -5,6 +5,7 @@ import { useLpBalance } from '@/hooks/useLpBalance';
 import { useReserves } from '@/hooks/useReserves';
 import {MRN_DECIMALS, tokensInfo} from '@/constants/addresses';
 import AmountLine from '@/components/AmountLine';
+import { AppStateBoundary } from '@/components/ui/AppStateBoundary';
 
 export default function Balances() {
 
@@ -13,6 +14,21 @@ export default function Balances() {
   const { data: dataLp, isLoading: isLoadingLp, error: errorLp } = useLpBalance();
   const { supply: supplyEntry, isLoading: isLoadingR, error: errorR } = useReserves();
   const supply = supplyEntry?.status === 'success' ? supplyEntry.result : undefined;
+
+  // II.2d — same pattern as Reserves: whole-request error short-circuits to
+  // the boundary, per-entry errors keep showing inline.
+  if (error || errorLp || errorR) {
+    const first = error ?? errorLp ?? errorR;
+    return (
+      <AppStateBoundary
+        state={{
+          kind: 'error',
+          title: 'Could not read your balances',
+          description: first?.message,
+        }}
+      />
+    );
+  }
 
   // Derived from TWO reads, so it exists only once both have landed. Testing `supply` for
   // truthiness is deliberate here: 0n is exactly the case to exclude, an empty pool holds no

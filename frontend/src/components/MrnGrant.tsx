@@ -10,13 +10,16 @@ import Panel from '@/components/Panel';
 import { Button } from '@/components/ui/Button';
 import { KpiCard } from '@/components/ui/KpiCard';
 import { StatusDot } from '@/components/ui/StatusDot';
+import { AppStateBoundary } from '@/components/ui/AppStateBoundary';
+
+// II.2d — chain id the pool is deployed on, mirrored from constants/addresses.
+const EXPECTED_CHAIN_ID = 31337;
 
 // V.0 — Un seul bouton : `drip()` sur le faucet. Plus de « envoyer à mon
 // adresse », qui ne fonctionnait que depuis l'owner et restait silencieusement
 // cassé pour quiconque. Le faucet redistribue depuis un réservoir pré-financé,
 // sans mint (cf. `MrnFaucet.sol` commentaire d'en-tête).
 const MrnGrant = () => {
-  const userAddress = useConnection().address;
   const { mutate, isPending, error, data: hash } = useWriteContract();
   const { isLoading, isSuccess } = useWaitForTransactionReceipt({ hash });
   const waiting = isPending || isLoading;
@@ -44,6 +47,10 @@ const MrnGrant = () => {
 
   // Le `lastDripAt` lu en polling lent (30 s) suffit : la valeur bouge une
   // fois par drip, et le bouton n'a pas besoin d'etre a la seconde pres.
+  // II.2d — connection pulled here so `userAddress` is available for the
+  // `lastDrip` args, while hook order stays unconditional for the rest.
+  const connection = useConnection();
+  const userAddress = connection.address;
   const lastDrip = useReadContract({
     address: deployedFaucet ?? undefined,
     abi: mrnFaucetAbi,
@@ -118,6 +125,15 @@ const MrnGrant = () => {
     : inCooldown
       ? 'Cooldown active'
       : 'Ready to claim';
+
+  // II.2d — wallet gate at the bottom of the hook stack so reads above stay
+  // unconditional.
+  if (connection.status === 'disconnected') {
+    return <AppStateBoundary state={{ kind: 'wallet-not-connected' }} />;
+  }
+  if (connection.status === 'connected' && connection.chainId !== EXPECTED_CHAIN_ID) {
+    return <AppStateBoundary state={{ kind: 'wrong-network' }} />;
+  }
 
   return (
     <Panel title="Get MRN">

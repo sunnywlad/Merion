@@ -14,9 +14,12 @@ import { getQuote } from "@/lib/quoteSwap";
 import { shareBps } from "@/lib/quote";
 import Panel from '@/components/Panel';
 import { collectReadErrors } from "@/lib/readErrors";
-import ReadErrors from "@/components/ReadErrors";
 import { Button } from "@/components/ui/Button";
 import { StatusDot } from "@/components/ui/StatusDot";
+import { AppStateBoundary } from "@/components/ui/AppStateBoundary";
+
+// II.2d — chain id the pool is deployed on, mirrored from constants/addresses.
+const EXPECTED_CHAIN_ID = 31337;
 
 // Re-stylage des inputs natifs : fond Slate, bordure Cloud à 10 %, focus
 // Merion Blue 2 px (cf. brand book §7). Les valeurs monétaires passent en
@@ -46,8 +49,6 @@ const Swap = () => {
   const publicClient = usePublicClient();
   const queryClient = useQueryClient();
 
-  const userAddress = useConnection().address;
-
   const { btcBalances } = useUserBalances();
   const balanceInData = btcBalances[indexIn];
   const balanceIn = balanceInData?.result;
@@ -62,6 +63,11 @@ const Swap = () => {
   const effectiveFeeNum = feeFor(indexIn, indexOut);
   const {error: errorConstants, feeDen: feeDenData} = useConstants();
   const feeDen = feeDenData?.result;
+
+  // II.2d — connection and address pulled last so hooks above stay unconditional.
+  const connection = useConnection();
+  const userAddress = connection.address;
+
   const failedReads = collectReadErrors([
     {message: "Erreur de lecture des réserves du pool", error: errorReserves},
     ...(reserveEntries ?? []).map((entry, i) => ({
@@ -76,8 +82,32 @@ const Swap = () => {
     {message: "Erreur de lecture des constantes du pool", error: errorConstants},
     {message: "Erreur de lecture des fees (den)", error: feeDenData?.error},
   ]);
-  if (failedReads.length > 0) return <ReadErrors sources={failedReads} />;
-  if (!reserveEntries || effectiveFeeNum===undefined || !feeDen) return <Panel><p>Chargement...</p></Panel>;
+  if (failedReads.length > 0) {
+    for (const r of failedReads) console.error('[Merion]', r.message, r.error);
+    const cause = failedReads.find((r) => r.error)?.error?.message ?? 'unknown';
+    return (
+      <AppStateBoundary
+        state={{
+          kind: 'error',
+          title: 'Could not read pool data',
+          description: `Unable to read the pool. ${failedReads.map((r) => r.message).join('; ')}`,
+          cause,
+        }}
+      />
+    );
+  }
+
+  // II.2d — wallet gate comes AFTER the reads: a swap needs a signer on the
+  // right chain, but the reads themselves stay unconditional to keep hook order.
+  if (connection.status === 'disconnected') {
+    return <AppStateBoundary state={{ kind: 'wallet-not-connected' }} />;
+  }
+  if (connection.status === 'connected' && connection.chainId !== EXPECTED_CHAIN_ID) {
+    return <AppStateBoundary state={{ kind: 'wrong-network' }} />;
+  }
+  if (!reserveEntries || effectiveFeeNum===undefined || !feeDen) {
+    return <AppStateBoundary state={{ kind: 'loading', title: 'Loading swap data…' }} />;
+  }
 
   const reserves = reserveEntries.map((r) => r.result).filter((r) => r !== undefined);
 
