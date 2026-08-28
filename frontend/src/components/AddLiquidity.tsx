@@ -12,6 +12,15 @@ import { getQuote } from "@/lib/quoteAddLiquidity";
 import Panel from "@/components/Panel";
 import { collectReadErrors } from "@/lib/readErrors";
 import ReadErrors from "@/components/ReadErrors";
+import { Button } from "@/components/ui/Button";
+import { StatusDot } from "@/components/ui/StatusDot";
+import { KpiCard } from "@/components/ui/KpiCard";
+
+const inputClass =
+  'w-full rounded border border-cloud/10 bg-slate px-3 py-2 ' +
+  'text-code text-cloud placeholder:text-cloud/40 ' +
+  'focus:outline-none focus:border-merion-blue focus:border-2 ' +
+  'disabled:opacity-50 disabled:cursor-not-allowed';
 
 const AddLiquidity = () => {
   const [typedAmount, setTypedAmount] = useState("");
@@ -91,60 +100,114 @@ const AddLiquidity = () => {
   const isEmptyPool = supply === 0n;
   const isPending = step !== null;
 
+  const quoteTone: 'success' | 'danger' | 'neutral' = !quote
+    ? 'neutral'
+    : reason
+      ? 'danger'
+      : 'success';
+
   return (
-    <Panel>
-      <div className="flex flex-col my-2">
+    <Panel title="Add Liquidity">
+      <div className="flex flex-col gap-4">
 
-      {tokensInfo.map((token) => {
-        const i = Number(token.index) as 0 | 1 | 2;
-        let displayed = "";
-        if (anchor === i) {displayed = typedAmount}
-        else if (quote) {displayed = formatUnits(quote.computed[i], 8)}
+        <div className="flex flex-col gap-2">
+          {tokensInfo.map((token) => {
+            const i = Number(token.index) as 0 | 1 | 2;
+            let displayed = "";
+            if (anchor === i) displayed = typedAmount;
+            else if (quote) displayed = formatUnits(quote.computed[i], 8);
 
-        return(
-          <div key={token.name} className="flex items-center gap-2 my-1">
-            <label htmlFor={`add-${token.name}`} className="w-20 shrink-0">{token.name} : </label>
-            <input
-              className="px-2 border rounded ml-1 flex-1 min-w-0 disabled:opacity-50 disabled:cursor-not-allowed"
-              type="text" id={`add-${token.name}`}
-              value={displayed}
-              disabled={isPending}
-              onChange={(e) => {
-                setTypedAmount(e.target.value);
-                setAnchor(i);
-                setError(null)}}/>
+            return (
+              <div key={token.name} className="flex items-center gap-3">
+                <label htmlFor={`add-${token.name}`} className="w-20 shrink-0 text-small text-cloud/80">
+                  {token.name}
+                </label>
+                <input
+                  className={`${inputClass} font-mono`}
+                  type="text"
+                  inputMode="decimal"
+                  id={`add-${token.name}`}
+                  value={displayed}
+                  disabled={isPending}
+                  onChange={(e) => {
+                    setTypedAmount(e.target.value);
+                    setAnchor(i);
+                    setError(null);
+                  }}/>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <label
+            htmlFor="add-tolerance"
+            className={`text-small ${isEmptyPool ? 'text-cloud/40' : 'text-cloud/80'}`}
+          >
+            Slippage tolerance (%)
+          </label>
+          <input
+            className={`${inputClass} font-mono`}
+            type="text"
+            inputMode="decimal"
+            id="add-tolerance"
+            // Suppressed on an empty pool: the field is neutralised there, and announcing a default
+            // that will never be read would be a lie told in grey.
+            placeholder={isEmptyPool ? "" : "0.5"}
+            value={isEmptyPool ? "" : tolerance}
+            disabled={isEmptyPool || isPending}
+            onChange={(e) => {setTolerance(e.target.value); setError(null)}}/>
+          {isEmptyPool && (
+            <p className="text-caption text-cloud/60">
+              Empty pool: LP amount is fully determined, no slippage possible.
+            </p>
+          )}
+        </div>
+
+        {quote && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <KpiCard
+              label="LP shares received (expected)"
+              value={<span className="font-mono">{formatUnits(quote.expected, 8)}</span>}
+            />
+            <KpiCard
+              label="LP shares received (minimum)"
+              value={<span className="font-mono">{formatUnits(quote.minExpected, 8)}</span>}
+            />
           </div>
         )}
-      )}
-      </div>
 
-      <label htmlFor="add-tolerance" className={isEmptyPool ? "opacity-50" : undefined}>
-        Tolérance au slippage en % :
-      </label>
-      <input
-        className="px-2 border rounded disabled:opacity-50 disabled:cursor-not-allowed"
-        type="text" id="add-tolerance"
-        // Suppressed on an empty pool: the field is neutralised there, and announcing a default
-        // that will never be read would be a lie told in grey.
-        placeholder={isEmptyPool ? "" : "0.5"}
-        value={isEmptyPool ? "" : tolerance}
-        disabled={isEmptyPool || isPending}
-        onChange={(e) => {setTolerance(e.target.value); setError(null)}}/>
-      {isEmptyPool && <p className="text-sm opacity-70">Pool vide : le montant de parts est déterminé, aucun glissement possible.</p>}
-      <button
-      className='border rounded px-4 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 mt-2'
-      onClick={handleAdd}
-      disabled={isPending || !userAddress || !quote}>
-        {step !== null ? `Dépôt en cours : (${step+1}/4)` : "AddLiquidity"}
-      </button>
-      {reason && <p>{reason}</p>}
-      {error && <p>{error}</p>}
-      {quote &&
-        <div>
-          <p>Nombre minimal de LP Shares reçues : {formatUnits(quote.minExpected, 8)}</p>
-          <p>Nombre théorique de LP Shares reçues : {formatUnits(quote.expected, 8)}</p>
+        <div className="flex items-center gap-3">
+          <StatusDot
+            tone={quoteTone}
+            label={
+              quoteTone === 'success'
+                ? 'Quote ready'
+                : quoteTone === 'danger'
+                  ? (reason ?? 'Quote rejected')
+                  : 'Awaiting quote'
+            }
+          />
+          <Button
+            level="primary"
+            onClick={handleAdd}
+            aria-busy={isPending || undefined}
+            disabled={isPending || !userAddress || !quote}>
+            {step !== null ? `Deposit in progress (${step + 1}/4)` : "Add Liquidity"}
+          </Button>
         </div>
-      }
+
+        {reason && (
+          <p className="text-small text-warning" role="status">
+            {reason}
+          </p>
+        )}
+        {error && (
+          <p className="text-small text-danger" role="alert">
+            {error}
+          </p>
+        )}
+      </div>
     </Panel>
   )
 }

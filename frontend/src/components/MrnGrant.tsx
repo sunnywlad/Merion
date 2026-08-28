@@ -7,6 +7,9 @@ import { formatUnits } from 'viem';
 import { deployedFaucet, deployedMrn, MRN_DECIMALS } from '@/constants/addresses';
 import { mrnFaucetAbi } from '@/constants/abi';
 import Panel from '@/components/Panel';
+import { Button } from '@/components/ui/Button';
+import { KpiCard } from '@/components/ui/KpiCard';
+import { StatusDot } from '@/components/ui/StatusDot';
 
 // V.0 — Un seul bouton : `drip()` sur le faucet. Plus de « envoyer à mon
 // adresse », qui ne fonctionnait que depuis l'owner et restait silencieusement
@@ -79,11 +82,22 @@ const MrnGrant = () => {
   }, [isSuccess, queryClient, watchAsset]);
 
   // Bouton desactive aussi pendant le cooldown. `lastDripAt` et `dripInterval`
-  // sont en secondes (block.timestamp), `Date.now()` aussi : l'ecart est direct.
+  // sont en secondes (block.timestamp), `now` aussi : l'ecart est direct.
   // Si `dripInterval` n'est pas encore arrive, le cooldown reste a 0 et le
   // bouton est actif (mais le contrat rejettera de toute facon avec TooEarly).
+  // `now` est tenu via un `useState` initial + un `setInterval` parce que
+  // `react-hooks/purity` refuse `Date.now()` en corps de rendu ; le tick à
+  // la seconde suffit pour un affichage de cooldown.
+  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
+  useEffect(() => {
+    const id = window.setInterval(
+      () => setNow(Math.floor(Date.now() / 1000)),
+      1000,
+    );
+    return () => window.clearInterval(id);
+  }, []);
   const cooldownSeconds = lastDripAt !== undefined && dripInterval.data !== undefined
-    ? Number(lastDripAt) + Number(dripInterval.data) - Math.floor(Date.now() / 1000)
+    ? Number(lastDripAt) + Number(dripInterval.data) - now
     : 0;
   const inCooldown = lastDripAt !== undefined && cooldownSeconds > 0;
   const faucetMissing = deployedFaucet === null;
@@ -94,34 +108,73 @@ const MrnGrant = () => {
     ? Number(dripInterval.data) / 3600
     : 0;
 
+  const stateTone: 'success' | 'warning' | 'neutral' = faucetMissing
+    ? 'neutral'
+    : inCooldown
+      ? 'warning'
+      : 'success';
+  const stateLabel = faucetMissing
+    ? 'Faucet not deployed'
+    : inCooldown
+      ? 'Cooldown active'
+      : 'Ready to claim';
+
   return (
-    <Panel>
-      <p className='font-semibold pb-2'>Get MRN</p>
-      <p className='text-sm pb-2'>
-        Demande {dripAmountLabel} MRN au faucet du projet, qui redistribue depuis le reservoir
-        pre-finance par l&apos;owner du pool au deploiement. Une demande toutes
-        les {intervalHours} h par adresse.
-      </p>
-      {faucetMissing ? (
-        <p className='text-sm pb-2 italic'>
-          Faucet non deploye sur cette chaine : relancer <code>workMerion</code>.
+    <Panel title="Get MRN">
+      <div className="flex flex-col gap-4">
+        <p className="text-small text-cloud/70">
+          Request {dripAmountLabel} MRN from the project faucet, which redistributes
+          from the reservoir pre-funded by the pool owner at deployment. One request
+          every {intervalHours} h per address.
         </p>
-      ) : (
-        <div className='flex flex-wrap gap-4 items-center'>
-          <button
-            className='border rounded px-4 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50'
-            onClick={drip}
-            disabled={waiting || !userAddress || inCooldown}>
-            {waiting ? 'Drip en cours' : `Demander ${dripAmountLabel} MRN`}
-          </button>
-          {inCooldown && (
-            <span className='text-sm'>
-              Prochain drip dans {Math.floor(cooldownSeconds / 60)} min.
-            </span>
-          )}
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <KpiCard
+            label="Drip amount"
+            value={
+              <span className="font-mono">
+                {dripAmountLabel} <span className="text-cloud/60 text-small">MRN</span>
+              </span>
+            }
+          />
+          <KpiCard
+            label="Cooldown"
+            value={
+              <span className="font-mono">
+                {intervalHours} <span className="text-cloud/60 text-small">h</span>
+              </span>
+            }
+          />
         </div>
-      )}
-      {error && <p>{error.message}</p>}
+
+        {faucetMissing ? (
+          <p className="text-small text-warning italic" role="status">
+            Faucet not deployed on this chain: rerun <code className="font-mono">workMerion</code>.
+          </p>
+        ) : (
+          <div className="flex flex-wrap items-center gap-4">
+            <StatusDot tone={stateTone} label={stateLabel} />
+            <Button
+              level="primary"
+              onClick={drip}
+              aria-busy={waiting || undefined}
+              disabled={waiting || !userAddress || inCooldown}>
+              {waiting ? 'Drip pending' : `Claim ${dripAmountLabel} MRN`}
+            </Button>
+            {inCooldown && (
+              <span className="text-small text-cloud/70">
+                Next drip in <span className="font-mono">{Math.floor(cooldownSeconds / 60)}</span> min.
+              </span>
+            )}
+          </div>
+        )}
+
+        {error && (
+          <p className="text-small text-danger" role="alert">
+            {error.message}
+          </p>
+        )}
+      </div>
     </Panel>
   );
 };

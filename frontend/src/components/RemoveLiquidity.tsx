@@ -12,6 +12,15 @@ import { getQuote } from "@/lib/quoteRemoveLiquidity";
 import Panel from "@/components/Panel";
 import { collectReadErrors } from "@/lib/readErrors";
 import ReadErrors from "@/components/ReadErrors";
+import { Button } from "@/components/ui/Button";
+import { StatusDot } from "@/components/ui/StatusDot";
+import { KpiCard } from "@/components/ui/KpiCard";
+
+const inputClass =
+  'w-full rounded border border-cloud/10 bg-slate px-3 py-2 ' +
+  'text-code text-cloud placeholder:text-cloud/40 ' +
+  'focus:outline-none focus:border-merion-blue focus:border-2 ' +
+  'disabled:opacity-50 disabled:cursor-not-allowed';
 
 const RemoveLiquidity = () => {
   const [typedAmount, setTypedAmount] = useState("");
@@ -83,63 +92,122 @@ const RemoveLiquidity = () => {
   }
   const minDisplay = quote ? quote?.minExpected.map((amount) => formatUnits(amount, 8)) : null
 
+  const quoteTone: 'success' | 'danger' | 'neutral' = !quote
+    ? 'neutral'
+    : reason
+      ? 'danger'
+      : 'success';
+
   return (
-    <Panel>
-      <div className="flex flex-col my-2">
+    <Panel title="Remove Liquidity">
+      <div className="flex flex-col gap-4">
 
-      {tokensInfo.map((token) => {
-        const i = Number(token.index) as 0 | 1 | 2;
+        <div className="flex flex-col gap-2">
+          {tokensInfo.map((token) => {
+            const i = Number(token.index) as 0 | 1 | 2;
+            return (
+              <div key={token.name} className="flex items-center gap-3">
+                <label htmlFor={`rem-${token.name}`} className="w-20 shrink-0 text-small text-cloud/80">
+                  {token.name}
+                </label>
+                <input
+                  className={`${inputClass} font-mono`}
+                  type="text"
+                  inputMode="decimal"
+                  id={`rem-${token.name}`}
+                  value={displayAmount(i)}
+                  disabled={isPending}
+                  onChange={(e) => {
+                    setTypedAmount(e.target.value);
+                    setAnchor(i);
+                    setError(null);
+                  }}/>
+              </div>
+            );
+          })}
+        </div>
 
-        return(
-          <div key={token.name} className="flex items-center gap-2 my-1">
-            <label htmlFor={`rem-${token.name}`} className="w-20 shrink-0">{token.name} : </label>
-            <input
-              className="px-2 border rounded ml-1 flex-1 min-w-0 disabled:opacity-50 disabled:cursor-not-allowed"
-              type="text" id={`rem-${token.name}`}
-              value={displayAmount(i)}
-              disabled={isPending}
-              onChange={(e) => {
-                setTypedAmount(e.target.value);
-                setAnchor(i);
-                setError(null)}}/>
+        <div className="flex flex-col gap-2">
+          <label htmlFor="rem-lpShares" className="text-small text-cloud/80">
+            LP shares to burn
+          </label>
+          <input
+            className={`${inputClass} font-mono`}
+            type="text"
+            inputMode="decimal"
+            id="rem-lpShares"
+            value={displayAmount(3)}
+            disabled={isPending}
+            onChange={(e) => {
+              setTypedAmount(e.target.value);
+              setAnchor(3);
+              setError(null);
+            }} />
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <label htmlFor="rem-tolerance" className="text-small text-cloud/80">
+            Slippage tolerance (%)
+          </label>
+          <input
+            className={`${inputClass} font-mono`}
+            type="text"
+            inputMode="decimal"
+            id="rem-tolerance"
+            placeholder="0.5"
+            value={tolerance}
+            disabled={isPending}
+            onChange={(e) => {setTolerance(e.target.value); setError(null)}}/>
+        </div>
+
+        {minDisplay && (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <KpiCard
+              label={`Min ${tokensInfo[0].name}`}
+              value={<span className="font-mono">{minDisplay[0]}</span>}
+            />
+            <KpiCard
+              label={`Min ${tokensInfo[1].name}`}
+              value={<span className="font-mono">{minDisplay[1]}</span>}
+            />
+            <KpiCard
+              label={`Min ${tokensInfo[2].name}`}
+              value={<span className="font-mono">{minDisplay[2]}</span>}
+            />
           </div>
         )}
-      )}
-      </div>
 
-      <label htmlFor="rem-lpShares">Nombre de LP shares à brûler :</label>
-      <input
-        className="px-2 border rounded disabled:opacity-50 disabled:cursor-not-allowed"
-        type="text" id="rem-lpShares"
-        value = {displayAmount(3)}
-        disabled={isPending}
-        onChange={(e) => {
-          setTypedAmount(e.target.value);
-          setAnchor(3);
-          setError(null)}} />
-
-      <label htmlFor="rem-tolerance">Tolérance au slippage en % :</label>
-      <input
-        className="px-2 border rounded disabled:opacity-50 disabled:cursor-not-allowed"
-        type="text" id="rem-tolerance"
-        placeholder="0.5"
-        value={tolerance}
-        disabled={isPending}
-        onChange={(e) => {setTolerance(e.target.value); setError(null)}}/>
-
-      <button
-      className='border rounded px-4 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 mt-2'
-      onClick={handleRem}
-      disabled={isPending || !userAddress || !quote}>
-        {isPending ? `Retrait en cours` : "RemoveLiquidity"}
-      </button>
-      {reason && <p>{reason}</p>}
-      {error && <p>{error}</p>}
-      {minDisplay &&
-        <div>
-          <p>Nombre minimal de tokens reçus : {minDisplay[0]} wBTC, {minDisplay[1]} cbBTC, {minDisplay[2]} LBTC</p>
+        <div className="flex items-center gap-3">
+          <StatusDot
+            tone={quoteTone}
+            label={
+              quoteTone === 'success'
+                ? 'Quote ready'
+                : quoteTone === 'danger'
+                  ? (reason ?? 'Quote rejected')
+                  : 'Awaiting quote'
+            }
+          />
+          <Button
+            level="primary"
+            onClick={handleRem}
+            aria-busy={isPending || undefined}
+            disabled={isPending || !userAddress || !quote}>
+            {isPending ? "Withdrawal pending" : "Remove Liquidity"}
+          </Button>
         </div>
-      }
+
+        {reason && (
+          <p className="text-small text-warning" role="status">
+            {reason}
+          </p>
+        )}
+        {error && (
+          <p className="text-small text-danger" role="alert">
+            {error}
+          </p>
+        )}
+      </div>
     </Panel>
   )
 }

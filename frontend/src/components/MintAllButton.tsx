@@ -5,6 +5,8 @@ import { useConnection, useWriteContract, usePublicClient } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
 import { parseUnits, Address } from 'viem';
 import { mockWrappedBTCAbi } from '@/constants/abi';
+import { Button } from '@/components/ui/Button';
+import { StatusDot } from '@/components/ui/StatusDot';
 
 // Même montant que `MintButton`, gardé en propre plutôt qu'importé pour que
 // `MintAllButton` reste lisible seul et que la constante puisse diverger
@@ -45,16 +47,33 @@ const MintAllButton = ({ tokens }: { tokens: { name: string; address: Address }[
     }
   };
 
+  const stateTone: 'success' | 'warning' | 'danger' | 'neutral' = error
+    ? 'danger'
+    : pending
+      ? 'warning'
+      : 'neutral';
+  const stateLabel = error
+    ? 'Mint failed'
+    : pending
+      ? 'Minting all tokens'
+      : 'Ready to mint';
+
   return (
-    <div>
-      <button
-        className='border rounded px-4 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50'
+    <div className="flex flex-col gap-2">
+      <Button
+        level="primary"
         onClick={handleMintAll}
+        aria-busy={pending || undefined}
         disabled={pending || !userAddress}
       >
-        {pending ? 'Mint des trois en cours…' : 'Mint 10 × 3'}
-      </button>
-      {error && <p>{error}</p>}
+        {pending ? 'Minting all three…' : 'Mint 10 × 3'}
+      </Button>
+      <StatusDot tone={stateTone} label={stateLabel} />
+      {error && (
+        <p className="text-caption text-danger" role="alert">
+          {error}
+        </p>
+      )}
     </div>
   );
 };

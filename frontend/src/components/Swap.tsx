@@ -15,6 +15,23 @@ import { shareBps } from "@/lib/quote";
 import Panel from '@/components/Panel';
 import { collectReadErrors } from "@/lib/readErrors";
 import ReadErrors from "@/components/ReadErrors";
+import { Button } from "@/components/ui/Button";
+import { StatusDot } from "@/components/ui/StatusDot";
+
+// Re-stylage des inputs natifs : fond Slate, bordure Cloud à 10 %, focus
+// Merion Blue 2 px (cf. brand book §7). Les valeurs monétaires passent en
+// `font-mono` pour respecter §4 du brand book.
+const inputClass =
+  'w-full rounded border border-cloud/10 bg-slate px-3 py-2 ' +
+  'text-code text-cloud placeholder:text-cloud/40 ' +
+  'focus:outline-none focus:border-merion-blue focus:border-2 ' +
+  'disabled:opacity-50 disabled:cursor-not-allowed';
+
+const selectClass =
+  'shrink-0 rounded border border-cloud/10 bg-slate px-3 py-2 ' +
+  'text-body text-cloud ' +
+  'focus:outline-none focus:border-merion-blue focus:border-2 ' +
+  'disabled:opacity-50 disabled:cursor-not-allowed';
 
 const Swap = () => {
   const [typedAmount, setTypedAmount] = useState("");
@@ -122,23 +139,37 @@ const Swap = () => {
     zeroOut: quote.tokenOut.amount === 0n ? "Sortie du swap nulle" : null
   } : null;
 
-  return (
-    <Panel>
-      <div className="flex flex-col my-2">
+  const quoteTone: 'success' | 'danger' | 'neutral' = !quote
+    ? 'neutral'
+    : infos?.balanceError || infos?.zeroOut
+      ? 'danger'
+      : 'success';
 
-        <div className="flex flex-col gap-1 my-1">
-          <label htmlFor="swap-amountIn">Entrée du swap :</label>
-          <div className="flex items-center gap-2">
-            <select className="shrink-0" value={String(indexIn)} onChange={(e) => {setIndexIn(Number(e.target.value) as 0 | 1 | 2); setError(null)}}>
+  return (
+    <Panel title="Swap">
+      <div className="flex flex-col gap-4">
+
+        <div className="flex flex-col gap-2">
+          <label htmlFor="swap-amountIn" className="text-small text-cloud/80">
+            From
+          </label>
+          <div className="flex items-stretch gap-2">
+            <select
+              aria-label="From token"
+              className={selectClass}
+              value={String(indexIn)}
+              onChange={(e) => {setIndexIn(Number(e.target.value) as 0 | 1 | 2); setError(null)}}>
               {tokensInfo.map((token) => (
-                <option key={token.name} value= {String(token.index)}>
+                <option key={token.name} value={String(token.index)}>
                   {token.name}
                 </option>
               ))}
             </select>
             <input
-              className="px-2 border rounded flex-1 min-w-0 disabled:opacity-50 disabled:cursor-not-allowed"
-              type="text" id="swap-amountIn"
+              className={`${inputClass} font-mono`}
+              type="text"
+              inputMode="decimal"
+              id="swap-amountIn"
               value={displayAmount('in')}
               disabled={isPending}
               onChange={(e) => {
@@ -147,20 +178,36 @@ const Swap = () => {
                 setError(null)
               }}/>
           </div>
+          {balanceIn !== undefined ? (
+            <div className="flex items-center gap-2 text-caption text-cloud/60">
+              <span>Balance</span>
+              <span className="font-mono text-code-sm">{formatUnits(balanceIn, 8)}</span>
+              <span>{nameOf(indexIn)}</span>
+            </div>
+          ) : null}
         </div>
-        <div className="flex flex-col gap-1 my-1">
-          <label htmlFor="swap-amountOut">Sortie du swap :</label>
-          <div className="flex items-center gap-2">
-            <select className="shrink-0" value={String(indexOut)} onChange={(e) => {setIndexOut(Number(e.target.value) as 0 | 1 | 2); setError(null)}}>
+
+        <div className="flex flex-col gap-2">
+          <label htmlFor="swap-amountOut" className="text-small text-cloud/80">
+            To
+          </label>
+          <div className="flex items-stretch gap-2">
+            <select
+              aria-label="To token"
+              className={selectClass}
+              value={String(indexOut)}
+              onChange={(e) => {setIndexOut(Number(e.target.value) as 0 | 1 | 2); setError(null)}}>
               {tokensInfo.map((token) => (
-                <option key={token.name} value= {String(token.index)}>
+                <option key={token.name} value={String(token.index)}>
                   {token.name}
                 </option>
               ))}
             </select>
             <input
-              className="px-2 border rounded flex-1 min-w-0 disabled:opacity-50 disabled:cursor-not-allowed"
-              type="text" id="swap-amountOut"
+              className={`${inputClass} font-mono`}
+              type="text"
+              inputMode="decimal"
+              id="swap-amountOut"
               value={displayAmount('out')}
               disabled={isPending}
               onChange={(e) => {
@@ -171,36 +218,100 @@ const Swap = () => {
           </div>
         </div>
 
+        <div className="flex flex-col gap-2">
+          <label htmlFor="swap-tolerance" className="text-small text-cloud/80">
+            Slippage tolerance (%)
+          </label>
+          <input
+            className={`${inputClass} font-mono`}
+            type="text"
+            inputMode="decimal"
+            id="swap-tolerance"
+            placeholder="0.5"
+            value={tolerance}
+            disabled={isPending}
+            onChange={(e) => {setTolerance(e.target.value); setError(null)}}/>
+        </div>
+
+        <Panel title="Decomposition" tone="muted">
+          <p className="text-small text-cloud/60">
+            II.4 — Swap decomposition bar (fees, impact, slippage) lands in the next pass.
+          </p>
+        </Panel>
+
+        <div className="flex items-center gap-3">
+          <StatusDot
+            tone={quoteTone}
+            label={
+              quoteTone === 'success'
+                ? 'Quote ready'
+                : quoteTone === 'danger'
+                  ? (infos?.balanceError ?? infos?.zeroOut ?? 'Quote rejected')
+                  : 'Awaiting quote'
+            }
+          />
+          <Button
+            level="primary"
+            onClick={handleSwap}
+            aria-busy={isPending || undefined}
+            disabled={isPending || !userAddress || !quote || Boolean(infos?.balanceError)}>
+            {isPending ? "Swap pending" : "Swap"}
+          </Button>
+        </div>
+
+        {balanceInData?.error && (
+          <p className="text-small text-danger" role="alert">
+            Could not read your balance.
+          </p>
+        )}
+        {error && (
+          <p className="text-small text-danger" role="alert">
+            {error}
+          </p>
+        )}
+        {reason && (
+          <p className="text-small text-warning" role="status">
+            {reason}
+          </p>
+        )}
+        {infos?.balanceError && (
+          <p className="text-small text-danger" role="alert">
+            {infos.balanceError}
+          </p>
+        )}
+        {infos?.zeroOut && (
+          <p className="text-small text-danger" role="alert">
+            {infos.zeroOut}
+          </p>
+        )}
+        {infos && (
+          <div className="rounded border border-cloud/10 bg-slate p-3 text-small">
+            <p className="flex items-baseline justify-between gap-4 py-1">
+              <span className="text-cloud/80">Minimum {nameOf(indexOut)} received</span>
+              <span className="font-mono text-code">{formatUnits(infos.minAmount, 8)}</span>
+            </p>
+            <p className="flex items-baseline justify-between gap-4 py-1">
+              <span className="text-cloud/80">Fee taken</span>
+              <span className="font-mono text-code">
+                {formatUnits(infos.fee, 8)} {nameOf(indexIn)} ({formatUnits(infos.feeBps, 2)}%)
+              </span>
+            </p>
+            <p className="flex items-baseline justify-between gap-4 py-1">
+              <span className="text-cloud/80">Loss to price impact</span>
+              <span className="font-mono text-code">
+                {formatUnits(infos.priceImpact, 8)} {nameOf(indexOut)} ({formatUnits(infos.priceImpactBps, 2)}%)
+              </span>
+            </p>
+            <p className="flex items-baseline justify-between gap-4 py-1">
+              <span className="text-cloud/80">Max slippage loss</span>
+              <span className="font-mono text-code">
+                {formatUnits(infos.maxSlippage, 8)} {nameOf(indexOut)} ({formatUnits(infos.maxSlippageBps, 2)}%)
+              </span>
+            </p>
+          </div>
+        )}
       </div>
-
-      <label htmlFor="swap-tolerance">Tolérance au slippage en % :</label>
-      <input
-        className="px-2 border rounded disabled:opacity-50 disabled:cursor-not-allowed"
-        type="text" id="swap-tolerance"
-        placeholder="0.5"
-        value={tolerance}
-        disabled={isPending}
-        onChange={(e) => {setTolerance(e.target.value); setError(null)}}/>
-
-      <button
-      className='border rounded px-4 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 mt-2'
-      onClick={handleSwap}
-      disabled={isPending || !userAddress || !quote || Boolean(infos?.balanceError)}>
-        {isPending ? "Swap en cours" : "Swap"}
-      </button>
-
-      {balanceInData?.error && <p>Erreur de lecture de votre solde</p>}
-      {error && <p>{error}</p>}
-      {reason && <p>{reason}</p>}
-      {infos?.balanceError && <p>{infos.balanceError}</p>}
-      {infos?.zeroOut && <p>{infos.zeroOut}</p>}
-      {infos && <>
-        <p>Nombre minimal de {nameOf(indexOut)} reçus : {formatUnits(infos.minAmount, 8)}</p>
-        <p>Frais prélevés : {formatUnits(infos.fee, 8)} {nameOf(indexIn)} ({formatUnits(infos.feeBps, 2)} % de l&apos;entrée)</p>
-        <p>Perte due à l&apos;impact de prix : {formatUnits(infos.priceImpact, 8)} {nameOf(indexOut)} ({formatUnits(infos.priceImpactBps, 2)} % de moins qu&apos;au prix actuel du pool)</p>
-        <p>Perte maximale au slippage : {formatUnits(infos.maxSlippage, 8)} {nameOf(indexOut)} ({formatUnits(infos.maxSlippageBps, 2)} % de la sortie estimée)</p>
-      </>}
-  </Panel>
+    </Panel>
   )
 }
 

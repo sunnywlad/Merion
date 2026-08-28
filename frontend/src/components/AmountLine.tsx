@@ -22,12 +22,28 @@ export default function AmountLine({
 }: AmountLineProps) {
 
   // Order matters: while loading, `value` is undefined too, and the third branch would steal
-  // the display from the first.
-  let content;
-  if (isLoading) content = "Chargement...";
-  else if (error) content = error.message;
-  else if (value === undefined) content = "—";
-  else content = formatUnits(value, decimals) + suffix;
+  // the display from the first. Per brand book §2, numeric values carry no semantic color
+  // by default — Success is reserved for healthy *statuses*, not for "a number that exists".
+  let content: string;
+  let contentClass: string;
+  if (isLoading) {
+    content = 'Loading...';
+    contentClass = 'text-cloud/60';
+  } else if (error) {
+    content = error.message;
+    contentClass = 'text-danger';
+  } else if (value === undefined) {
+    content = '—';
+    contentClass = 'text-cloud/60';
+  } else {
+    content = `${formatUnits(value, decimals)}${suffix ? ' ' + suffix : ''}`;
+    contentClass = 'text-cloud';
+  }
 
-  return <li>{label} : {content}</li>;
+  return (
+    <li className="flex items-baseline justify-between gap-4 py-1 text-body">
+      <span className="text-cloud/80">{label}</span>
+      <span className={`font-mono text-code ${contentClass}`}>{content}</span>
+    </li>
+  );
 }
