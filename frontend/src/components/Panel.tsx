@@ -1,11 +1,65 @@
-import React from 'react'
+import type { ReactNode } from 'react';
 
-const Panel = ({children}: {children: React.ReactNode}) => {
+export type PanelTone = 'default' | 'muted';
+
+type PanelProps = {
+  title?: ReactNode;
+  children: ReactNode;
+  footer?: ReactNode;
+  tone?: PanelTone;
+  className?: string;
+};
+
+const TONE_BG: Record<PanelTone, string> = {
+  default: 'bg-midnight',
+  muted: 'bg-slate',
+};
+
+/**
+ * Merion panel — habillage de surface. Consomme les tokens posés par II.1
+ * (Midnight / Slate pour le fond, IBM Plex pour la typo).
+ *
+ * API : `title?`, `children`, `footer?`, `tone?` (`'default' | 'muted'`).
+ * L'API historique `{ children }` reste compatible : les anciens imports
+ * continuent de fonctionner sans changement.
+ */
+export function Panel({
+  title,
+  children,
+  footer,
+  tone = 'default',
+  className = '',
+}: PanelProps) {
   return (
-    <div className="border rounded p-4 flex flex-col min-w-0">
-      {children}
-    </div>
-  )
+    <section
+      className={
+        `flex flex-col rounded-lg border border-cloud/10 p-4 min-w-0 ` +
+        `${TONE_BG[tone]} text-cloud ${className}`
+      }
+    >
+      {title ? (
+        <header className="mb-3 text-h5 font-medium">{title}</header>
+      ) : null}
+      <div className="flex flex-col min-w-0 flex-1">{children}</div>
+      {footer ? (
+        <footer className="mt-3 border-t border-cloud/10 pt-3 text-small text-cloud/70">
+          {footer}
+        </footer>
+      ) : null}
+    </section>
+  );
 }
 
-export default Panel
+// Compatibilité descendante : les huit imports existants utilisent
+// `import Panel from '@/components/Panel'`. Le shim garde l'API historique
+// `{ children }` opérationnelle.
+export type LegacyPanelProps = { children: ReactNode };
+export function LegacyPanel({ children }: LegacyPanelProps) {
+  return <Panel>{children}</Panel>;
+}
+
+/**
+ * @deprecated Conserver pour les imports existants ; préférez `Panel`.
+ */
+const PanelDefault = Panel;
+export default PanelDefault;
