@@ -15,7 +15,7 @@ createAppKit({
   metadata: {
     name: 'Merion',
     description: 'DeFi for wrapped BTC',
-    url: 'http://localhost:3000',
+    url: process.env.NEXT_PUBLIC_SITE_URL ?? (typeof window !== 'undefined' ? window.location.origin : 'https://meriondefi.vercel.app'),
     icons: [''],
   },
   defaultNetwork: hardhat
