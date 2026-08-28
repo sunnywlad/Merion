@@ -11,21 +11,6 @@ import Link from 'next/link';
  * Les couleurs viennent des tokens posés par II.1 — aucun hex en dur.
  */
 
-const PALETTE = [
-  { token: 'Midnight', className: 'bg-midnight', text: 'text-cloud', border: 'border-cloud/20' },
-  { token: 'Slate', className: 'bg-slate', text: 'text-cloud', border: 'border-cloud/20' },
-  { token: 'Cloud', className: 'bg-cloud', text: 'text-midnight', border: 'border-cloud/20' },
-  { token: 'Merion Blue', className: 'bg-merion-blue', text: 'text-white', border: 'border-merion-blue' },
-] as const;
-
-const SEMANTICS = [
-  { token: 'Success', className: 'bg-success' },
-  { token: 'Warning', className: 'bg-warning' },
-  { token: 'Danger', className: 'bg-danger' },
-  { token: 'Info', className: 'bg-info' },
-  { token: 'Neutral', className: 'bg-neutral' },
-] as const;
-
 export default function Home() {
   return (
     <div className="flex-1 min-h-0">
@@ -64,63 +49,6 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="px-8 py-16 bg-midnight">
-        <div className="max-w-5xl mx-auto flex flex-col gap-10">
-          <div className="flex flex-col gap-2">
-            <h2 className="text-h3 text-cloud">Brand system</h2>
-            <p className="text-body text-cloud/70">
-              The palette and type that ship with every page. Sampled from the
-              Merion brand book.
-            </p>
-          </div>
-
-          <div className="flex flex-col gap-3">
-            <h3 className="text-h5 text-cloud/80">Primary</h3>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {PALETTE.map(({ token, className, text, border }) => (
-                <div
-                  key={token}
-                  className={`rounded border ${border} ${className} p-4 h-24 flex items-end ${text}`}
-                >
-                  <span className="text-small font-medium">{token}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-3">
-            <h3 className="text-h5 text-cloud/80">Semantic</h3>
-            <div className="flex flex-wrap gap-3">
-              {SEMANTICS.map(({ token, className }) => (
-                <div
-                  key={token}
-                  className={`rounded px-4 py-2 ${className} text-cloud text-small font-medium`}
-                >
-                  {token}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-4 pt-4 border-t border-cloud/10">
-            <h3 className="text-h5 text-cloud/80">Typography</h3>
-            <div className="flex flex-col gap-2">
-              <p className="text-h3 text-cloud">H3 — IBM Plex Sans, 32 px</p>
-              <p className="text-body text-cloud/80">
-                Body — IBM Plex Sans, 16 px, 1.6 leading. Used for narrative
-                content and form labels.
-              </p>
-              <p className="text-code text-cloud/70">
-                Code — IBM Plex Mono, 14 px. Reserved for addresses, amounts
-                and on-chain values.
-              </p>
-              <p className="text-caption text-cloud/60">
-                Caption — 12 px, 1.4 leading. Footnotes and meta information.
-              </p>
-            </div>
-          </div>
-        </div>
-      </section>
     </div>
   );
 }
