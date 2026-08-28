@@ -25,9 +25,11 @@ import { formatAmount } from '@/components/ui/formatAmount';
 // Merion Blue 2 px (cf. brand book §7). Les valeurs monétaires passent en
 // `font-mono` pour respecter §4 du brand book.
 // py-1.5 : compaction uniforme des formulaires (cf. AddLiquidity).
+// `placeholder:text-cloud/60` : WCAG AA, le placeholder sinon tombe à
+// ~3.6:1 (cloud/40) sur Midnight.
 const inputClass =
   'w-full rounded border border-cloud/10 bg-slate px-3 py-1.5 ' +
-  'text-code text-cloud placeholder:text-cloud/40 num-tabular ' +
+  'text-code text-cloud placeholder:text-cloud/60 num-tabular ' +
   'focus:outline-none focus:border-merion-blue focus:border-2 ' +
   'disabled:opacity-50 disabled:cursor-not-allowed';
 

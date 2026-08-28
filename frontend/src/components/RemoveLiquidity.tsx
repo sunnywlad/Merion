@@ -20,9 +20,11 @@ import Disclosure from "@/components/ui/Disclosure";
 
 // II.2d — chaîne id du pool, miroir de constants/addresses.
 // py-1.5 : compaction uniforme des formulaires (cf. AddLiquidity).
+// `placeholder:text-cloud/60` : WCAG AA, le placeholder sinon tombe à
+// ~3.6:1 (cloud/40) sur Midnight.
 const inputClass =
   'w-full rounded border border-cloud/10 bg-slate px-3 py-1.5 ' +
-  'text-code text-cloud placeholder:text-cloud/40 ' +
+  'text-code text-cloud placeholder:text-cloud/60 ' +
   'focus:outline-none focus:border-merion-blue focus:border-2 ' +
   'disabled:opacity-50 disabled:cursor-not-allowed';
 
@@ -54,13 +56,13 @@ const RemoveLiquidity = () => {
   const userAddress = connection.address;
 
   const failedReads = collectReadErrors([
-    {message: "Erreur de lecture des réserves du pool", error: errorReserves},
+    {message: "Failed to read the pool reserves.", error: errorReserves},
     ...(reserveEntries ?? []).map((entry, i) => ({
-      message: `Erreur de lecture de la réserve du token ${tokensInfo[i].name}`,
+      message: `Failed to read the ${tokensInfo[i].name} reserve.`,
       error: entry?.error
     })),
-    {message: "Erreur de lecture du total des parts LP", error: supplyEntry?.error},
-    {message: "Erreur de lecture de vos parts LP", error: errorLpBalance},
+    {message: "Failed to read total LP shares.", error: supplyEntry?.error},
+    {message: "Failed to read your LP shares.", error: errorLpBalance},
   ]);
   if (failedReads.length > 0) {
     for (const r of failedReads) console.error('[Merion]', r.message, r.error);

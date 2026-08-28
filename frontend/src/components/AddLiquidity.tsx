@@ -22,9 +22,11 @@ import { formatAmount } from '@/components/ui/formatAmount';
 // formulaires pour gagner la marge 1440×900 sur /pool. La note §2 borne
 // le padding interne d'un input entre 0.25 et 0.5 rem, on reste dans
 // la fenêtre (1.5/16 = 0.375 rem par côté).
+// `placeholder:text-cloud/60` : WCAG AA, le placeholder sinon tombe à
+// ~3.6:1 (cloud/40) sur Midnight.
 const inputClass =
   'w-full rounded border border-cloud/10 bg-slate px-3 py-1.5 ' +
-  'text-code text-cloud placeholder:text-cloud/40 num-tabular ' +
+  'text-code text-cloud placeholder:text-cloud/60 num-tabular ' +
   'focus:outline-none focus:border-merion-blue focus:border-2 ' +
   'disabled:opacity-50 disabled:cursor-not-allowed';
 
@@ -51,13 +53,13 @@ const AddLiquidity = () => {
   const userAddress = connection.address;
 
   const failedReads = collectReadErrors([
-    {message: "Erreur de lecture des réserves du pool", error: errorReserves},
+    {message: "Failed to read the pool reserves.", error: errorReserves},
     ...(reserveEntries ?? []).map((entry, i) => ({
-      message: `Erreur de lecture de la réserve du token ${tokensInfo[i].name}`,
+      message: `Failed to read the ${tokensInfo[i].name} reserve.`,
       error: entry?.error
     })),
-    {message: "Erreur de lecture du total des parts LP", error: supplyEntry?.error},
-    {message: "Erreur de lecture de la liquidité minimale", error: errorMinLiq},
+    {message: "Failed to read total LP shares.", error: supplyEntry?.error},
+    {message: "Failed to read minimum liquidity.", error: errorMinLiq},
   ]);
   if (failedReads.length > 0) {
     for (const r of failedReads) console.error('[Merion]', r.message, r.error);
@@ -100,7 +102,7 @@ const AddLiquidity = () => {
       for (let i = 0 ; i < 3 ; i++) {
         setStep(i);
         const token = tokensInfo.find((t) => Number(t.index) === i);
-        if (!token) throw new Error("Token inconnu");
+        if (!token) throw new Error("Unknown token");
         const hash = await mutateAsync({
           address: token.address,
           abi: mockWrappedBTCAbi,
@@ -170,7 +172,7 @@ const AddLiquidity = () => {
         <div className="flex flex-col gap-2">
           <label
             htmlFor="add-tolerance"
-            className={`text-small ${isEmptyPool ? 'text-cloud/40' : 'text-cloud/80'}`}
+            className={`text-small ${isEmptyPool ? 'text-cloud/60' : 'text-cloud/80'}`}
           >
             Slippage tolerance (%)
           </label>
