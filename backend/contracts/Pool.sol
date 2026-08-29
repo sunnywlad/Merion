@@ -25,9 +25,21 @@ contract Pool is ERC20, Ownable, Pausable {
   /// @notice Third token of the pool's basket (e.g. LBTC).
   address public immutable token2;
 
-  /// @notice Current reserves of the three basket tokens, in token
-  ///         units. Indexed 0/1/2 to match `token0/token1/token2`.
-  uint72[3] public reserves;
+  // I.2+R2 — packing des reserves en UN slot de 32 octets. Le format est
+  // [reserve0 : 72 | reserve1 : 72 | reserve2 : 72 | 40 bits libres], ce qui
+  // tient : 3 * 72 = 216 bits < 256. La lecture passe par le getter public
+  // `reserves(uint256)` qui preserve la signature ABI d'origine (les tests
+  // Pool.depeg, Pool.forgedState, Pool.removeLiquidity, Pool.swap, Pool.feeSplit
+  // et `Auction._settle` lisent `pool.reserves(i)`). L'ecriture passe par
+  // `_loadReserves` / `_storeReserves` / `_setReserves`, internes. Une seule
+  // SLOAD au lieu de 3, une seule SSTORE au lieu de 3 sur les chemins
+  // ecrivants (addLiquidity, removeLiquidity, swap) : economies d'environ
+  // 2 * 2100 + 2 * 5000 = ~14 200 gas sur le chemin nominal de swap.
+  /// @notice Current reserves of the three basket tokens, packed in a
+  ///         single 256-bit storage slot. Indexed 0/1/2 to match
+  ///         `token0/token1/token2`. Read via the `reserves(uint256)`
+  ///         public getter.
+  uint256 private _reservesPacked;
   /// @notice Lower band coefficient: any reserve must stay above
   ///         `floor * sum / 100` after a swap.
   uint8 public constant floor = 13;
@@ -257,6 +269,10 @@ contract Pool is ERC20, Ownable, Pausable {
   /// @notice Deployment: the MRN address is the zero address or
   ///         collides with one of the basket tokens.
   error InvalidMrn();
+  /// @notice `reserves(uint256)` was called with an index outside
+  ///         the [0, 2] range. Mirrors the panic 0x32 that the
+  ///         auto-getter would have raised, for ABI-compat callers.
+  error InvalidReserveIndex();
 
   /// @notice Emitted when the manager sets the base fee for the
   ///         current epoch.
@@ -373,6 +389,57 @@ contract Pool is ERC20, Ownable, Pausable {
     return 8;
   }
 
+  /// @notice Returns the reserve of the basket token at index `_index`
+  ///         (0, 1 or 2). Preserves the ABI of the former
+  ///         `uint72[3] public reserves` so off-chain callers see no
+  ///         change; the storage backing moved from a 3-slot
+  ///         `uint72[3]` to a single 256-bit packed slot.
+  /// @dev One SLOAD on the packed slot, then a conditional shift.
+  ///      Reverts with `InvalidReserveIndex` for indices outside
+  ///      `[0, 2]`, matching the out-of-bounds semantics of the
+  ///      original auto-getter (panic 0x32).
+  /// @param _index The token index (0, 1 or 2).
+  /// @return The reserve in token units.
+  function reserves(uint256 _index) public view returns (uint72) {
+    uint256 packed = _reservesPacked;
+    if (_index == 0) return uint72(packed);
+    if (_index == 1) return uint72(packed >> 72);
+    if (_index == 2) return uint72(packed >> 144);
+    revert InvalidReserveIndex();
+  }
+
+  // I.2+R2 — helpers internes du packing de reserves. La lecture
+  // prend UN SLOAD et peuple un `uint72[3] memory` (les casts
+  // uint256→uint72 sont bornes par le shift, pas de risque
+  // d'overflow, d'ou le `unchecked`). L'ecriture prend UNE SSTORE,
+  // contre 3 dans la version `uint72[3]` (3 SSTOREs distincts).
+  function _loadReserves() internal view returns (uint72[3] memory r) {
+    uint256 packed = _reservesPacked;
+    unchecked {
+      r[0] = uint72(packed);
+      r[1] = uint72(packed >> 72);
+      r[2] = uint72(packed >> 144);
+    }
+  }
+
+  function _storeReserves(uint72[3] memory r) internal {
+    unchecked {
+      _reservesPacked =
+        (uint256(r[0])) |
+        (uint256(r[1]) << 72) |
+        (uint256(r[2]) << 144);
+    }
+  }
+
+  function _setReserves(uint72 r0, uint72 r1, uint72 r2) internal {
+    unchecked {
+      _reservesPacked =
+        (uint256(r0)) |
+        (uint256(r1) << 72) |
+        (uint256(r2) << 144);
+    }
+  }
+
   /// @notice Returns the current epoch derived from `GENESIS` and
   ///         `EPOCH_DURATION`.
   /// @return The current epoch number, zero-based.
@@ -458,14 +525,30 @@ contract Pool is ERC20, Ownable, Pausable {
   /// @param _indexOut The token index of the output side.
   /// @return The effective fee numerator, in `FEE_DEN` units.
   function effectiveFeeNum(uint256 _indexIn, uint256 _indexOut) public view returns (uint256) {
-    uint256 base = feeInForce();
-    uint72[3] memory cachedReserves = reserves;
-    if (cachedReserves[_indexIn] * TOL_DEN > cachedReserves[_indexOut] * (TOL_DEN + UNBALANCE_TOL_BPS)) {
-      uint256 candidate = base * UNBALANCE_FACTOR;
+    return _computeEffective(feeInForce(), _indexIn, _indexOut, _loadReserves());
+  }
+
+  // I.2+R2 — variante `view` du calcul de frais effectif, parametree
+  // par la base de frais et par les reserves. `view` (et non `pure`)
+  // parce que `NOMINAL_FEE_NUM` est un `immutable` : Solidity le
+  // considere comme une lecture d'environnement. Permet a `swap` de
+  // partager la lecture de `feeInForce()` (2 SLOADs) et celle de
+  // `reserves` (1 SLOAD apres packing) avec le calcul du frais, sans
+  // repasser par la vue publique (qui re-ferait 2 + 1 SLOADs en
+  // interne). Pas de SLOAD supplementaire ici : `NOMINAL_FEE_NUM` est
+  // un PUSH sur l'immutable, comme dans l'original.
+  function _computeEffective(
+    uint256 _base,
+    uint256 _indexIn,
+    uint256 _indexOut,
+    uint72[3] memory _r
+  ) internal view returns (uint256) {
+    if (_r[_indexIn] * TOL_DEN > _r[_indexOut] * (TOL_DEN + UNBALANCE_TOL_BPS)) {
+      uint256 candidate = _base * UNBALANCE_FACTOR;
       uint256 floorSurcharge = NOMINAL_FEE_NUM * UNBALANCE_FACTOR;
       return candidate > floorSurcharge ? candidate : floorSurcharge;
     }
-    return base;
+    return _base;
   }
 
   // I.2 — helper de prix, pur sur les reserves qu'on lui passe. Prend la
@@ -502,7 +585,8 @@ contract Pool is ERC20, Ownable, Pausable {
   /// @param _dx The input amount.
   /// @return The expected output amount, before any slippage check.
   function get_dy(uint256 _indexIn, uint256 _indexOut, uint256 _dx) external view returns (uint256) {
-    uint72[3] memory cachedReserves = reserves;
+    // R2 — 1 SLOAD au lieu de 3 (meme packing que dans le swap).
+    uint72[3] memory cachedReserves = _loadReserves();
     uint256 effective = effectiveFeeNum(_indexIn, _indexOut);
     uint256 feeAmount = Math.ceilDiv(_dx * effective, FEE_DEN);
     return _getAmountOut(cachedReserves, _indexIn, _indexOut, _dx - feeAmount);
@@ -532,16 +616,22 @@ contract Pool is ERC20, Ownable, Pausable {
   ///      `whenNotPaused`: setting a fee does not move value.
   /// @param _feeNum The new base-fee numerator, in `FEE_DEN` units.
   function setFee(uint256 _feeNum) external {
-    require(msg.sender == manager(), NotManager());
+    // R2 — `currentEpoch()` est calcule une seule fois et reutilise
+    // pour la garde d'epoch, l'event et la mise a jour de
+    // `lastSetFeeEpoch`. La division `(block.timestamp - GENESIS) /
+    // EPOCH_DURATION` devient gratuite cote deuxieme et troisieme
+    // appel.
+    uint256 epoch = currentEpoch();
+    require(msg.sender == managerOf[epoch], NotManager());
     require((block.timestamp - GENESIS) % EPOCH_DURATION < PRIORITY_WINDOW, OutsidePriorityWindow());
     // L'accès gestionnaire passe EN PREMIER, et c'est ce qui rend cette garde
     // correcte. Au mandat 0, lastSetFeeEpoch vaut 0 et currentEpoch() vaut 0 :
     // la garde serait fausse d'emblée et laisserait passer une écriture. Mais
     // le mandat 0 ne peut JAMAIS avoir de gestionnaire, setManager exigeant
-    // _epoch > currentEpoch() ; manager() y rend donc address(0) et la garde
+    // _epoch > currentEpoch() ; managerOf[0] y rend donc address(0) et la garde
     // d'accès referme avant. L'amorçage est fermé par du code, pas par une
     // coïncidence de valeurs.
-    require(lastSetFeeEpoch != currentEpoch(), FeeAlreadySetThisEpoch());
+    require(lastSetFeeEpoch != epoch, FeeAlreadySetThisEpoch());
     // Le plafond du gestionnaire est dérivé à la volée, jamais MAX_FEE_NUM et
     // jamais une seconde constante stockée : personne ne paie jamais plus de
     // 0,50 %, et le gestionnaire écrit une base entre 0,01 % et 0,25 %.
@@ -551,9 +641,9 @@ contract Pool is ERC20, Ownable, Pausable {
       FeeOutOfBand(MIN_FEE_NUM, maxManagerFeeNum)
     );
 
-    emit FeeSet(currentEpoch(), msg.sender, feeNum, _feeNum);
+    emit FeeSet(epoch, msg.sender, feeNum, _feeNum);
     feeNum = uint16(_feeNum);
-    lastSetFeeEpoch = uint32(currentEpoch());
+    lastSetFeeEpoch = uint32(epoch);
   }
 
   /// @notice Pauses the value-moving entry points (`addLiquidity`,
@@ -597,23 +687,42 @@ contract Pool is ERC20, Ownable, Pausable {
       require(mintedShares >= _minShares, BadSlippage());
       amounts[0] = amounts[1] = amounts[2] = _amount;
 
-      for (uint256 i; i < 3; i++) {
-        reserves[i] += uint72(amounts[i]);
-      }
+      // R2 — pool vide, une seule SSTORE suffit pour les trois reserves
+      // (le slot passe de 0 a la valeur packee, cout de cold SSTORE
+      // absorbe en une fois au lieu de trois).
+      _setReserves(uint72(amounts[0]), uint72(amounts[1]), uint72(amounts[2]));
       _mint(0x000000000000000000000000000000000000dEaD, MINIMUM_LIQUIDITY);
 
     } else {
-      uint72[3] memory cachedReserves = reserves;
+      // R2 — pool amorce : 1 SLOAD au lieu de 3 pour la lecture des
+      // reserves, et la verification de ReserveOverflow utilise le
+      // cache memoire (l'absence d'autre ecrivain sur `reserves`
+      // dans cette fonction rend l'egalite exacte avec la lecture
+      // stockage d'origine).
+      uint72[3] memory cachedReserves = _loadReserves();
 
       mintedShares = supply * _amount / cachedReserves[_anchorIndex];
       require(mintedShares > 0, ZeroOutput());
       require(mintedShares >= _minShares, BadSlippage());
 
-      for (uint256 i; i < 3; i++) {
-        amounts[i] = Math.ceilDiv(_amount * cachedReserves[i], cachedReserves[_anchorIndex]);
-        require(reserves[i] + amounts[i] <= type(uint72).max, ReserveOverflow());
-        reserves[i] += uint72(amounts[i]);
+      // R2-ter — boucle deroulee en 3 lignes : 3 multiplications et
+      // 3 divisions sont inlinées, plus de compteur `i`, plus de
+      // test `i < 3`, plus de JUMP pour la fin de boucle. Le pattern
+      // est fixe (3 jambes, c.f. `token0/1/2` immuables), donc le
+      // deroulement est sans risque de drift.
+      amounts[0] = Math.ceilDiv(_amount * cachedReserves[0], cachedReserves[_anchorIndex]);
+      amounts[1] = Math.ceilDiv(_amount * cachedReserves[1], cachedReserves[_anchorIndex]);
+      amounts[2] = Math.ceilDiv(_amount * cachedReserves[2], cachedReserves[_anchorIndex]);
+      require(cachedReserves[0] + amounts[0] <= type(uint72).max, ReserveOverflow());
+      require(cachedReserves[1] + amounts[1] <= type(uint72).max, ReserveOverflow());
+      require(cachedReserves[2] + amounts[2] <= type(uint72).max, ReserveOverflow());
+      unchecked {
+        cachedReserves[0] = uint72(cachedReserves[0] + amounts[0]);
+        cachedReserves[1] = uint72(cachedReserves[1] + amounts[1]);
+        cachedReserves[2] = uint72(cachedReserves[2] + amounts[2]);
       }
+      // R2 — une seule SSTORE au lieu de 3 dans la version uint72[3].
+      _storeReserves(cachedReserves);
     }
     _mint(msg.sender, mintedShares);
     for (uint256 i; i < 3; i++) {
@@ -625,13 +734,14 @@ contract Pool is ERC20, Ownable, Pausable {
   function removeLiquidity(uint256 _burnedShares, uint256[3] calldata _minOut) external returns (uint256[3] memory amountsOut) {
     uint256 supply = totalSupply();
     require(supply != 0, NotBootstrapped());
-    uint72[3] memory cachedReserves = reserves;
+    uint72[3] memory cachedReserves = _loadReserves();
 
     for (uint256 i; i < 3; i++) {
       amountsOut[i] = cachedReserves[i] * _burnedShares / supply;
       require(amountsOut[i] >= _minOut[i], BadSlippage());
-      reserves[i] -= uint72(amountsOut[i]);
+      cachedReserves[i] -= uint72(amountsOut[i]);
     }
+    _storeReserves(cachedReserves);
     _burn(msg.sender, _burnedShares);
     for (uint256 i; i < 3; i++) {
       IERC20(indexToAddress(i)).safeTransfer(msg.sender, amountsOut[i]);
@@ -640,13 +750,32 @@ contract Pool is ERC20, Ownable, Pausable {
   }
 
   function swap(uint256 _indexIn, uint256 _amount, uint256 _indexOut, uint256 _minOut) external whenNotPaused returns (uint256 amountOut) {
-    uint72[3] memory cachedReserves = reserves;
+    // R2 — 1 SLOAD au lieu de 3 pour la lecture des reserves.
+    uint72[3] memory cachedReserves = _loadReserves();
 
+    // R2 — `feeInForce` est lu une seule fois et passe a
+    // `_computeEffective`, qui prend egalement le cache memoire. Avant
+    // le refactor, `effectiveFeeNum` re-lisait `feeInForce` (2 SLOADs)
+    // et `reserves` (3 SLOADs, puis 1 apres packing), et la baseAmount
+    // re-lisait `feeInForce` (2 SLOADs supplementaires). On tombe a 0
+    // re-lecture cote `swap`.
+    //
+    // R2-bis — `currentEpoch()` est calculee une seule fois et sert
+    // a la fois a `feeInForce` (inline) et a `manager()` (inline).
+    // Avant, les deux fonctions recalculaient `currentEpoch()`
+    // separement (2 DIV et 2 lectures de `lastSetFeeEpoch` /
+    // `managerOf` disjointes). Le `epoch` cache economise 1 DIV et 1
+    // appel de fonction ; la base fee lit `lastSetFeeEpoch` puis
+    // conditionnellement `feeNum`, et `currentManager` lit
+    // `managerOf[epoch]` directement sans repasser par `manager()`.
+    uint256 epoch = currentEpoch();
+    uint256 baseFee = lastSetFeeEpoch == epoch ? feeNum : NOMINAL_FEE_NUM;
+    uint256 effective = _computeEffective(baseFee, _indexIn, _indexOut, cachedReserves);
     // I.2 — le frais n'est plus une constante de pool, c'est une lecture
     // d'etat partagee entre la base (feeInForce) et la surcharge
     // directionnelle (effectiveFeeNum). ceilDiv : E7 — la division ronde
     // en faveur du pool, jamais en faveur de l'appelant.
-    uint256 feeAmount = Math.ceilDiv(_amount * effectiveFeeNum(_indexIn, _indexOut), FEE_DEN);
+    uint256 feeAmount = Math.ceilDiv(_amount * effective, FEE_DEN);
     amountOut = _getAmountOut(cachedReserves, _indexIn, _indexOut, _amount - feeAmount);
 
     require(amountOut > 0, ZeroOutput());
@@ -654,13 +783,13 @@ contract Pool is ERC20, Ownable, Pausable {
     require(_amount + cachedReserves[_indexIn] <= type(uint72).max, ReserveOverflow());
 
     // I.2 — partage (base, baseCut, protocolCut, managerCut) deplace AVANT
-    // la construction d'afterSwapReserves : les bandes (floor/ceiling)
+    // la mise a jour memoire des reserves : les bandes (floor/ceiling)
     // verifient le meme etat que l'ecriture, soit le flux net qui entre
     // dans les reserves (cuts du manager et du protocole defalques). Sans
-    // ce deplacement, les bandes s'appliquaient a un etat sur evalue de
-    // `baseAmount`, le swap passait la garde avec un pot que l'ecriture
-    // ne materialisait pas.
-    uint256 baseAmount = _amount * feeInForce() / FEE_DEN;
+    // cet ordre, les bandes s'appliqueraient a un etat sur evalue de
+    // `baseAmount`, le swap passerait la garde avec un pot que
+    // l'ecriture ne materialise pas.
+    uint256 baseAmount = _amount * baseFee / FEE_DEN;
     // I.7 #6 : plancher `protocolCut` = `baseAmount * PROTOCOL_FEE_BPS /
     // SPLIT_DEN`, soit 10 % de la base (PROTOCOL_FEE_BPS = 1000 sur
     // SPLIT_DEN = 10000). Le partage reste INTERNE : `protocolCut` +
@@ -673,22 +802,42 @@ contract Pool is ERC20, Ownable, Pausable {
     // `claimProtocolFees` (pull-only). Arbitrage tranche le 27-08 : le
     // plancher reste, pas de liberte a la baisse.
     uint256 protocolCut = baseAmount * PROTOCOL_FEE_BPS / SPLIT_DEN;
-    address currentManager = manager();
+    address currentManager = managerOf[epoch];
     uint256 managerCut = currentManager == address(0) ? 0 : baseAmount - protocolCut;
     uint256 amountInToReserves = _amount - protocolCut - managerCut;
 
-    uint256[3] memory afterSwapReserves = [uint256(cachedReserves[0]), cachedReserves[1], cachedReserves[2]];
-    afterSwapReserves[_indexIn] = amountInToReserves + afterSwapReserves[_indexIn];
-    afterSwapReserves[_indexOut] = afterSwapReserves[_indexOut] - amountOut;
-    uint256 sum = afterSwapReserves[0] + afterSwapReserves[1] + afterSwapReserves[2];
-
-    for (uint256 i; i < 3; i++) {
-      require(afterSwapReserves[i] * 100 < ceiling * sum, CeilingTouched(i));
-      require(afterSwapReserves[i] * 100 > floor * sum, FloorTouched(i));
+    // R2 — au lieu d'allouer un second `uint256[3] memory
+    // afterSwapReserves`, on modifie `cachedReserves` en place. La
+    // ReserveOverflow verifiee ci-dessus garantit que l'addition
+    // tient dans uint72 ; InsufficientReserve garantit que la
+    // soustraction ne underflow pas. D'ou le `unchecked` (gain : pas
+    // de check arithmetique sur les deux operations).
+    unchecked {
+      cachedReserves[_indexIn] = uint72(cachedReserves[_indexIn] + amountInToReserves);
+      cachedReserves[_indexOut] -= uint72(amountOut);
     }
+    uint256 sum = uint256(cachedReserves[0]) + cachedReserves[1] + cachedReserves[2];
+    // R2 — `ceiling * sum` et `floor * sum` sont invariants dans la
+    // boucle des bandes, on les calcule une fois au lieu de trois.
+    uint256 ceilingTimesSum = uint256(ceiling) * sum;
+    uint256 floorTimesSum = uint256(floor) * sum;
+
+    // R2-ter — boucle deroulee en 6 `require` (3 jambes × 2 sens),
+    // cf. `addLiquidity` ci-dessus pour la justification. Le pattern
+    // est fixe (3 jambes) et chaque garde se distingue uniquement par
+    // l'index passe en argument de l'erreur, donc le deroulement ne
+    // fait pas perdre de lisibilite.
+    require(uint256(cachedReserves[0]) * 100 < ceilingTimesSum, CeilingTouched(0));
+    require(uint256(cachedReserves[0]) * 100 > floorTimesSum, FloorTouched(0));
+    require(uint256(cachedReserves[1]) * 100 < ceilingTimesSum, CeilingTouched(1));
+    require(uint256(cachedReserves[1]) * 100 > floorTimesSum, FloorTouched(1));
+    require(uint256(cachedReserves[2]) * 100 < ceilingTimesSum, CeilingTouched(2));
+    require(uint256(cachedReserves[2]) * 100 > floorTimesSum, FloorTouched(2));
 
     require(amountOut >= _minOut, BadSlippage());
 
+    // R2 — une seule SSTORE pour les trois reserves (le slot packe
+    // est ecrit entierement, contre 2 SSTOREs avant le packing).
     // I.2 — ligne de credit des reserves (4.3, regle R5) et ecriture des
     // deux registres. Le partage est asymetrique par construction :
     // protocolCut + managerCut = baseAmount quand un gestionnaire est
@@ -698,8 +847,7 @@ contract Pool is ERC20, Ownable, Pausable {
     // dans les reserves dans les deux cas. Le manager ne touche JAMAIS
     // la surcharge, sinon il profiterait du desequilibre qu'il tarifie
     // (4.3 (4)). CEI tient : effets avant les transferts.
-    reserves[_indexIn] += uint72(amountInToReserves);
-    reserves[_indexOut] -= uint72(amountOut);
+    _storeReserves(cachedReserves);
     if (managerCut > 0) {
       feesOwed[currentManager][_indexIn] += managerCut;
     }

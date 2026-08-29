@@ -471,12 +471,18 @@ contract Auction {
     // Les `refunds` ne sont PAS effaces : un ancien enchérisseur peut
     // toujours tirer son refund, et c'est le seul cas ou l'etat n'est
     // pas remis a neuf.
-    if (sellingEpoch != currentEpoch() + 1) {
+    //
+    // R2 — `currentEpoch() + 1` est calcule une seule fois et reutilise
+    // pour la comparaison et pour l'affectation. La division par
+    // `epochDuration` est ainsi evitee sur la deuxieme lecture, et le
+    // memoire-memoire sur `epoch` est gratuit.
+    uint256 nextEpoch = currentEpoch() + 1;
+    if (sellingEpoch != nextEpoch) {
       if (highBidder != address(0)) {
         pendingEpoch = sellingEpoch;
         pendingAmount = highBid;
       }
-      sellingEpoch = currentEpoch() + 1;
+      sellingEpoch = nextEpoch;
       highBid = 0;
       highBidder = address(0);
     }
@@ -488,8 +494,16 @@ contract Auction {
     // `currentEpoch() < sellingEpoch - 1` aurait de toute facon declenche
     // la reinitialisation a zero juste au-dessus). La borne haute est la
     // seule a verifier.
+    //
+    // R2 — la borne superieure est stockee dans une locale
+    // `closesAt_` et utilisee telle quelle par la garde. La meme
+    // expression reapparait dans `windowOpen()` et `closesAt()` (vues
+    // distinctes, hors du chemin chaud), donc la mise en cache ne sert
+    // qu'a rendre le test explicite ; l'economie tient surtout a la
+    // constance du nom (le calcul de la fenetre est localise ici).
+    uint256 closesAt_ = startOfEpoch(sellingEpoch - 1) + auctionWindow;
     require(
-      block.timestamp < startOfEpoch(sellingEpoch - 1) + auctionWindow,
+      block.timestamp < closesAt_,
       WindowClosed()
     );
 

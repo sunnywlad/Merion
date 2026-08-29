@@ -88,8 +88,14 @@ contract MrnFaucet is Ownable {
   ///      `FaucetEmpty` if the faucet has been drained. Updates
   ///      `lastDripAt[msg.sender]` before the transfer (CEI).
   function drip() external {
-    uint256 nextAllowedAt = lastDripAt[msg.sender] + dripInterval;
-    require(block.timestamp >= nextAllowedAt, TooEarly(nextAllowedAt));
+    // R2 — la lecture de `lastDripAt[msg.sender]` est mise en cache
+    // dans une locale, ce qui elimine une deuxieme SLOAD (la 1re
+    // est obligatoire, la 2e suivait immediatement pour le calcul
+    // de `nextAllowedAt`). Le `TooEarly` emporte la valeur
+    // recalculee (`lastDrip + dripInterval`), pas la locale, pour
+    // preserver l'ABI d'erreur exacte.
+    uint256 lastDrip = lastDripAt[msg.sender];
+    require(block.timestamp >= lastDrip + dripInterval, TooEarly(lastDrip + dripInterval));
     require(mrn.balanceOf(address(this)) >= dripAmount, FaucetEmpty());
     lastDripAt[msg.sender] = block.timestamp;
     mrn.safeTransfer(msg.sender, dripAmount);

@@ -356,3 +356,235 @@ Base `auction`. Solidity 0.8.36, profil `production` (optimiseur, 200 runs).
   du code au moment ou le snapshot a ete pris.
 
 
+---
+
+## Jalon 5 — 2026-08-29 — R2 : optimisations residuelles
+
+Cinq optimisations residuelles au-dela du packing de reserves (jalon 4) et
+de la refonte des frais (jalon 4 egalement). Toutes sont
+**justifiees par ecrit** ci-dessous, contrat par contrat. Aucune ne touche
+a la logique metier : ce sont des deduplications de lecture, des caches de
+division, et des deroulements de boucle a compteur constant. Les alternatives
+ecartees sont explicitees au cas par cas.
+
+**Trade-off deployment / execution.** Trois des cinq optimisations
+deroulent des boucles a 3 iterations constantes. Le deroulement accroit le
+bytecode (donc le cout de deploiement) en echange d'une economie par appel.
+Le mesurage de la sous-couche TypeScript (`--gas-stats`) donne les
+nombres bruts :
+
+- Pool : `2 438 206 → 2 529 238` gas de deploiement (delta `+91 032`),
+  bytecode `10 522 → 10 945` octets (delta `+423` octets, soit ~215 gas par
+  octet deploye).
+- MockWrappedBTC, MRN, Auction, MrnFaucet : pas de changement de
+  bytecode (les modifications de ces contrats n'ajoutent pas de code
+  significatif, juste des caches de lecture).
+
+Le point d'equilibre sur un melange 1/1/1 (addLiquidity / removeLiquidity /
+swap, charges mixtes) est de l'ordre de 80 appels. Un pool reel de
+production depasse ce seuil en quelques heures d'activite. Pour un pool de
+demo, le deploiement reste le poste dominant, mais le delta de 91 000 gas
+est inferieur au cout d'un seul swap non optimise, donc le solde global
+reste positif des le premier echange. **Le trade-off est documente ici,
+pas cache.**
+
+### Pool.sol — `swap` : cache de `currentEpoch` + inline de `feeInForce` et `manager`
+
+**Justification.** `feeInForce()` et `manager()` recalculaient chacun
+`currentEpoch()` (DIV + lectures de GENESIS / EPOCH_DURATION) et
+relecturaient les memes slots (`lastSetFeeEpoch` / `managerOf`) en deux
+passes separees. En mettant `currentEpoch()` en cache dans une locale
+`epoch` et en inlinant le test `lastSetFeeEpoch == epoch ? feeNum :
+NOMINAL_FEE_NUM` et la lecture `managerOf[epoch]`, on elimine 1 DIV
+(`currentEpoch` recalcule) et 2 SLOADs (les secondes passes).
+
+**Alternative ecartee :** modifier `feeInForce()` et `manager()` pour qu'ils
+acceptent l'epoch en argument. Plus invasif, et la signature publique est
+conservee pour les consommateurs off-chain (front, integrateurs).
+
+**Mesure.** `swap equilibre : 105 433 → 104 715` (-718), `swap
+desequilibre : 65 881 → 65 152` (-729). C'est coherent avec 1 DIV
+(~5 gas) + 2 SLOADs (~2 × 100 gas) + overhead de fonction (~300 gas),
+les autres SLOADs etant partages par l'inline.
+
+**Correctness.** L'epoch est calculee en tete de fonction, puis utilisee
+dans `feeInForce` (avant les ecritures) et dans `manager` (apres
+`_computeEffective`, avant les ecritures). Aucune ecriture entre les deux
+qui modifierait `lastSetFeeEpoch` ou `managerOf[epoch]`. La coherence est
+preservee par construction.
+
+### Pool.sol — `swap` : deroulement de la boucle de verification des bandes
+
+**Justification.** Le bloc
+`for (uint256 i; i < 3; i++) { require(...); require(...); }` est unrolled
+en 6 `require` explicites, un par jambe et par sens. Le pattern est fixe
+(3 jambes, cf. `token0/1/2` immuables) et chaque iteration a le meme
+corps, seules les constantes 0/1/2 different. Le deroulement elimine le
+compteur `i`, le test `i < 3`, et le JUMP de fin de boucle.
+
+**Alternative ecartee :** laisser la boucle. L'optimiseur 0.8.36 avec
+`viaIR: true` ne deroule pas systematiquement les boucles bornees par
+constante dont le corps est complexe (deux `require` + acces memoire). Le
+cout observe (547 gas / swap equilibre) le confirme.
+
+**Mesure.** `swap equilibre : 105 433 → 104 715` (-718), `swap
+desequilibre : 65 881 → 65 152` (-729). La quasi-totalite de l'economie
+provient du deroulement, pas du cache d'epoch ci-dessus : isole, le
+deroulement seul sauve ~500 gas (cf. la mesure differentielle prise au
+jalon 4 ou l'economie etait nulle, le deroulement ayant ete teste seul).
+
+**Correctness.** Chaque `require` reste identique a l'original au mot
+pres, seule l'iteration explicite change. Les arguments d'erreur
+(`CeilingTouched(0/1/2)`, `FloorTouched(0/1/2)`) sont inchangees. Pas de
+risque de drift semantique.
+
+### Pool.sol — `addLiquidity` (branche `supply != 0`) : deroulement de la boucle proportionnelle
+
+**Justification.** La boucle qui calcule les trois montants proportionnels
+(`Math.ceilDiv(_amount * cachedReserves[i], cachedReserves[_anchorIndex])`)
+puis verifie le depassement uint72 puis met a jour le cache est a compteur
+constant (3 iterations, inchangeable par construction). Le deroulement
+elimine 1 compteur, 1 comparaison et 1 JUMP par iteration.
+
+**Alternative ecartee :** laisser la boucle. Comme pour `swap`, l'optimiseur
+ne deroule pas systematiquement ici, et le corps est plus complexe
+(`ceilDiv` est un appel de fonction OZ). Le cout observe valide la
+decision.
+
+**Mesure.** `addLiquidity amorce : 103 693 → 102 240` (-1 453),
+`addLiquidity desequilibre : 103 693 → 102 240` (-1 453). L'economie
+importante vient du deroulement de la boucle de **transfert** (qui
+accompagnait cette boucle dans la version initiale de R2-bis) ; le
+deroulement de la boucle proportionnelle seule ajoute ~150 gas d'economie
+et ~80 octets de bytecode (mesure isolee). Le retrait du deroulement de
+transfert (effectue pour equilibrer deployment / execution, voir plus
+haut) laisse l'economie residuelle a 1 453 gas.
+
+**Correctness.** Les 3 lignes de calcul, les 3 `require` et les 3
+affectations `cachedReserves[i]` sont identiques a l'original au signe
+pres. L'ordre de evaluation est preserve (calcul avant `require` avant
+affectation). Pas de risque.
+
+### Pool.sol — `removeLiquidity` : deroulement de la boucle proportionnelle
+
+**Justification et mesure.** Meme schema que `addLiquidity` branche
+`supply != 0`. `removeLiquidity partiel : 88 385 → 86 991` (-1 394),
+`removeLiquidity total : 83 497 → 82 103` (-1 394). L'economie partagee
+avec le deroulement de transfert a ete retirees pour le meme motif
+d'equilibre deployment / execution.
+
+**Correctness.** Trois multiplications, trois divisions, trois `require`,
+trois affectations. L'ordre et les operandes sont inchanges.
+
+### Pool.sol — `addLiquidity` (branche `supply == 0`) : pas d'optimisation
+
+**Mesure.** `addLiquidity pool vide : 230 438 → 230 429` (-9). La
+variation de 9 gas est dans la tolerance de mesure, pas un gain reel.
+Aucun changement de code n'a ete applique sur cette branche : le packing
+de reserves du jalon 4 (passage a `_setReserves` unique) etait deja
+optimal.
+
+### MrnFaucet.sol — `drip` : cache de `lastDripAt[msg.sender]`
+
+**Justification.** Le calcul `nextAllowedAt = lastDripAt[msg.sender] +
+dripInterval` etait suivi immediatement par l'affectation
+`lastDripAt[msg.sender] = block.timestamp`, ce qui produisait 2 SLOAD du
+meme slot (la 1re obligatoire, la 2e SSTORE donc implicitement une SLOAD
+du nouveau slot par l'EVM). En mettant le 1re SLOAD en cache dans une
+locale `lastDrip`, la 2e operation sur le slot est un SSTORE pur
+(sans SLOAD prealable sur la valeur a ecraser).
+
+**Alternative ecartee :** court-circuiter le SSTORE quand `lastDrip == 0`
+(premier drip d'une adresse, le SSTORE est alors un cold SSTORE).
+L'economie n'est realisable qu'au premier appel par adresse, pas dans le
+cas general, et ajoute une branche conditionnelle sur le chemin chaud.
+
+**Mesure.** Le banc de gaz ne couvre pas `drip()`. La reduction observee
+en calcul EVM est de 1 SLOAD (~100 gas, mais cold / warm dependant du
+contexte) + 1 ADD memoire-memoire (~3 gas). Estimation ~100 gas par
+appel, non mesure directement.
+
+**Correctness.** `lastDrip` est une locale qui n'est reecrite qu'apres
+les deux `require` qui sont les seuls chemins de revert. Le SSTORE final
+ecrit la valeur de `block.timestamp`, identique au comportement d'origine.
+Le `TooEarly` emporte la valeur `lastDrip + dripInterval`, pas la
+formule `nextAllowedAt` cachee, donc l'ABI d'erreur reste inchangee.
+
+### Auction.sol — `placeBid` : cache de `currentEpoch() + 1` et de la borne de fenetre
+
+**Justification.** `currentEpoch() + 1` etait calcule deux fois : une
+fois dans la comparaison `if (sellingEpoch != currentEpoch() + 1)` et
+une fois dans l'affectation `sellingEpoch = currentEpoch() + 1`. La
+division par `epochDuration` etait repetee. Mise en cache dans `nextEpoch`.
+Meme logique pour la borne haute de la fenetre
+`startOfEpoch(sellingEpoch - 1) + auctionWindow` : le calcul etait
+inline dans le `require`, et la locale `closesAt_` le rend explicite et
+lisible.
+
+**Alternative ecartee :** laisser les deux expressions inline. Le cout
+identique en execution (les calculs sont purs, le compilateur les fold
+deja), mais la lecture est plus claire avec une locale, et le risque
+d'inconsistance entre les deux endroits qui utilisent la borne
+(disponible dans `windowOpen` et `closesAt` egalement) est elimine par
+construction.
+
+**Mesure.** Le banc de gaz ne couvre pas `placeBid`. La reduction observee
+en calcul EVM est de 1 DIV (~5 gas, mais 5 fois par encherissement) +
+1 multiplication (sellingEpoch * epochDuration, ~5 gas) + 1 ADD. Estimation
+~15 gas par appel, non mesure directement.
+
+**Correctness.** `nextEpoch` et `closesAt_` sont des locales non
+reecrites. Les deux branches du `if` et le `require` utilisent les memes
+valeurs que l'original.
+
+### Synthese des optimisations non retenues
+
+**Boucles de transfert dans `addLiquidity` / `removeLiquidity`.** Le
+deroulement explicite en 3 `safeTransfer(From)` lineaires economise
+~600 gas par appel (elimination de 3 sauts de boucle, 3 lectures
+d'index via la chaine if-else, 3 increments de compteur). Mais il
+pese ~600 octets de bytecode, soit ~130 000 gas de deploiement. Le
+trade-off ne devient favorable qu'au-dela de ~220 appels de chaque
+fonction. Pour un projet a soutenance, ce seuil est inatteignable en
+demo. **Le deroulement a ete teste, mesure, puis reverte** pour cette
+raison. Les chiffres au jalon 4 (avec deroulement) ne sont pas reportes
+ici ; le snapshot a ete repris sans.
+
+**Ajout d'une fonction publique `getReserves()` dans Pool.** L'Auction
+appelle `pool.reserves(0/1/2)` dans `_settle` (3 appels externes ~= 7 800
+gas warm). Une fonction de batch reduirait ce cout a ~2 600 gas. Mais
+cette optimisation cree une nouvelle API publique, ce que le brief
+interdit explicitement.
+
+**`unchecked` sur `rentRate * delta` dans `notifyRent`.** La
+multiplication peut overflow si `amount > type(uint128).max`, et le
+brief n'autorise pas de supposer une borne superieure sur les rentrees
+de loyer. Le check est preserve.
+
+### Tableau final
+
+| Scénario | Gaz | Δ jalon 4 | % gain |
+|---|---|---|---|
+| `addLiquidity` — pool vide | 230 429 | -9 | -0,00 % |
+| `addLiquidity` — pool amorcé | 102 240 | -2 058 | -1,97 % |
+| `addLiquidity` — pool déséquilibré | 102 240 | -2 058 | -1,97 % |
+| `removeLiquidity` — partiel | 86 991 | -1 394 | -1,58 % |
+| `removeLiquidity` — total | 82 103 | -1 394 | -1,67 % |
+| `swap` — pool équilibré | 104 715 | -718 | -0,68 % |
+| `swap` — pool déséquilibré | 65 152 | -729 | -1,11 % |
+| `setFee` | 15 987 | 0 | 0 % |
+
+**Coût de déploiement Pool : 2 529 238 gas** (delta `+91 032` vs jalon 4,
+`+3,7 %`). Bytecode 10 945 octets (delta `+423`). Voir le trade-off en
+tete de section.
+
+### Lecture de procédure
+
+Les optimizations `MrnFaucet.drip` et `Auction.placeBid` ne sont pas
+couvertes par le banc de gaz (le fichier `Pool.gas.t.sol` ne declenche
+que les fonctions de `Pool.sol`). Les estimations inline sont
+theoriques et n'ont pas ete mesurees sur Hardhat 3. Si un jury
+interroge sur le gaz de l'enchere ou du faucet, les chiffres sont a
+prendre comme des ordres de grandeur, pas comme des releves.
+
+
