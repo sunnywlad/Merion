@@ -87,6 +87,12 @@ using SafeERC20 for IERC20;
 // pas a I.3. Il reste dans la signature pour que A1 soit une substitution,
 // pas une reecriture, et les deux uniques lignes qui pourraient l'utiliser
 // dans `placeBid` sont gardees par des commentaires FIXME.
+
+/// @title Auction
+/// @notice Ascending-price MRN auction that elects the manager of the
+///         next epoch. Bidders outbid each other during a fixed window
+///         in MRN; the highest bid at settle-time designates the
+///         manager, pays the LP rent, and burns the protocol share.
 contract Auction {
 
   // -------------------------------------------------------------------------
@@ -104,18 +110,34 @@ contract Auction {
   // sur l'Auction, et il vit dans le record de deploiement (ignition) et
   // dans les tests. Voir build-auction.md 2.2 et 5.0 bis pour les valeurs
   // de demonstration (15 min, 0, 0, 10 MRN a 18 decimales, restated 2026-08-28).
+  /// @notice Duration of the bidding window, in seconds, measured from
+  ///         the start of the previous epoch.
   uint256 public immutable auctionWindow;
+  /// @notice Maximum soft-close extension in seconds, reserved for the
+  ///         A1 soft-close gate. Set to 0 at I.3; the gate is not
+  ///         active yet.
   uint256 public immutable maxExtension;
+  /// @notice Length of the silence window at the end of the bidding
+  ///         window, in seconds, during which the bot must call
+  ///         `settle` to nominate the manager.
   uint256 public immutable bidSilence;
+  /// @notice Minimum first bid of any new auction, in MRN (18 decimals).
   uint256 public immutable minOpeningBid;
 
+  /// @notice The MRN token used for bidding, refunds, and the rent
+  ///         payout to the pool.
   IERC20 public immutable mrn;
+  /// @notice The Merion pool whose next-epoch manager this auction
+  ///         elects. Read at construction and held immutable.
   Pool public immutable pool;
 
   // Le tresor du Pool, recadre en immutable ici pour qu'un `settle()`
   // n'ait pas a relire le Pool. Ce n'est PAS le tresor des produits de
   // l'enchere : R6 dit explicitement qu'il n'y a pas de part tresorerie
   // sur le produit, et c'est la constante `BURN_BPS` qui le dit.
+  /// @notice The Pool's protocol treasury, mirrored here at
+  ///         construction. Not used by `settle` (R6: no treasury share
+  ///         on the auction revenue), but stored for completeness.
   address public immutable treasury;
 
   // -------------------------------------------------------------------------
@@ -135,7 +157,12 @@ contract Auction {
   // Le brief porte un typo sur ce scalaire ; voir la note methodologique
   // en fin de fichier pour la justification complete. Le test 7.1 (19)
   // pin exactement cette regle et ecrase la valeur a 11000.
+  /// @notice Minimum outbid ratio in basis points. A new bid must
+  ///         reach at least `highBid * HIGH_BID_BPS / BPS_DEN` to be
+  ///         accepted (effectively +10 %).
   uint256 constant public HIGH_BID_BPS = 11000;
+  /// @notice Basis-point denominator, shared by `HIGH_BID_BPS` and
+  ///         `SETTLE_REWARD_BPS`.
   uint256 constant public BPS_DEN = 10000;
 
   // Le partage du produit de l'enchere : 70 % LP, 30 % brule (R6, point 5
@@ -144,8 +171,15 @@ contract Auction {
   // `mrn.burn`. Le denominateur partage est `SPLIT_DEN`, distinct du
   // `BPS_DEN` du `HIGH_BID_BPS` (regle : un seul denominateur par calcul,
   // jamais partage).
+  /// @notice Denominator of the auction-revenue split between LP
+  ///         share and burn share. Distinct from `BPS_DEN` to keep
+  ///         each calculation bounded by a single denominator.
   uint256 constant public SPLIT_DEN = 10000;
+  /// @notice Share of the settled amount routed to the pool as LP
+  ///         rent, in basis points over `SPLIT_DEN` (70 %).
   uint256 constant public LP_BPS = 7000;
+  /// @notice Share of the settled amount burned by the auction, in
+  ///         basis points over `SPLIT_DEN` (30 %).
   uint256 constant public BURN_BPS = 3000;
 
   // Prime au caller de `settle()` (le bot qui nomme le gestionnaire) :
@@ -157,6 +191,9 @@ contract Auction {
   // le mandat suivant ne demarre qu'apres une nouvelle mise qui capture
   // l'ancien etat). Le denominateur est BPS_DEN, partage avec HIGH_BID_BPS
   // (regle du projet : un seul denominateur par calcul, jamais partage).
+  /// @notice Caller reward on `settle`, in basis points of `lpAmount`,
+  ///         paid in MRN to the bot that nominates the manager
+  ///         (0,1 %).
   uint256 constant public SETTLE_REWARD_BPS = 10;
 
   // -------------------------------------------------------------------------
@@ -167,8 +204,15 @@ contract Auction {
   // `sellingEpoch == currentEpoch() + 1` SI l'enchere est active. Sinon le
   // slot appartient a une enchere finie et il est rouvert a zero par
   // comparaison (voir entete de contrat, point (1)).
+  /// @notice The epoch whose manager is currently being auctioned.
+  ///         Equal to `currentEpoch() + 1` while the auction is live;
+  ///         stale value reset on the next `placeBid`.
   uint256 public sellingEpoch;
+  /// @notice The current highest bid of the live auction, in MRN
+  ///         (18 decimals). Zero when no bid is in flight.
   uint256 public highBid;
+  /// @notice Address of the current highest bidder, or the zero
+  ///         address when no bid is in flight.
   address public highBidder;
 
   // Le mandat gagne mais pas encore regle. `pendingEpoch == 0 &&
@@ -176,45 +220,108 @@ contract Auction {
   // verifie pour reverter `NoBidToSettle()` quand il n'y a rien a faire.
   // Il ne peut y avoir plus d'un mandat en attente a la fois, parce que
   // l'ouverture d'une nouvelle enchere regle ce qui trainait dans le slot.
+  /// @notice The epoch waiting to be settled. Zero means no pending
+  ///         settlement.
   uint256 public pendingEpoch;
+  /// @notice The winning bid amount waiting to be settled, in MRN
+  ///         (18 decimals). Zero means no pending settlement.
   uint256 public pendingAmount;
 
   // Refunds credits et jamais pousses (R2, point (2) de l'entete). Pull
   // only, par `withdrawRefund()`. CEI tient sur le tirage.
+  /// @notice Outstanding refund credits, per address, in MRN
+  ///         (18 decimals). Pulled by `withdrawRefund`.
   mapping(address => uint256) public refunds;
 
   // -------------------------------------------------------------------------
   // Erreurs
   // -------------------------------------------------------------------------
 
+  /// @notice The provided bid is below the minimum required for the
+  ///         current auction (either `minOpeningBid` or a +10 % outbid
+  ///         over the current high).
+  /// @param min The minimum amount the caller had to bid.
+  /// @param provided The amount the caller actually bid.
   error BidTooLow(uint256 min, uint256 provided);
+  /// @notice The auction window is closed: the caller's bid arrived
+  ///         after the bidding deadline.
   error WindowClosed();
+  /// @notice The caller has no refund credit to withdraw.
   error NoBidToRefund();
+  /// @notice There is no winning bid awaiting settlement, and no live
+  ///         auction to capture either.
   error NoBidToSettle();
 
   // -------------------------------------------------------------------------
   // Evenements
   // -------------------------------------------------------------------------
 
+  /// @notice Emitted when a new highest bid is placed in the auction.
+  /// @param epoch The epoch whose manager the bid is for.
+  /// @param bidder The address that placed the bid.
+  /// @param amount The bid amount in MRN (18 decimals).
   event BidPlaced(uint256 indexed epoch, address indexed bidder, uint256 amount);
+  /// @notice Emitted when the previous highest bidder is credited a
+  ///         refund (R2: credit, never push).
+  /// @param bidder The address whose previous bid is now refundable.
+  /// @param amount The refunded amount in MRN (18 decimals).
   event RefundCredited(address indexed bidder, uint256 amount);
+  /// @notice Emitted when a bidder successfully withdraws their
+  ///         refund credit.
+  /// @param bidder The address that withdrew the refund.
+  /// @param amount The withdrawn amount in MRN (18 decimals).
   event RefundWithdrawn(address indexed bidder, uint256 amount);
   // Re-emis ici pour l'indexation par adresse. Le contrat Pool emet aussi
   // `ManagerSet` ; cette deuxieme emission donne aux clients un seul
   // endpoint d'audit par encherisseur, sans avoir a scanner les logs de
   // Pool. Voir build-auction.md 5.3.
+  /// @notice Re-emitted here for per-bidder auditability. The Pool
+  ///         already emits its own `ManagerSet`; this duplicate allows
+  ///         clients to filter settlement events by bidder without
+  ///         scanning Pool logs.
+  /// @param epoch The epoch whose manager has been set.
+  /// @param manager The manager designated for that epoch.
   event ManagerSet(uint256 indexed epoch, address indexed manager);
   // L'evenement de cloture de mandat (5.4 bis, point 7 du brief) : index,
   // gestionnaire, prix de cloture, tarif pose, et les trois reserves lues
   // a cet instant. Un evenement, aucun stockage, rien sur le chemin du
   // swap. Il ne porte PAS le revenu de frais du mandat (derivable hors
   // chaine des `Swapped`).
+  /// @notice Epoch-closing snapshot emitted at settle-time. Captures
+  ///         the manager, the clearing price, the fee in force for
+  ///         the settled epoch, and the three reserves read at that
+  ///         instant.
+  /// @param epoch The epoch that has just been settled.
+  /// @param manager The manager designated for that epoch.
+  /// @param clearingPrice The winning bid, in MRN (18 decimals).
+  /// @param fee The fee in force at the start of the epoch (numerator
+  ///        over `FEE_DEN`).
+  /// @param reservesAtClose The three pool reserves read at settle
+  ///        time, in token units.
   event Settled(uint256 indexed epoch, address indexed manager, uint256 clearingPrice, uint256 fee, uint256[3] reservesAtClose);
 
   // -------------------------------------------------------------------------
   // Constructeur
   // -------------------------------------------------------------------------
 
+  /// @notice Deploys the auction, snapshots the pool's `GENESIS` and
+  ///         `EPOCH_DURATION` to keep the two clocks aligned, records
+  ///         the bidding-window parameters, and pre-approves the pool
+  ///         to pull MRN for rent payouts.
+  /// @dev The pool's clock fields are copied rather than re-read on
+  ///      every call: this is the only way to guarantee the two
+  ///      contracts never drift. The pre-approval uses `approve`
+  ///      (not `forceApprove`) because the Auction is freshly
+  ///      deployed and its previous MRN allowance is zero.
+  /// @param _pool Address of the Merion pool whose manager this
+  ///        auction elects.
+  /// @param _mrn Address of the MRN token used for bidding and rent.
+  /// @param _auctionWindow Length of the bidding window, in seconds.
+  /// @param _maxExtension Reserved for the A1 soft-close gate; set
+  ///        to 0 at I.3.
+  /// @param _bidSilence Length of the settle window, in seconds.
+  /// @param _minOpeningBid Minimum first bid of any new auction, in
+  ///        MRN (18 decimals).
   constructor(
     address _pool,
     address _mrn,
@@ -264,10 +371,16 @@ contract Auction {
   // `(block.timestamp - genesis) / epochDuration`, derive pur. Pas de
   // compteur, pas de keeper (R1) : la formule est recomputable hors chaine
   // par un front qui connait GENESIS et EPOCH_DURATION.
+  /// @notice Returns the current epoch derived from the pool's
+  ///         `GENESIS` and `EPOCH_DURATION` snapshot at deployment.
+  /// @return The current epoch number, zero-based.
   function currentEpoch() public view returns (uint256) {
     return (block.timestamp - genesis) / epochDuration;
   }
 
+  /// @notice Returns the current highest bid of the live auction.
+  /// @return The current high bid, in MRN (18 decimals), or zero if
+  ///         no bid is in flight.
   function currentBid() external view returns (uint256) {
     return highBid;
   }
@@ -281,6 +394,9 @@ contract Auction {
   // est silencieusement ouverte par le `sellingEpoch != currentEpoch() + 1`
   // qui reinitialise tout a zero, et un appel avant ce moment equivaut a
   // un appel sur une enchere vide.
+  /// @notice Returns whether the bidding window is currently open.
+  /// @return True iff the auction is for the next epoch and
+  ///         `block.timestamp` is before the window deadline.
   function windowOpen() public view returns (bool) {
     if (sellingEpoch != currentEpoch() + 1) return false;
     return block.timestamp < startOfEpoch(sellingEpoch - 1) + auctionWindow;
@@ -289,6 +405,9 @@ contract Auction {
   // L'horodatage de cloture dure de l'enchere, expose pour le front.
   // Rendu en memoire pure, pas de reinitialisation : la vue n'a pas
   // d'effet de bord.
+  /// @notice Returns the closing timestamp of the bidding window for
+  ///         the epoch currently being sold.
+  /// @return The unix timestamp at which the bidding window closes.
   function closesAt() public view returns (uint256) {
     return startOfEpoch(sellingEpoch - 1) + auctionWindow;
   }
@@ -320,6 +439,16 @@ contract Auction {
   // L'ordre (4) avant (5) est important : le precedent enchérisseur est
   // crédité AVANT que l'Auction ne reçoive le MRN du nouveau, donc un
   // revert sur le transfert entrant n'affecte pas le refund crédité.
+
+  /// @notice Places a bid on the current auction. Reopens the slot
+  ///         for the next epoch if needed, credits the previous
+  ///         high bidder a refund, transfers MRN from the caller,
+  ///         and updates the auction state.
+  /// @dev Reverts with `WindowClosed` if the bidding window has
+  ///      closed, and with `BidTooLow` if the bid is below the
+  ///      minimum (either `minOpeningBid` or +10 % of the current
+  ///      high). Manager nomination is deferred to `settle`.
+  /// @param amount The bid amount, in MRN (18 decimals).
   //
   // La nomination du gestionnaire par `pool.setManager` est reportee a
   // `_settle()` (point (3) de l'entete). Pendant toute la duree de
@@ -436,6 +565,11 @@ contract Auction {
   // tient : un encherisseur contrat qui reverte a la reception ne bloque
   // ni la mise courante (R2, point (2) de l'entete) ni le tirage
   // ulterieur d'un refund bien merite.
+
+  /// @notice Withdraws the caller's outstanding refund credit, if any.
+  /// @dev Pull-only, CEI strict: the registry is reset to zero before
+  ///      the transfer. Reverts with `NoBidToRefund` if the caller
+  ///      has nothing to withdraw.
   function withdrawRefund() external {
     uint256 owed = refunds[msg.sender];
     require(owed > 0, NoBidToRefund());
@@ -472,6 +606,16 @@ contract Auction {
   // qui trainait. La resolution d'un double `settle` consecutif est
   // simple : le second voit `pendingEpoch == 0 && pendingAmount == 0` et
   // revert `NoBidToSettle()`.
+
+  /// @notice Settles the winning bid: burns 30 % of `pendingAmount`,
+  ///         pays the caller a `SETTLE_REWARD_BPS` reward on the LP
+  ///         share, hands the rest to the pool as rent via
+  ///         `Pool.notifyRent`, and nominates the high bidder as
+  ///         the manager of `pendingEpoch`.
+  /// @dev Permissionless and idempotent. Captures a live auction
+  ///      into the pending slot if no previous settlement is queued.
+  ///      Reverts with `NoBidToSettle` if there is nothing to settle
+  ///      and no live auction either.
   function settle() external {
     if (pendingEpoch == 0 && pendingAmount == 0) {
       // Le slot est vide, mais l'enchere COURANTE peut encore etre

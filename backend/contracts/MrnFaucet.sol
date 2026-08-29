@@ -23,21 +23,53 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 // empêche un acteur unique de vider le faucet ; tous les autres y ont accès
 // dans la même fenêtre. La pré-alimentation est calibrée pour la démo et
 // les consultants, pas pour un usage production.
+/// @title MrnFaucet
+/// @notice Demo and consultant-facing MRN faucet. Holds a pre-funded
+///         MRN reserve and drips a fixed amount to any caller, rate-
+///         limited per address. No mint, no whitelist.
 contract MrnFaucet is Ownable {
   using SafeERC20 for IERC20;
 
+  /// @notice The MRN token distributed by the faucet.
   IERC20 public immutable mrn;
+  /// @notice Amount of MRN sent to each successful `drip` call.
   uint256 public immutable dripAmount;
+  /// @notice Minimum delay, in seconds, between two consecutive drips
+  ///         to the same caller.
   uint256 public immutable dripInterval;
 
+  /// @notice Timestamp of the last successful drip, per address. The
+  ///         rate-limit is enforced by comparing
+  ///         `lastDripAt[msg.sender] + dripInterval` against
+  ///         `block.timestamp`.
   mapping(address => uint256) public lastDripAt;
 
+  /// @notice Emitted when a caller successfully drips from the faucet.
+  /// @param recipient Address that received the MRN.
+  /// @param amount Amount transferred, equal to `dripAmount`.
   event Dripped(address indexed recipient, uint256 amount);
+
+  /// @notice Emitted when the owner withdraws leftover MRN from the
+  ///         faucet to themselves.
+  /// @param to Address that received the withdrawn MRN (the owner).
+  /// @param amount Amount withdrawn.
   event Withdrawn(address indexed to, uint256 amount);
 
+  /// @notice The faucet does not hold enough MRN to satisfy the next
+  ///         drip. Reached only when `mrn.balanceOf(this) < dripAmount`.
   error FaucetEmpty();
+
+  /// @notice The caller dripped too recently; they must wait until
+  ///         `nextAllowedAt` to drip again.
+  /// @param nextAllowedAt The earliest timestamp at which the next
+  ///        drip from the caller is allowed.
   error TooEarly(uint256 nextAllowedAt);
 
+  /// @notice Deploys the faucet with its immutable parameters.
+  /// @param _mrn Address of the MRN token to dispense.
+  /// @param _dripAmount Amount of MRN per drip, in MRN's 18 decimals.
+  /// @param _dripInterval Per-address cooldown, in seconds.
+  /// @param _owner Owner of the faucet, allowed to call `withdraw`.
   constructor(
     address _mrn,
     uint256 _dripAmount,
@@ -49,6 +81,12 @@ contract MrnFaucet is Ownable {
     dripInterval = _dripInterval;
   }
 
+  /// @notice Sends `dripAmount` MRN to the caller, subject to the
+  ///         per-address rate-limit and the faucet's balance.
+  /// @dev Permissionless. Reverts with `TooEarly` if the caller
+  ///      dripped within the last `dripInterval` seconds, and with
+  ///      `FaucetEmpty` if the faucet has been drained. Updates
+  ///      `lastDripAt[msg.sender]` before the transfer (CEI).
   function drip() external {
     uint256 nextAllowedAt = lastDripAt[msg.sender] + dripInterval;
     require(block.timestamp >= nextAllowedAt, TooEarly(nextAllowedAt));
@@ -58,6 +96,11 @@ contract MrnFaucet is Ownable {
     emit Dripped(msg.sender, dripAmount);
   }
 
+  /// @notice Withdraws `amount` MRN from the faucet to the owner.
+  /// @dev Owner-only. The owner can use this to reclaim the leftover
+  ///      reserve at the end of the demo, or to refill the faucet
+  ///      elsewhere.
+  /// @param amount Amount of MRN to withdraw.
   function withdraw(uint256 amount) external onlyOwner {
     mrn.safeTransfer(owner(), amount);
     emit Withdrawn(owner(), amount);

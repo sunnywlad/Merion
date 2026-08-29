@@ -11,14 +11,28 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 
+/// @title Pool
+/// @notice Merion's BTC-denominated tri-token AMM. Holds three
+///         8-decimal WBTC-like tokens, mints LP shares, charges a
+///         manager-controlled fee, pays MRN rent to LPs, and routes
+///         fees to the manager and to the protocol treasury.
 contract Pool is ERC20, Ownable, Pausable {
 
+  /// @notice First token of the pool's basket (e.g. WBTC).
   address public immutable token0;
+  /// @notice Second token of the pool's basket (e.g. cbBTC).
   address public immutable token1;
+  /// @notice Third token of the pool's basket (e.g. LBTC).
   address public immutable token2;
 
+  /// @notice Current reserves of the three basket tokens, in token
+  ///         units. Indexed 0/1/2 to match `token0/token1/token2`.
   uint72[3] public reserves;
+  /// @notice Lower band coefficient: any reserve must stay above
+  ///         `floor * sum / 100` after a swap.
   uint8 public constant floor = 13;
+  /// @notice Upper band coefficient: any reserve must stay below
+  ///         `ceiling * sum / 100` after a swap.
   uint8 public constant ceiling = 53;
 
   // Slot packing : uint16 feeNum + uint32 lastSetFeeEpoch partagent UN slot de
@@ -31,22 +45,55 @@ contract Pool is ERC20, Ownable, Pausable {
   // Aucune fonction n'écrit ce slot au passage d'epoch : la lecture passe par le
   // reset paresseux, feeInForce() rend NOMINAL_FEE_NUM dès que lastSetFeeEpoch
   // diffère de currentEpoch().
+  /// @notice Base fee numerator for the current epoch, in units of
+  ///         `FEE_DEN`. Reset lazily to `NOMINAL_FEE_NUM` once the
+  ///         epoch advances; see `feeInForce`.
   uint16 public feeNum;
+  /// @notice Epoch number at which `feeNum` was last written by the
+  ///         manager. Compared against `currentEpoch` to decide
+  ///         whether the manager's override still applies.
   uint32 public lastSetFeeEpoch;
+  /// @notice Absolute maximum fee numerator (in `FEE_DEN` units)
+  ///         that any surcharge may reach: half of it caps the
+  ///         manager's per-epoch override.
   uint256 constant public MAX_FEE_NUM = 50;
+  /// @notice Fee denominator, i.e. basis points for fee math.
   uint256 constant public FEE_DEN = 10000;
+  /// @notice Surcharge multiplier applied to the base fee on
+  ///         imbalanced swaps (skew detection in
+  ///         `effectiveFeeNum`).
   uint256 constant public UNBALANCE_FACTOR = 2;
+  /// @notice Width, in basis points of `TOL_DEN`, of the dead-band
+  ///         around the balanced point. Below this width, the
+  ///         surcharge is not applied.
   uint256 constant public UNBALANCE_TOL_BPS = 200;
+  /// @notice Denominator of the imbalance tolerance.
   uint256 constant public TOL_DEN = 10000;
+  /// @notice Protocol share of the base fee, in basis points of
+  ///         `SPLIT_DEN` (10 %).
   uint256 constant public PROTOCOL_FEE_BPS = 1000;
+  /// @notice Denominator of the manager/protocol split.
   uint256 constant public SPLIT_DEN = 10000;
+  /// @notice Default base fee numerator applied at the start of
+  ///         every epoch, in `FEE_DEN` units, unless the manager
+  ///         overrides it inside the priority window.
   uint256 public immutable NOMINAL_FEE_NUM;
 
+  /// @notice Lower bound of the manager's allowed base-fee range,
+  ///         in `FEE_DEN` units.
   uint256 public immutable MIN_FEE_NUM;
 
+  /// @notice Unix timestamp of the pool's epoch 0 start.
   uint256 public immutable GENESIS;
+  /// @notice Duration of one epoch, in seconds.
   uint256 public immutable EPOCH_DURATION;
+  /// @notice Length of the priority window at the start of each
+  ///         epoch, in seconds, during which the manager may set
+  ///         the fee for that epoch.
   uint256 public immutable PRIORITY_WINDOW;
+  /// @notice Protocol treasury: the unique recipient of
+  ///         `claimProtocolFees` payouts. Immutable on purpose so
+  ///         the cash flow does not follow ownership changes.
   address public immutable treasury;
   // I.4 — MRN que le Pool doit connaitre pour transferer le loyer
   // accumule en MRN aux LP via `claimRent`. L'Auction a deja sa
@@ -55,9 +102,18 @@ contract Pool is ERC20, Ownable, Pausable {
   // a un changement de token MRN entre Pool et Auction seulement
   // si le deploiement est incoherent — c'est une garde de plus
   // contre un couplage mal assemble.
+  /// @notice Address of the MRN token used to pay LP rent.
+  /// @dev Captured at deployment as an additional guard against a
+  ///      mismatched Pool/Auction wiring: any inconsistency between
+  ///      the two contracts surfaces here.
   address public immutable mrn;
 
+  /// @notice Manager elected for a given future epoch, set by the
+  ///         auction via `setManager`. Indexed by epoch number.
   mapping(uint256 epoch => address) public managerOf;
+  /// @notice Address of the auction contract allowed to call
+  ///         `setManager`, `setFee`, and `notifyRent`. Set once by
+  ///         the owner via `setAuction` and never changed.
   address public auction;
 
   // I.2 — sortie des reserves : deux registres, l'un par gestionnaire
@@ -65,7 +121,12 @@ contract Pool is ERC20, Ownable, Pausable {
   // protocole. L'argent reste dans le pool tant que les fonctions de tirage
   // ne l'ont pas pousse vers le manager ou vers la tresorerie, et CEI tient
   // chaque tirage : remise a zero AVANT le transfert.
+  /// @notice Outstanding base-fee credits owed to each manager,
+  ///         per token index. Pulled by `claimManagerFees`.
   mapping(address manager => uint256[3]) public feesOwed;
+  /// @notice Outstanding base-fee credits owed to the protocol
+  ///         treasury, per token index. Pulled by
+  ///         `claimProtocolFees`.
   uint256[3] public protocolFeesOwed;
 
   // I.4 — loyer LP : un accumulateur `accPerShare` echelonne par 1e18,
@@ -74,62 +135,194 @@ contract Pool is ERC20, Ownable, Pausable {
   // `pending = balance * accPerShare / 1e18 - rentDebt`. La mise a jour
   // est paresseuse, declenchee par chaque touch (`_update`, `notifyRent`,
   // `claimRent`), jamais par une boucle sur les LP.
+  /// @notice Lazy rent accumulator, scaled by 1e18. Holds the
+  ///         per-share accrued rent; LPs compute their share as
+  ///         `balance * accPerShare / 1e18`.
   uint256 public accPerShare;
+  /// @notice Current rent emission rate, scaled by 1e18, valid
+  ///         between `rentLastUpdate` and `rentEnd`.
   uint256 public rentRate;
+  /// @notice Unix timestamp at which the current rent stream ends.
   uint256 public rentEnd;
+  /// @notice Last timestamp at which `accPerShare` was advanced
+  ///         against `block.timestamp`.
   uint256 public rentLastUpdate;
+  /// @notice MRN accumulated while the pool had no live LPs (only
+  ///         the dead-address minimum-liquidity shares). Folded
+  ///         into the next stream when LPs return.
   uint256 public rentLeftOver;
+  /// @notice Per-address pending rent credit, captured by `_update`
+  ///         when shares move.
   mapping(address => uint256) public rentPending;
+  /// @notice Per-address rent debt, the checkpoint of
+  ///         `balance * accPerShare / 1e18` at the last touch.
   mapping(address => uint256) public rentDebt;
 
+  /// @notice Minimum amount of LP shares permanently locked to the
+  ///         dead address on the first liquidity add, to prevent
+  ///         the empty-pool share-price attack.
   uint256 constant public MINIMUM_LIQUIDITY = 1000;
 
+  /// @notice Deployment: `nominalFeeNum * UNBALANCE_FACTOR` exceeds
+  ///         `MAX_FEE_NUM`, which would let a surcharge breach the
+  ///         absolute cap.
   error FeeTooHigh();
+  /// @notice Deployment: the manager fee band is empty because
+  ///         `minFeeNum * UNBALANCE_FACTOR` already exceeds
+  ///         `MAX_FEE_NUM`.
   error EmptyFeeBand();
+  /// @notice Deployment: `epochDuration` is zero, which would make
+  ///         `currentEpoch` divide by zero.
   error ZeroEpochDuration();
+  /// @notice Deployment: `priorityWindow` is greater than
+  ///         `epochDuration`; the priority window would never end
+  ///         inside an epoch.
   error PriorityWindowTooLong();
+  /// @notice Slippage guard: the realised output (or minted share
+  ///         amount) is below the caller's minimum tolerance.
   error BadSlippage();
+  /// @notice A `uint72`-tracked reserve would overflow after the
+  ///         current operation. Defensive guard on swaps and
+  ///         add-liquidity.
   error ReserveOverflow();
+  /// @notice `swap` asked to remove more of the output token than
+  ///         the pool currently holds.
   error InsufficientReserve();
+  /// @notice A swap, add-liquidity, or quote produced a zero
+  ///         output, which is never acceptable.
   error ZeroOutput();
+  /// @notice `removeLiquidity` was called while the pool has no
+  ///         live supply.
   error NotBootstrapped();
+  /// @notice Post-swap reserve of `tokenIndex` fell below the
+  ///         `floor` band.
+  /// @param tokenIndex The token whose reserve breached the floor.
   error FloorTouched(uint256 tokenIndex);
+  /// @notice Post-swap reserve of `tokenIndex` rose above the
+  ///         `ceiling` band.
+  /// @param tokenIndex The token whose reserve breached the ceiling.
   error CeilingTouched(uint256 tokenIndex);
+  /// @notice `setManager` was called by neither the auction nor the
+  ///         owner (the owner only when the auction is unset).
   error NotAuctionOrOwner();
+  /// @notice `setManager` was called for an epoch that has already
+  ///         started, or for the current one.
   error EpochAlreadyStarted();
+  /// @notice `setManager` was called with the zero address.
   error ZeroManager();
+  /// @notice `setManager` was called twice for the same epoch.
   error ManagerAlreadySet();
+  /// @notice `setAuction` was called while `auction` is already set.
   error AuctionAlreadySet();
+  /// @notice `setFee` was called by an address that is not the
+  ///         current epoch's manager.
   error NotManager();
+  /// @notice `setFee` was called outside the priority window.
   error OutsidePriorityWindow();
+  /// @notice `setFee` was already called during the current epoch
+  ///         by the same manager.
   error FeeAlreadySetThisEpoch();
   // Seule erreur de setFee à porter des arguments : c'est la seule dont
   // l'appelant ne peut pas dériver la cause sans lire deux constantes.
+  /// @notice The manager-provided fee numerator is outside the
+  ///         allowed `[min, max]` band.
+  /// @param min The minimum allowed fee numerator (`MIN_FEE_NUM`).
+  /// @param max The maximum allowed fee numerator for this epoch
+  ///        (`MAX_FEE_NUM / UNBALANCE_FACTOR`).
   error FeeOutOfBand(uint256 min, uint256 max);
   // I.2 — appel d'un tirage alors que le registre est vide ; distincte de
   // BadSlippage parce que la cause n'est pas un seuil rate mais une
   // quantite nulle.
+  /// @notice `claimManagerFees` or `claimProtocolFees` was called
+  ///         for a token index with no accrued fees.
   error ZeroFeesOwed();
   // I.4 — notifyRent par un non-auction, claimRent sur un registre vide.
+  /// @notice `notifyRent` was called by an address that is not the
+  ///         configured auction.
   error NotAuction();
+  /// @notice `claimRent` was called by an LP that has no rent
+  ///         accrued or pending.
   error ZeroRentOwed();
+  /// @notice Deployment: the treasury address is the zero address.
   error InvalidTreasury();
+  /// @notice Deployment: two of the three basket tokens share the
+  ///         same address.
   error DuplicateToken();
+  /// @notice Deployment: one of the three basket tokens is the
+  ///         zero address.
   error InvalidTokenAddress();
+  /// @notice Deployment: one of the three basket tokens does not
+  ///         report 8 decimals.
   error InvalidTokenDecimals();
+  /// @notice Deployment: the MRN address is the zero address or
+  ///         collides with one of the basket tokens.
   error InvalidMrn();
 
+  /// @notice Emitted when the manager sets the base fee for the
+  ///         current epoch.
+  /// @param epoch The epoch the fee applies to.
+  /// @param manager The manager who set the fee.
+  /// @param oldFee The previous base-fee numerator.
+  /// @param newFee The new base-fee numerator.
   event FeeSet(uint256 indexed epoch, address indexed manager, uint256 oldFee, uint256 newFee);
+  /// @notice Emitted on every successful liquidity provision.
+  /// @param provider The address that received the LP shares.
+  /// @param amountsIn The three token amounts deposited.
+  /// @param mintedShares The amount of LP shares minted to the
+  ///        provider (dead-address mint excluded).
   event AddedLiquidity(address indexed provider, uint256[3] amountsIn, uint256 mintedShares);
+  /// @notice Emitted on every successful liquidity removal.
+  /// @param provider The address that burned LP shares.
+  /// @param amountsOut The three token amounts withdrawn.
+  /// @param burnedShares The amount of LP shares burned.
   event RemovedLiquidity(address indexed provider, uint256[3] amountsOut, uint256 burnedShares);
+  /// @notice Emitted on every successful swap.
+  /// @param swapper The address that initiated the swap.
+  /// @param indexIn The token index of the input side.
+  /// @param amountIn The input amount transferred in.
+  /// @param indexOut The token index of the output side.
+  /// @param amountOut The output amount transferred out.
   event Swapped(address indexed swapper, uint256 indexed indexIn, uint256 amountIn, uint256 indexed indexOut, uint256 amountOut);
+  /// @notice Emitted when the auction nominates a manager for a
+  ///         future epoch.
+  /// @param epoch The epoch the manager is designated for.
+  /// @param manager The address chosen as manager.
   event ManagerSet(uint256 indexed epoch, address indexed manager);
   // I.4 — loyer LP : notification d'un nouveau stream de rent, avec
   // montant, taux par seconde (echelle 1e18) et timestamp de fin.
+  /// @notice Emitted when the auction notifies a new rent stream.
+  /// @param amount The MRN amount of the new stream (excluding any
+  ///        rolled-in `rentLeftOver`).
+  /// @param rate The new emission rate, scaled by 1e18.
+  /// @param end The unix timestamp at which the stream ends.
   event RentNotified(uint256 amount, uint256 rate, uint256 end);
   // I.4 — tirage du loyer LP : quand un LP reclame sa part.
+  /// @notice Emitted when an LP successfully claims accrued rent.
+  /// @param claimant The address that received the MRN.
+  /// @param amount The MRN amount transferred.
   event RentClaimed(address indexed claimant, uint256 amount);
 
+  /// @notice Deploys the pool, validates all immutable parameters,
+  ///         and seeds `feeNum` to the nominal value.
+  /// @dev Performs the deployment-time guards in the following
+  ///      order: fee-band sanity, non-zero epoch duration, priority
+  ///      window bounded by epoch duration, treasury non-zero,
+  ///      tokens non-zero and pairwise distinct, MRN non-zero and
+  ///      distinct from the basket tokens, and all three basket
+  ///      tokens reporting 8 decimals.
+  /// @param _tokens The three basket tokens (WBTC, cbBTC, LBTC or
+  ///        mocks).
+  /// @param _epochDuration Length of one epoch, in seconds.
+  /// @param _priorityWindow Length of the manager's fee-setting
+  ///        window at the start of each epoch.
+  /// @param _minFeeNum Lower bound of the manager's allowed
+  ///        base-fee numerator.
+  /// @param _nominalFeeNum Default base-fee numerator.
+  /// @param _treasury Protocol treasury, recipient of
+  ///        `claimProtocolFees` payouts.
+  /// @param _mrn Address of the MRN rent token.
+  /// @param _owner Initial owner of the pool (typically the
+  ///        deployer).
   constructor(
     address[3] memory _tokens,
     uint256 _epochDuration,
@@ -174,23 +367,45 @@ contract Pool is ERC20, Ownable, Pausable {
     require(IERC20Metadata(token2).decimals() == 8, InvalidTokenDecimals());
   }
 
+  /// @notice LP share decimals, fixed at 8 to match the basket tokens.
+  /// @return The number of decimals (8).
   function decimals() public pure override returns (uint8) {
     return 8;
   }
 
+  /// @notice Returns the current epoch derived from `GENESIS` and
+  ///         `EPOCH_DURATION`.
+  /// @return The current epoch number, zero-based.
   function currentEpoch() public view returns (uint256) {
     return (block.timestamp - GENESIS) / EPOCH_DURATION;
   }
 
+  /// @notice Returns the manager elected for the current epoch, or
+  ///         the zero address if none has been set.
+  /// @return The current epoch's manager address.
   function manager() public view returns (address) {
     return managerOf[currentEpoch()];
   }
 
+  /// @notice One-shot registration of the auction contract.
+  /// @dev Reverts with `AuctionAlreadySet` on any second call.
+  /// @param _auction Address of the auction contract allowed to
+  ///        call `setManager` and `notifyRent`.
   function setAuction(address _auction) external onlyOwner {
     require(auction == address(0), AuctionAlreadySet());
     auction = _auction;
   }
 
+  /// @notice Designates `_who` as the manager of a future epoch.
+  ///         Callable by the auction (normal path) or, before the
+  ///         auction is wired, by the owner.
+  /// @dev Reverts with `EpochAlreadyStarted` if the target epoch is
+  ///      not strictly in the future, with `ZeroManager` for the
+  ///      zero address, and with `ManagerAlreadySet` on duplicate
+  ///      nominations.
+  /// @param _epoch The epoch to set, strictly greater than
+  ///        `currentEpoch`.
+  /// @param _who The address to designate as manager.
   function setManager(uint256 _epoch, address _who) external {
     require(msg.sender == auction || (auction == address(0) && msg.sender == owner()), NotAuctionOrOwner());
     require(_epoch > currentEpoch(), EpochAlreadyStarted());
@@ -200,6 +415,11 @@ contract Pool is ERC20, Ownable, Pausable {
     emit ManagerSet(_epoch, _who);
   }
 
+  /// @notice Returns the base fee numerator currently in effect.
+  ///         Equals `feeNum` if the manager set it during the
+  ///         current epoch, otherwise the immutable
+  ///         `NOMINAL_FEE_NUM` (lazy reset).
+  /// @return The active base fee numerator, in `FEE_DEN` units.
   function feeInForce() public view returns (uint256) {
     return lastSetFeeEpoch == currentEpoch() ? feeNum : NOMINAL_FEE_NUM;
   }
@@ -226,6 +446,17 @@ contract Pool is ERC20, Ownable, Pausable {
   // ecrit 0 en base ne peut pas rendre la piscine gratuite quand elle est
   // la plus desiquilibree. C'est ce que bunni-v2 faisait avec
   // max(amAmmSwapFee, surgeFee), voir build-auction.md 4.3 (1).
+  /// @notice Returns the fee numerator that should be applied to a
+  ///         swap from `_indexIn` to `_indexOut`, accounting for the
+  ///         directional surcharge when the pool is imbalanced.
+  /// @dev The surcharge applies when the input reserve exceeds the
+  ///      output reserve by more than `UNBALANCE_TOL_BPS`, and is
+  ///      floored at `NOMINAL_FEE_NUM * UNBALANCE_FACTOR` so a
+  ///      zero-base manager cannot make the pool free when it is
+  ///      most imbalanced.
+  /// @param _indexIn The token index of the input side.
+  /// @param _indexOut The token index of the output side.
+  /// @return The effective fee numerator, in `FEE_DEN` units.
   function effectiveFeeNum(uint256 _indexIn, uint256 _indexOut) public view returns (uint256) {
     uint256 base = feeInForce();
     uint72[3] memory cachedReserves = reserves;
@@ -258,6 +489,18 @@ contract Pool is ERC20, Ownable, Pausable {
   ///      garantit : un appel, une multiplication, une division.
   // I.2 — interface Curve. C'est la seule raison pour laquelle un
   // agregateur peut coter ce pool.
+  /// @notice Routing quote following the Curve `get_dy` convention:
+  ///         returns the swap output for a given input on the
+  ///         pre-swap state.
+  /// @dev Not an execution promise: no execution guards (bands,
+  ///      pause, zero-output, insufficient-reserve) are applied
+  ///      here. The view never reverts on a state that would make
+  ///      `swap` fail, which lets aggregators always receive a
+  ///      number and decide what to do with the impossibility.
+  /// @param _indexIn The token index of the input side.
+  /// @param _indexOut The token index of the output side.
+  /// @param _dx The input amount.
+  /// @return The expected output amount, before any slippage check.
   function get_dy(uint256 _indexIn, uint256 _indexOut, uint256 _dx) external view returns (uint256) {
     uint72[3] memory cachedReserves = reserves;
     uint256 effective = effectiveFeeNum(_indexIn, _indexOut);
@@ -277,6 +520,17 @@ contract Pool is ERC20, Ownable, Pausable {
   //
   // Pas de whenNotPaused, délibérément : la pause arrête ce qui déplace de la
   // valeur entre les jambes du pool, et setFee n'en déplace pas.
+
+  /// @notice Lets the current epoch's manager set the base fee
+  ///         numerator once, inside the priority window.
+  /// @dev Reverts with `NotManager` if the caller is not the
+  ///      current manager, with `OutsidePriorityWindow` if called
+  ///      outside the window, with `FeeAlreadySetThisEpoch` on a
+  ///      second call in the same epoch, and with `FeeOutBand` if
+  ///      the value falls outside `[MIN_FEE_NUM, MAX_FEE_NUM /
+  ///      UNBALANCE_FACTOR]`. Intentionally not gated by
+  ///      `whenNotPaused`: setting a fee does not move value.
+  /// @param _feeNum The new base-fee numerator, in `FEE_DEN` units.
   function setFee(uint256 _feeNum) external {
     require(msg.sender == manager(), NotManager());
     require((block.timestamp - GENESIS) % EPOCH_DURATION < PRIORITY_WINDOW, OutsidePriorityWindow());
@@ -302,9 +556,13 @@ contract Pool is ERC20, Ownable, Pausable {
     lastSetFeeEpoch = uint32(currentEpoch());
   }
 
+  /// @notice Pauses the value-moving entry points (`addLiquidity`,
+  ///         `swap`). Owner-only. Reverts if already paused.
   function pause() external onlyOwner {
     _pause();
   }
+  /// @notice Resumes the value-moving entry points. Owner-only.
+  ///         Reverts if already unpaused.
   function unpause() external onlyOwner {
     _unpause();
   }
@@ -319,6 +577,16 @@ contract Pool is ERC20, Ownable, Pausable {
     }
   }
 
+  /// @notice Adds liquidity to the pool against an anchor reserve.
+  /// @dev On the first add, mints `3 * _amount - MINIMUM_LIQUIDITY`
+  ///      shares to the caller and `MINIMUM_LIQUIDITY` to the dead
+  ///      address. On subsequent adds, mints shares proportionally
+  ///      to the anchor reserve. Pulls the three token amounts via
+  ///      `safeTransferFrom` after the mint.
+  /// @param _anchorIndex The reserve to anchor the deposit against.
+  /// @param _amount The amount of the anchor token to deposit.
+  /// @param _minShares Minimum LP shares the caller accepts.
+  /// @return mintedShares The LP shares minted to the caller.
   function addLiquidity(uint256 _anchorIndex, uint256 _amount, uint256 _minShares) external whenNotPaused returns (uint256 mintedShares) {
     // WBTC, LBTC and cbBTC all return true or revert on transferFrom, and none of them is a fee-on-transfer token: no need to check balanceOf
     uint256[3] memory amounts;
