@@ -22,6 +22,7 @@ export const wagmiAdapter = new WagmiAdapter({
   ssr: true,
   projectId,
   networks,
+  pollingInterval: { [baseSepolia.id]: 12_000, [hardhat.id]: 4_000 }, // épingle le défaut, plan §3 RPC
   transports: {
     [hardhat.id]: http('http://127.0.0.1:8545'),
     [baseSepolia.id]: http(baseRpcUrl)
