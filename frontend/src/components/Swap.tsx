@@ -11,10 +11,10 @@ import {useWriteContract, useConnection, usePublicClient} from 'wagmi';
 import { getQuote } from "@/lib/quoteSwap";
 import { shareBps } from "@/lib/quote";
 import Panel from '@/components/Panel';
-import { collectReadErrors } from "@/lib/readErrors";
 import { Button } from "@/components/ui/Button";
 import { StatusDot } from "@/components/ui/StatusDot";
 import { AppStateBoundary } from "@/components/ui/AppStateBoundary";
+import { ReadErrorBoundary } from "@/components/ui/ReadErrorBoundary";
 import { SwapDecompositionBar } from "@/components/SwapDecompositionBar";
 import { EXPECTED_CHAIN_ID } from '@/components/ui/deployment';
 import { formatAmount } from '@/components/ui/formatAmount';
@@ -69,50 +69,105 @@ const Swap = () => {
   const connection = useConnection();
   const userAddress = connection.address;
 
-  const failedReads = collectReadErrors([
-    {message: "Could not read the pool reserves.", error: errorReserves},
-    ...(reserveEntries ?? []).map((entry, i) => ({
-      message: `Could not read the ${tokensInfo[i].name} reserve.`,
-      error: entry?.error
-    })),
-    {message: "Could not read the effective fee.", error: errorFees},
-    {
-      message: `Could not read the effective fee ${tokensInfo[indexIn].name} → ${tokensInfo[indexOut].name}.`,
-      error: errorFor(indexIn, indexOut)
-    },
-    {message: "Could not read the pool constants.", error: errorConstants},
-    {message: "Could not read the fee denominator.", error: feeDenData?.error},
-  ]);
-  if (failedReads.length > 0) {
-    for (const r of failedReads) console.error('[Merion]', r.message, r.error);
-    const cause = failedReads.find((r) => r.error)?.error?.message ?? 'unknown';
-    return (
-      <AppStateBoundary
-        state={{
-          kind: 'error',
-          title: 'Could not read pool data',
-          description: `Unable to read the pool. ${failedReads.map((r) => r.message).join('; ')}`,
-          cause,
-        }}
-      />
-    );
-  }
+  return (
+    <ReadErrorBoundary
+      title="Could not read pool data"
+      description={(msgs) => `Unable to read the pool. ${msgs.join('; ')}`}
+      sources={[
+        {message: "Could not read the pool reserves.", error: errorReserves},
+        ...(entries ?? []).map((entry, i) => ({
+          message: `Could not read the ${tokensInfo[i].name} reserve.`,
+          error: entry?.error
+        })),
+        {message: "Could not read the effective fee.", error: errorFees},
+        {
+          message: `Could not read the effective fee ${tokensInfo[indexIn].name} → ${tokensInfo[indexOut].name}.`,
+          error: errorFor(indexIn, indexOut)
+        },
+        {message: "Could not read the pool constants.", error: errorConstants},
+        {message: "Could not read the fee denominator.", error: feeDenData?.error},
+      ]}
+    >
+      {connection.status === 'disconnected' ? (
+        <AppStateBoundary state={{ kind: 'wallet-not-connected' }} />
+      ) : connection.status === 'connected' && connection.chainId !== EXPECTED_CHAIN_ID ? (
+        <AppStateBoundary state={{ kind: 'wrong-network' }} />
+      ) : !reserves || effectiveFeeNum===undefined || !feeDen ? (
+        <AppStateBoundary state={{ kind: 'loading', title: 'Loading swap data…' }} />
+      ) : (
+        <SwapForm
+          indexIn={indexIn}
+          indexOut={indexOut}
+          setIndexIn={setIndexIn}
+          setIndexOut={setIndexOut}
+          side={side}
+          setSide={setSide}
+          typedAmount={typedAmount}
+          setTypedAmount={setTypedAmount}
+          tolerance={tolerance}
+          setTolerance={setTolerance}
+          isPending={isPending}
+          setIsPending={setIsPending}
+          error={error}
+          setError={setError}
+          userAddress={userAddress}
+          balanceInData={balanceInData}
+          balanceIn={balanceIn}
+          deployedPool={deployedPool}
+          publicClient={publicClient}
+          refetchBalances={refetchBalances}
+          refetchReserves={refetchReserves}
+          tokensInfo={tokensInfo}
+          reserves={reserves}
+          effectiveFeeNum={effectiveFeeNum}
+          feeDen={feeDen}
+        />
+      )}
+    </ReadErrorBoundary>
+  );
+}
 
-  if (connection.status === 'disconnected') {
-    return <AppStateBoundary state={{ kind: 'wallet-not-connected' }} />;
-  }
-  if (connection.status === 'connected' && connection.chainId !== EXPECTED_CHAIN_ID) {
-    return <AppStateBoundary state={{ kind: 'wrong-network' }} />;
-  }
-  if (!reserveEntries || effectiveFeeNum===undefined || !feeDen) {
-    return <AppStateBoundary state={{ kind: 'loading', title: 'Loading swap data…' }} />;
-  }
+type SwapFormProps = {
+  indexIn: 0 | 1 | 2;
+  indexOut: 0 | 1 | 2;
+  setIndexIn: (i: 0 | 1 | 2) => void;
+  setIndexOut: (i: 0 | 1 | 2) => void;
+  side: 'in' | 'out' | null;
+  setSide: (s: 'in' | 'out' | null) => void;
+  typedAmount: string;
+  setTypedAmount: (s: string) => void;
+  tolerance: string;
+  setTolerance: (s: string) => void;
+  isPending: boolean;
+  setIsPending: (b: boolean) => void;
+  error: string | null;
+  setError: (s: string | null) => void;
+  userAddress: `0x${string}` | undefined;
+  balanceInData: { result?: bigint; error?: Error } | undefined;
+  balanceIn: bigint | undefined;
+  deployedPool: `0x${string}`;
+  publicClient: ReturnType<typeof usePublicClient>;
+  refetchBalances: () => Promise<unknown>;
+  refetchReserves: () => Promise<unknown>;
+  tokensInfo: ReturnType<typeof useAddresses>['tokens'];
+  reserves: [bigint, bigint, bigint];
+  effectiveFeeNum: bigint;
+  feeDen: bigint;
+};
 
-  const reserves = reserveEntries.map((r) => r.result).filter((r) => r !== undefined);
+function SwapForm(props: SwapFormProps) {
+  const {
+    indexIn, indexOut, setIndexIn, setIndexOut, side, setSide,
+    typedAmount, setTypedAmount, tolerance, setTolerance,
+    isPending, setIsPending, error, setError, userAddress, balanceInData,
+    balanceIn, deployedPool, publicClient, refetchBalances, refetchReserves,
+    tokensInfo, reserves, effectiveFeeNum, feeDen
+  } = props;
+  const { mutateAsync } = useWriteContract();
 
   const {quote, reason} = getQuote({
-  userAsk: {side, typedAmount, indexIn, indexOut, toleranceInput: tolerance},
-  poolState: {reserves, effectiveFeeNum, feeDen}
+    userAsk: {side, typedAmount, indexIn, indexOut, toleranceInput: tolerance},
+    poolState: {reserves, effectiveFeeNum, feeDen}
   });
 
   // V.4/bug-race — `setIsPending(true)` est asynchrone, donc entre les

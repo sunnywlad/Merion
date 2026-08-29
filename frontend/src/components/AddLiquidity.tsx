@@ -8,11 +8,11 @@ import {mockWrappedBTCAbi, poolAbi} from '@/constants/abi';
 import {useWriteContract, useConnection, usePublicClient} from 'wagmi';
 import { getQuote } from "@/lib/quoteAddLiquidity";
 import Panel from "@/components/Panel";
-import { collectReadErrors } from "@/lib/readErrors";
 import { Button } from "@/components/ui/Button";
 import { StatusDot } from "@/components/ui/StatusDot";
 import { KpiCard } from "@/components/ui/KpiCard";
 import { AppStateBoundary } from "@/components/ui/AppStateBoundary";
+import { ReadErrorBoundary } from "@/components/ui/ReadErrorBoundary";
 import { EXPECTED_CHAIN_ID } from '@/components/ui/deployment';
 import { formatAmount } from '@/components/ui/formatAmount';
 
@@ -51,48 +51,22 @@ const AddLiquidity = () => {
   const connection = useConnection();
   const userAddress = connection.address;
 
-  const failedReads = collectReadErrors([
-    {message: "Failed to read the pool reserves.", error: errorReserves},
-    ...(reserveEntries ?? []).map((entry, i) => ({
-      message: `Failed to read the ${tokensInfo[i].name} reserve.`,
-      error: entry?.error
-    })),
-    {message: "Failed to read total LP shares.", error: supplyEntry?.error},
-    {message: "Failed to read minimum liquidity.", error: errorMinLiq},
-  ]);
-  if (failedReads.length > 0) {
-    for (const r of failedReads) console.error('[Merion]', r.message, r.error);
-    const cause = failedReads.find((r) => r.error)?.error?.message ?? 'unknown';
-    return (
-      <AppStateBoundary
-        state={{
-          kind: 'error',
-          title: 'Could not read pool data',
-          description: `Unable to read the pool. ${failedReads.map((r) => r.message).join('; ')}`,
-          cause,
-        }}
-      />
-    );
-  }
-
-  if (connection.status === 'disconnected') {
-    return <AppStateBoundary state={{ kind: 'wallet-not-connected' }} />;
-  }
-  if (connection.status === 'connected' && connection.chainId !== EXPECTED_CHAIN_ID) {
-    return <AppStateBoundary state={{ kind: 'wrong-network' }} />;
-  }
-  if (!reserveEntries || supply === undefined) return <AppStateBoundary state={{ kind: 'loading', title: 'Loading pool data…' }} />;
-  if (supply === 0n && minLiq === undefined) return <AppStateBoundary state={{ kind: 'loading', title: 'Loading minimum liquidity…' }} />;
-
-  const reserves = reserveEntries.map((r) => r.result).filter((r) => r !== undefined);
-  const {quote, reason} = getQuote({
-    anchor,
-    typedAmount,
-    toleranceInput: supply === 0n ? "" : tolerance,
-    reserves,
-    supply,
-    minLiq
-  });
+  // `getQuote` est gated par les mêmes conditions que les bornes
+  // d'état ci-dessous : quand le formulaire rend, `reserves` et
+  // `supply` (et `minLiq` pour le cas pool vide) sont définis, donc
+  // l'appel est valide. Hors formulaire, on rend un QuoteResult vide
+  // pour que `quote` et `reason` soient toujours du bon type.
+  const quoteResult = reserves && supply !== undefined && !(supply === 0n && minLiq === undefined)
+    ? getQuote({
+        anchor,
+        typedAmount,
+        toleranceInput: supply === 0n ? "" : tolerance,
+        reserves,
+        supply,
+        minLiq
+      })
+    : { quote: null, reason: null };
+  const {quote, reason} = quoteResult;
 
   const handleAdd = async () => {
     if (!userAddress || anchor === null || !quote || !publicClient) return;
@@ -141,115 +115,139 @@ const AddLiquidity = () => {
       : 'success';
 
   return (
-    <Panel title="Add Liquidity">
-      <div className="flex flex-col gap-4">
+    <ReadErrorBoundary
+      title="Could not read pool data"
+      description={(msgs) => `Unable to read the pool. ${msgs.join('; ')}`}
+      sources={[
+        {message: "Failed to read the pool reserves.", error: errorReserves},
+        ...(entries ?? []).map((entry, i) => ({
+          message: `Failed to read the ${tokensInfo[i].name} reserve.`,
+          error: entry?.error
+        })),
+        {message: "Failed to read total LP shares.", error: supplyEntry?.error},
+        {message: "Failed to read minimum liquidity.", error: errorMinLiq},
+      ]}
+    >
+      {connection.status === 'disconnected' ? (
+        <AppStateBoundary state={{ kind: 'wallet-not-connected' }} />
+      ) : connection.status === 'connected' && connection.chainId !== EXPECTED_CHAIN_ID ? (
+        <AppStateBoundary state={{ kind: 'wrong-network' }} />
+      ) : !reserves || supply === undefined ? (
+        <AppStateBoundary state={{ kind: 'loading', title: 'Loading pool data…' }} />
+      ) : supply === 0n && minLiq === undefined ? (
+        <AppStateBoundary state={{ kind: 'loading', title: 'Loading minimum liquidity…' }} />
+      ) : (
+        <Panel title="Add Liquidity">
+          <div className="flex flex-col gap-4">
 
-        <div className="flex flex-col gap-2">
-          {tokensInfo.map((token) => {
-            const i = Number(token.index) as 0 | 1 | 2;
-            const full =
-              anchor === i ? typedAmount : quote ? btcAmount(quote.computed[i]) : "";
+            <div className="flex flex-col gap-2">
+              {tokensInfo.map((token) => {
+                const i = Number(token.index) as 0 | 1 | 2;
+                const full =
+                  anchor === i ? typedAmount : quote ? btcAmount(quote.computed[i]) : "";
 
-            return (
-              <div key={token.name} className="flex items-center gap-3">
-                <label htmlFor={`add-${token.name}`} className="w-20 shrink-0 text-small text-cloud/80">
-                  {token.name}
-                </label>
-                <input
-                  className={`${inputClass} font-mono`}
-                  type="text"
-                  inputMode="decimal"
-                  id={`add-${token.name}`}
-                  value={full}
-                  disabled={isPending}
-                  onChange={(e) => {
-                    setTypedAmount(e.target.value);
-                    setAnchor(i);
-                    setError(null);
-                  }}/>
+                return (
+                  <div key={token.name} className="flex items-center gap-3">
+                    <label htmlFor={`add-${token.name}`} className="w-20 shrink-0 text-small text-cloud/80">
+                      {token.name}
+                    </label>
+                    <input
+                      className={`${inputClass} font-mono`}
+                      type="text"
+                      inputMode="decimal"
+                      id={`add-${token.name}`}
+                      value={full}
+                      disabled={isPending}
+                      onChange={(e) => {
+                        setTypedAmount(e.target.value);
+                        setAnchor(i);
+                        setError(null);
+                      }}/>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <label
+                htmlFor="add-tolerance"
+                className={`text-small ${isEmptyPool ? 'text-cloud/60' : 'text-cloud/80'}`}
+              >
+                Slippage tolerance (%)
+              </label>
+              <input
+                className={`${inputClass} font-mono`}
+                type="text"
+                inputMode="decimal"
+                id="add-tolerance"
+                placeholder={isEmptyPool ? "" : "0.5"}
+                value={isEmptyPool ? "" : tolerance}
+                disabled={isEmptyPool || isPending}
+                onChange={(e) => {setTolerance(e.target.value); setError(null)}}/>
+              {isEmptyPool && (
+                <p className="text-caption text-cloud/60">
+                  Empty pool: LP amount is fully determined, no slippage possible.
+                </p>
+              )}
+            </div>
+
+            {quote && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <KpiCard
+                  label="LP shares received (expected)"
+                  value={
+                    <span className="font-mono num-tabular">
+                      {btcAmount(quote.expected)}
+                      <span className="text-cloud/60 text-small"> LP</span>
+                    </span>
+                  }
+                />
+                <KpiCard
+                  label="LP shares received (minimum)"
+                  value={
+                    <span className="font-mono num-tabular">
+                      {btcAmount(quote.minExpected)}
+                      <span className="text-cloud/60 text-small"> LP</span>
+                    </span>
+                  }
+                />
               </div>
-            );
-          })}
-        </div>
+            )}
 
-        <div className="flex flex-col gap-2">
-          <label
-            htmlFor="add-tolerance"
-            className={`text-small ${isEmptyPool ? 'text-cloud/60' : 'text-cloud/80'}`}
-          >
-            Slippage tolerance (%)
-          </label>
-          <input
-            className={`${inputClass} font-mono`}
-            type="text"
-            inputMode="decimal"
-            id="add-tolerance"
-            placeholder={isEmptyPool ? "" : "0.5"}
-            value={isEmptyPool ? "" : tolerance}
-            disabled={isEmptyPool || isPending}
-            onChange={(e) => {setTolerance(e.target.value); setError(null)}}/>
-          {isEmptyPool && (
-            <p className="text-caption text-cloud/60">
-              Empty pool: LP amount is fully determined, no slippage possible.
-            </p>
-          )}
-        </div>
+            <div className="flex items-center gap-3">
+              <StatusDot
+                tone={quoteTone}
+                label={
+                  quoteTone === 'success'
+                    ? 'Quote ready'
+                    : quoteTone === 'danger'
+                      ? (reason ?? 'Quote rejected')
+                      : 'Awaiting quote'
+                }
+              />
+              <Button
+                level="primary"
+                onClick={handleAdd}
+                aria-busy={isPending || undefined}
+                disabled={isPending || !userAddress || !quote}>
+                {step !== null ? `Deposit in progress (${step + 1}/4)` : "Add Liquidity"}
+              </Button>
+            </div>
 
-        {quote && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <KpiCard
-              label="LP shares received (expected)"
-              value={
-                <span className="font-mono num-tabular">
-                  {btcAmount(quote.expected)}
-                  <span className="text-cloud/60 text-small"> LP</span>
-                </span>
-              }
-            />
-            <KpiCard
-              label="LP shares received (minimum)"
-              value={
-                <span className="font-mono num-tabular">
-                  {btcAmount(quote.minExpected)}
-                  <span className="text-cloud/60 text-small"> LP</span>
-                </span>
-              }
-            />
+            {reason && (
+              <p className="text-small text-warning" role="status">
+                {reason}
+              </p>
+            )}
+            {error && (
+              <p className="text-small text-danger" role="alert">
+                {error}
+              </p>
+            )}
           </div>
-        )}
-
-        <div className="flex items-center gap-3">
-          <StatusDot
-            tone={quoteTone}
-            label={
-              quoteTone === 'success'
-                ? 'Quote ready'
-                : quoteTone === 'danger'
-                  ? (reason ?? 'Quote rejected')
-                  : 'Awaiting quote'
-            }
-          />
-          <Button
-            level="primary"
-            onClick={handleAdd}
-            aria-busy={isPending || undefined}
-            disabled={isPending || !userAddress || !quote}>
-            {step !== null ? `Deposit in progress (${step + 1}/4)` : "Add Liquidity"}
-          </Button>
-        </div>
-
-        {reason && (
-          <p className="text-small text-warning" role="status">
-            {reason}
-          </p>
-        )}
-        {error && (
-          <p className="text-small text-danger" role="alert">
-            {error}
-          </p>
-        )}
-      </div>
-    </Panel>
+        </Panel>
+      )}
+    </ReadErrorBoundary>
   )
 }
 

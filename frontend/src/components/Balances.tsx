@@ -9,6 +9,7 @@ import { MRN_DECIMALS } from '@/constants/addresses';
 import { useAddresses } from '@/hooks/useAddresses';
 import AmountLine from '@/components/AmountLine';
 import { AppStateBoundary } from '@/components/ui/AppStateBoundary';
+import { ReadErrorBoundary } from '@/components/ui/ReadErrorBoundary';
 
 /**
  * Merion « Your position » — note d'inspiration §7, tâche 3.
@@ -52,25 +53,21 @@ export default function Balances() {
     );
   }
 
-  if (error || errorLp || errorR) {
-    const first = error ?? errorLp ?? errorR;
-    return (
-      <AppStateBoundary
-        state={{
-          kind: 'error',
-          title: 'Could not read your balances',
-          description: first?.message,
-        }}
-      />
-    );
-  }
-
   const sharePercent =
     dataLp !== undefined && supply && supply > 0n
       ? dataLp * 10000n / supply
       : undefined;
 
   return (
+    <ReadErrorBoundary
+      title="Could not read your balances"
+      description={(msgs) => msgs[0] ?? 'Unable to read your balances.'}
+      sources={[
+        { message: 'Failed to read your balances', error },
+        { message: 'Failed to read your LP shares', error: errorLp },
+        { message: 'Failed to read the pool total supply', error: errorR }
+      ]}
+    >
     <div className="flex flex-col gap-3">
       <Group label="Balances">
         {tokensInfo.map((token, i) => {
@@ -161,6 +158,7 @@ export default function Balances() {
         .
       </p>
     </div>
+    </ReadErrorBoundary>
   );
 }
 

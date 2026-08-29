@@ -15,15 +15,15 @@ import { useRefund } from '@/hooks/useRefund';
 import { useChainNow } from '@/hooks/useChainNow';
 import { nextMinimumBid, secondsLeft, formatCountdown } from '@/lib/mandateWindow';
 import { parseAmount } from '@/lib/parseAmount';
-import { collectReadErrors } from '@/lib/readErrors';
-import ReadErrors from '@/components/ReadErrors';
 import Panel from '@/components/Panel';
 import { Button } from '@/components/ui/Button';
+import { ReadErrorBoundary } from '@/components/ui/ReadErrorBoundary';
 
-const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 // Bande du gestionnaire : `MAX_FEE_NUM / UNBALANCE_FACTOR`, dérivée côté
 // contrat à la volée. Le facteur vit dans le contrat (constant), donc la
 // borne supérieure est calculée ici sans nouvelle lecture.
+
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const UNBALANCE_FACTOR = 2n;
 
 // I.6 — Panneau d'enchère : mêmes `Panel`/bordures/champs que le reste de la
@@ -85,13 +85,10 @@ export default function AuctionPanel() {
     );
   }
 
-  const failedReads = collectReadErrors([
-    { message: 'Failed to read the auction state', error: auction.error },
-    { message: 'Failed to read the auction constants', error: constants.error },
-    { message: 'Failed to read the current manager', error: managerNow.error },
-    { message: 'Failed to read the refund', error: refund.error }
-  ]);
-  if (failedReads.length > 0) return <ReadErrors sources={failedReads} />;
+  // R3/B.3 — Unification avec les 5 autres sites : on passe la borne
+  // d'erreur via `<ReadErrorBoundary>`, qui rend `AppStateBoundary`.
+  // Les sources lisent les hooks consommés en tête de composant, le
+  // panneau entier est gardé par la borne.
 
   const minNextBid = currentBid !== undefined
     && constants.minOpeningBid !== undefined
@@ -260,7 +257,17 @@ export default function AuctionPanel() {
   };
 
   return (
-    <Panel>
+    <ReadErrorBoundary
+      title="Could not read auction data"
+      description={(msgs) => `Unable to read the auction. ${msgs.join('; ')}`}
+      sources={[
+        { message: 'Failed to read the auction state', error: auction.error },
+        { message: 'Failed to read the auction constants', error: constants.error },
+        { message: 'Failed to read the current manager', error: managerNow.error },
+        { message: 'Failed to read the refund', error: refund.error }
+      ]}
+    >
+      <Panel>
       <p className='font-semibold pb-2'>Auction for the next mandate</p>
 
       <div>Mandate for sale: {sellingEpoch === undefined ? '—' : String(sellingEpoch)}</div>
@@ -396,5 +403,6 @@ export default function AuctionPanel() {
         {errors.setFee && <p className='text-xs pt-1 text-danger'>{errors.setFee}</p>}
       </div>
     </Panel>
+    </ReadErrorBoundary>
   );
 }
