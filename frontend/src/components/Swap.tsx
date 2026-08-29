@@ -18,25 +18,12 @@ import { ReadErrorBoundary } from "@/components/ui/ReadErrorBoundary";
 import { SwapDecompositionBar } from "@/components/SwapDecompositionBar";
 import { EXPECTED_CHAIN_ID } from '@/components/ui/deployment';
 import { formatAmount } from '@/components/ui/formatAmount';
+import { INPUT_CLASS_MONO, SELECT_CLASS } from '@/components/ui/formClasses';
 
 // II.2d — chaîne id du pool, miroir de constants/addresses.
-// Re-stylage des inputs natifs : fond Slate, bordure Cloud à 10 %, focus
-// Merion Blue 2 px (cf. brand book §7). Les valeurs monétaires passent en
-// `font-mono` pour respecter §4 du brand book.
-// py-1.5 : compaction uniforme des formulaires (cf. AddLiquidity).
-// `placeholder:text-cloud/60` : WCAG AA, le placeholder sinon tombe à
-// ~3.6:1 (cloud/40) sur Midnight.
-const inputClass =
-  'w-full rounded border border-cloud/10 bg-slate px-3 py-1.5 ' +
-  'text-code text-cloud placeholder:text-cloud/60 num-tabular ' +
-  'focus:outline-none focus:border-merion-blue focus:border-2 ' +
-  'disabled:opacity-50 disabled:cursor-not-allowed';
-
-const selectClass =
-  'shrink-0 rounded border border-cloud/10 bg-slate px-3 py-2 ' +
-  'text-body text-cloud ' +
-  'focus:outline-none focus:border-merion-blue focus:border-2 ' +
-  'disabled:opacity-50 disabled:cursor-not-allowed';
+// Re-stylage des inputs natifs (cf. brand book §7) ; les classes
+// `INPUT_CLASS_MONO` et `SELECT_CLASS` vivent dans `ui/formClasses.ts`
+// depuis R3/C.1.
 
 /** Formate un montant BTC wrappé (8 décimales on-chain) à 4 décimales
  *  affichées, sans grouping (note §4 « Montants en BTC wrappé »). */
@@ -258,7 +245,7 @@ function SwapForm(props: SwapFormProps) {
           <div className="flex items-stretch gap-2">
             <select
               aria-label="From token"
-              className={selectClass}
+              className={SELECT_CLASS}
               value={String(indexIn)}
               onChange={(e) => {setIndexIn(Number(e.target.value) as 0 | 1 | 2); setError(null)}}>
               {tokensInfo.map((token) => (
@@ -268,7 +255,7 @@ function SwapForm(props: SwapFormProps) {
               ))}
             </select>
             <input
-              className={`${inputClass} font-mono`}
+              className={INPUT_CLASS_MONO}
               type="text"
               inputMode="decimal"
               id="swap-amountIn"
@@ -300,7 +287,7 @@ function SwapForm(props: SwapFormProps) {
           <div className="flex items-stretch gap-2">
             <select
               aria-label="To token"
-              className={selectClass}
+              className={SELECT_CLASS}
               value={String(indexOut)}
               onChange={(e) => {setIndexOut(Number(e.target.value) as 0 | 1 | 2); setError(null)}}>
               {tokensInfo.map((token) => (
@@ -310,7 +297,7 @@ function SwapForm(props: SwapFormProps) {
               ))}
             </select>
             <input
-              className={`${inputClass} font-mono`}
+              className={INPUT_CLASS_MONO}
               type="text"
               inputMode="decimal"
               id="swap-amountOut"
@@ -329,7 +316,7 @@ function SwapForm(props: SwapFormProps) {
             Slippage tolerance (%)
           </label>
           <input
-            className={`${inputClass} font-mono`}
+            className={INPUT_CLASS_MONO}
             type="text"
             inputMode="decimal"
             id="swap-tolerance"

@@ -16,16 +16,14 @@ import { ReadErrorBoundary } from "@/components/ui/ReadErrorBoundary";
 import { EXPECTED_CHAIN_ID } from '@/components/ui/deployment';
 import Chevron from "@/components/ui/Chevron";
 import Disclosure from "@/components/ui/Disclosure";
+import { INPUT_CLASS_MONO } from "@/components/ui/formClasses";
 
 // II.2d — chaîne id du pool, miroir de constants/addresses.
-// py-1.5 : compaction uniforme des formulaires (cf. AddLiquidity).
-// `placeholder:text-cloud/60` : WCAG AA, le placeholder sinon tombe à
-// ~3.6:1 (cloud/40) sur Midnight.
-const inputClass =
-  'w-full rounded border border-cloud/10 bg-slate px-3 py-1.5 ' +
-  'text-code text-cloud placeholder:text-cloud/60 ' +
-  'focus:outline-none focus:border-merion-blue focus:border-2 ' +
-  'disabled:opacity-50 disabled:cursor-not-allowed';
+// `INPUT_CLASS_MONO` vit dans `ui/formClasses.ts` depuis R3/C.1.
+// `font-mono num-tabular` était précédemment ajouté au site d'appel
+// (`${inputClass} font-mono num-tabular`) — la divergence avec Swap et
+// AddLiquidity est résorbée : les deux classes sont désormais dans
+// `INPUT_CLASS_MONO`.
 
 /**
  * Merion remove liquidity — note d'inspiration §6 + §8.
@@ -168,7 +166,7 @@ const RemoveLiquidity = () => {
                         {token.name}
                       </label>
                       <input
-                        className={`${inputClass} font-mono num-tabular`}
+                        className={INPUT_CLASS_MONO}
                         type="text"
                         inputMode="decimal"
                         id={`rem-${token.name}`}
@@ -189,7 +187,7 @@ const RemoveLiquidity = () => {
                   LP shares to burn
                 </label>
                 <input
-                  className={`${inputClass} font-mono num-tabular`}
+                  className={INPUT_CLASS_MONO}
                   type="text"
                   inputMode="decimal"
                   id="rem-lpShares"
@@ -212,7 +210,7 @@ const RemoveLiquidity = () => {
                   Slippage tolerance (%)
                 </label>
                 <input
-                  className={`${inputClass} font-mono num-tabular`}
+                  className={INPUT_CLASS_MONO}
                   type="text"
                   inputMode="decimal"
                   id="rem-tolerance"

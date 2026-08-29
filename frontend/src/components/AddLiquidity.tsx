@@ -15,19 +15,10 @@ import { AppStateBoundary } from "@/components/ui/AppStateBoundary";
 import { ReadErrorBoundary } from "@/components/ui/ReadErrorBoundary";
 import { EXPECTED_CHAIN_ID } from '@/components/ui/deployment';
 import { formatAmount } from '@/components/ui/formatAmount';
+import { INPUT_CLASS_MONO } from '@/components/ui/formClasses';
 
 // II.2d — chaîne id du pool, miroir de constants/addresses.
-// py-1.5 (6 px) plutôt que py-2 (8 px) : compaction uniforme des
-// formulaires pour gagner la marge 1440×900 sur /pool. La note §2 borne
-// le padding interne d'un input entre 0.25 et 0.5 rem, on reste dans
-// la fenêtre (1.5/16 = 0.375 rem par côté).
-// `placeholder:text-cloud/60` : WCAG AA, le placeholder sinon tombe à
-// ~3.6:1 (cloud/40) sur Midnight.
-const inputClass =
-  'w-full rounded border border-cloud/10 bg-slate px-3 py-1.5 ' +
-  'text-code text-cloud placeholder:text-cloud/60 num-tabular ' +
-  'focus:outline-none focus:border-merion-blue focus:border-2 ' +
-  'disabled:opacity-50 disabled:cursor-not-allowed';
+// `INPUT_CLASS_MONO` vit dans `ui/formClasses.ts` depuis R3/C.1.
 
 /** BTC wrappé (8 décimales on-chain) à 4 décimales affichées. */
 const btcAmount = (v: bigint) =>
@@ -152,7 +143,7 @@ const AddLiquidity = () => {
                       {token.name}
                     </label>
                     <input
-                      className={`${inputClass} font-mono`}
+                      className={INPUT_CLASS_MONO}
                       type="text"
                       inputMode="decimal"
                       id={`add-${token.name}`}
@@ -176,7 +167,7 @@ const AddLiquidity = () => {
                 Slippage tolerance (%)
               </label>
               <input
-                className={`${inputClass} font-mono`}
+                className={INPUT_CLASS_MONO}
                 type="text"
                 inputMode="decimal"
                 id="add-tolerance"
