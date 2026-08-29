@@ -32,6 +32,8 @@ export function useEffectiveFees() {
       functionName: 'effectiveFeeNum',
       args: [BigInt(i), BigInt(j)]
     } as const)),
+    // lisse les allers-retours onglet, plan §6 RPC
+    query: { staleTime: 5_000 }
   });
 
   // Lecture par direction : ce que le formulaire de swap consomme. `undefined`

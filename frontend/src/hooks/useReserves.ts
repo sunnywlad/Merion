@@ -19,6 +19,8 @@ export function useReserves() {
         args: []
       }
     ] as const,
+    // lisse les allers-retours onglet, plan §6 RPC
+    query: { staleTime: 5_000 }
   })
   // R3/B.2 — Aplatissement typé en tuple `[r0, r1, r2] | undefined` :
   // les consommateurs lisent `reserves[0]`, `reserves[1]`, `reserves[2]`

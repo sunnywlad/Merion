@@ -13,7 +13,8 @@ export function useLpBalance() {
     abi: poolAbi,
     functionName: 'balanceOf',
     args: [address!],
-    query: { enabled: Boolean(address)}
+    // lisse les allers-retours onglet, plan §6 RPC
+    query: { enabled: Boolean(address), staleTime: 5_000 }
   })
 }
 // Le hook retourne directement le résultat de useReadContract, qui inclut

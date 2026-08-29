@@ -53,7 +53,8 @@ export function useUserBalances() {
         args: [userAddress!]
       }
     ] as const,
-    query: { enabled: Boolean(userAddress) }
+    // lisse les allers-retours onglet, plan §6 RPC
+    query: { enabled: Boolean(userAddress), staleTime: 5_000 }
   });
 
   const btcBalances = tokens.map((_, i) => data?.[i] as ReadEntry | undefined);
