@@ -578,7 +578,7 @@ de loyer. Le check est preserve.
 `+3,7 %`). Bytecode 10 945 octets (delta `+423`). Voir le trade-off en
 tete de section.
 
-### Lecture de procédure
+### Lecture de procedure
 
 Les optimizations `MrnFaucet.drip` et `Auction.placeBid` ne sont pas
 couvertes par le banc de gaz (le fichier `Pool.gas.t.sol` ne declenche
@@ -586,5 +586,165 @@ que les fonctions de `Pool.sol`). Les estimations inline sont
 theoriques et n'ont pas ete mesurees sur Hardhat 3. Si un jury
 interroge sur le gaz de l'enchere ou du faucet, les chiffres sont a
 prendre comme des ordres de grandeur, pas comme des releves.
+
+---
+
+## Jalon 6 — 2026-08-29 — R2-bis : `getReserves()` view dans Pool, batching de lectures dans Auction
+
+Une nouvelle API publique, ajoutee a `Pool.sol` strictement pour
+remplacer trois SLOADs cross-contract par un seul dans `Auction._settle`.
+L'optimisation avait ete evincee au jalon 5 (cf. section « Synthese des
+optimisations non retenues » ci-dessus, item « Ajout d'une fonction
+publique `getReserves()` ») parce que le brief R2 interdisait toute
+nouvelle API publique ; Wlad a invalide cette restriction le 2026-08-29,
+et l'optimisation est remise au programme.
+
+### Pool.sol — nouvelle vue `getReserves()`
+
+**Signature choisie :**
+
+```solidity
+function getReserves() external view returns (
+  uint256 reserve0,
+  uint256 reserve1,
+  uint256 reserve2
+)
+```
+
+**Pourquoi `external` plutot que `public`.** Aucune fonction interne de
+`Pool` n'a besoin de cette vue : la lecture du packing se fait par
+`_loadReserves()` (interne, retourne `uint72[3] memory` parce que les
+ecrivains du Pool veulent le type packe). Ajouter une `public` ne
+ferait que generer un wrapper `internal` -> `external` en memoire,
+inutile. `external` est strictement moins cher a l'entree (pas de
+copie vers la zone d'arguments).
+
+**Pourquoi un tuple, pas une struct `Reserves`.** `Pool` ne porte
+aucune struct `Reserves` aujourd'hui, et en creer une aurait ete une
+extension d'API plus large qu'un tuple (un nouveau type exporte dans
+l'ABI, un nom a maintenir, un consommateur off-chain a mettre a
+jour). Le tuple `(uint256, uint256, uint256)` est aligne sur le
+getter public existant `reserves(uint256)` : `reserve0` correspond a
+`reserves(0)` (token0 = WBTC), `reserve1` a `reserves(1)` (token1 =
+cbBTC), `reserve2` a `reserves(2)` (token2 = LBTC). L'ordre suit le
+packing interne et reste compatible avec le triplet
+`[r0, r1, r2]` deja emis par `Auction.Settled` depuis la v1.
+
+**Pourquoi `uint256` en sortie, pas `uint72`.** Le cast `uint72 ->
+uint256` est gratuit (zero-extend), et le caller (Auction) n'a pas a
+re-caster pour emettre l'event. Le `_loadReserves` interne garde
+`uint72[3]` parce que les ecrivains du Pool profitent du type packe
+pour les `unchecked` arithmetiques.
+
+**Pourquoi `unchecked` dans le corps.** Les decoupages `packed`,
+`packed >> 72`, `packed >> 144` sont bornes par la position du shift,
+pas par la valeur : aucun risque d'overflow sur le `uint72`. Meme
+justification que dans `_loadReserves`.
+
+**Coût d'execution :** 1 SLOAD (~100 gas warm, ~2 100 gas cold) sur
+le slot packe + 3 decoupages memoire (3 AND, 3 SHL/SHR, 3 MSTORE
+cote caller) ~= 200 gas utiles. Total realistic : ~2 600 gas warm
+au premier appel, ~200 gas warm aux suivants (slot deja chaud).
+
+### Auction.sol — `_settle` : 3 SLOADs -> 1 appel
+
+**Site modifie :** les trois lignes
+
+```solidity
+reservesAtClose[0] = uint256(pool.reserves(0));
+reservesAtClose[1] = uint256(pool.reserves(1));
+reservesAtClose[2] = uint256(pool.reserves(2));
+```
+
+sont remplacees par
+
+```solidity
+(uint256 r0, uint256 r1, uint256 r2) = pool.getReserves();
+emit Settled(pendingEpoch, manager, pendingAmount, fee, [r0, r1, r2]);
+```
+
+Aucune autre fonction d'Auction ne lit les reserves du Pool, donc le
+diff est strictement localise a `_settle`. La logique metier est
+identique au mot pres : meme ordre, meme valeurs, meme evenement
+emis. Le destructure `(r0, r1, r2)` produit trois locales `uint256`
+que l'event recoit sous forme de literal `[r0, r1, r2]`, valide pour
+un `uint256[3] memory`.
+
+**Estimation gas.** Cote Auction, l'ancien chemin etait 3 appels
+externes successifs a `pool.reserves(uint256)`. Chaque appel externe
+coutait : ~2 100 gas (warm CALL) + 1 SLOAD packe (~100 gas) + 2
+comparaisons + 1 SHL/SHR (selon l'index) + 1 cast + 1 return
+mecanique ~= 2 200 gas. Trois appels = ~6 600 gas au total. Le
+nouveau chemin est : 1 appel externe (~2 100 gas) + 1 SLOAD packe
+(~100 gas) + 3 decoupages memoire + 3 MSTORE vers les locales
++ 1 MLOAD par locale pour l'event ~= 2 300 gas. **Economies
+estimees : ~4 300 gas par `_settle`**, soit ~65 % du chemin de
+lecture. Cote Pool, la nouvelle vue `getReserves` n'est pas couverte
+par le banc de gaz ; l'economie est observee seulement cote Auction.
+
+### Pourquoi c'est safe
+
+**Aucun changement d'etat.** La fonction est `view` et ne declare
+aucun `storage` mutable ; l'EVM la traite comme un appel constant
+et n'execute aucun SSTORE, aucun LOG (autres que les events du
+caller).
+
+**Aucun revert possible.** Les decoupages par shift ne peuvent pas
+reverter ; les casts `uint72` ne peuvent pas reverter sur des
+valeurs deja packees par `_loadReserves` ; pas de condition, pas
+de boucle, pas de division. La fonction est droite au sens de la
+gasologie EVM.
+
+**Aucun couplage ajoute.** `Pool` reste ignorant de l'existence
+d'`Auction` ; `Auction` reste ignorant de l'implementation
+interne de `Pool` (il ne voit qu'un point d'entree public). Le
+nouveau getter ne cree aucune dependance cyclique, aucun
+re-entry path (une `view` n'est jamais re-entrante au sens EVM
+puisqu'elle ne touche pas l'etat).
+
+**Determinisme preserve.** Les trois sorties sont strictement
+egales aux sorties de `reserves(0)`, `reserves(1)`, `reserves(2)`
+appelees sur le meme bloc : elles lisent toutes le meme slot
+packe, et le decoupage est l'inverse du packing. Le triplet emis
+dans l'event `Settled` est identique bit-a-bit au triplet emis
+par la v1.
+
+**ABI additive, pas breaking.** Un consommateur off-chain qui
+n'appelle pas `getReserves` n'est pas affecte. Un consommateur qui
+appellait `reserves(i)` en boucle voit son chemin inchangé. Le
+nouveau getter est strictement en plus.
+
+### Alternatives ecartees
+
+**Struct `Reserves` + `returns (Reserves memory)`.** Aurait impose
+un nouveau type dans l'ABI, un nom a maintenir, et un consommateur
+off-chain a mettre a jour pour profiter de la nouvelle forme. Le
+tuple est strictement equivalent en information, sans la dette de
+maintenance d'un type nomme. Reserve au jour ou un quatrieme champ
+(prix implicite, ratio, timestamp) devient utile — pas avant.
+
+**Lecture directe du slot packe par l'Auction (`staticcall` +
+`eth_getStorageAt`).** Impossible on-chain : un smart contract ne
+peut pas faire de `getStorageAt`. Hors-chain, l'event garde
+deja l'information ; un nouveau getter on-chain n'apporte rien.
+
+**Multi-call externe (Uniswap v2 `getReserves` style).** Pas
+pertinent ici : un seul contract est concerne, pas un panier de
+paires. Le pattern multi-call est utile quand le caller agrege
+plusieurs sources ; ici, un seul SLOAD suffit.
+
+**Mise en cache des reserves cote Auction.** L'Auction n'a pas
+de slot pour les recevoir, et `_settle` n'est pas sur le chemin
+chaud (il est appele une fois par mandat). Le batching par vue
+est strictement preferable a un cache memoire.
+
+### Mesure
+
+Hors banc de gaz (le fichier `Pool.gas.t.sol` ne declenche pas
+`_settle`). L'estimation est faite a partir des couts EVM unitaires
+(SLOAD warm, CALL warm, decoupages memoire) et des releves de
+gasostats anterieurs sur le chemin `_settle`. A confirmer par une
+mesure ciblee si un jury interroge.
+
 
 

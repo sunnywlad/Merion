@@ -727,12 +727,16 @@ contract Auction {
     // aucun storage de l'Auction : c'est l'evenement qui les porte, et
     // le seul consommateur de cette donnee est la couche historique
     // (front, retunage A2, M10 — voir build-auction.md 5.4 bis).
-    uint256[3] memory reservesAtClose;
-    reservesAtClose[0] = uint256(pool.reserves(0));
-    reservesAtClose[1] = uint256(pool.reserves(1));
-    reservesAtClose[2] = uint256(pool.reserves(2));
-
-    emit Settled(pendingEpoch, manager, pendingAmount, fee, reservesAtClose);
+    //
+    // R2-bis — UN seul appel `pool.getReserves()` au lieu de trois
+    // SLOADs cross-contract sur `pool.reserves(0/1/2)`. 1 SLOAD packe
+    // cote Pool + 3 decoupages memoire cote Auction, contre 3 SLOADs
+    // warm + 3 fois l'overhead d'appel externe. Ordre preserve :
+    // `[r0, r1, r2]` = `[WBTC, cbBTC, LBTC]`, identique au triplet
+    // precedent, identique a l'ordre historique des evenements
+    // `Settled` emis sur la v1. La logique metier n'est pas touchee.
+    (uint256 r0, uint256 r1, uint256 r2) = pool.getReserves();
+    emit Settled(pendingEpoch, manager, pendingAmount, fee, [r0, r1, r2]);
 
     // Remise a zero. L'event est emis AVANT la remise a zero pour que
     // l'event porte la valeur encore valide, pas le zero qui suit.

@@ -408,6 +408,39 @@ contract Pool is ERC20, Ownable, Pausable {
     revert InvalidReserveIndex();
   }
 
+  // R2-bis — vue de batch des trois reserves en un seul appel. Concu
+  // pour les consommateurs externes (Auction._settle) qui lisent
+  // `reserves(0/1/2)` separement, chacun payant un SLOAD warm
+  // cross-contract (~2 100 gas chacun). Un seul SLOAD sur le slot
+  // packe + trois decoupages en memoire cote caller, soit ~2 600 gas
+  // au total contre ~7 800. Le pattern de lecture reste strictement
+  // identique a `_loadReserves` (meme decoupage, meme `unchecked`),
+  // seule la surface publique change : `uint256` au lieu de `uint72`
+  // pour eviter au caller de re-caster. ABI tuple, pas de struct,
+  // pour rester compatible avec le pattern d'appel off-chain qui
+  // attend deja 3 valeurs positionnelles alignees sur `reserves(i)`.
+  /// @notice Returns the three basket reserves in a single external
+  ///         call. Equivalent to calling `reserves(0)`, `reserves(1)`
+  ///         and `reserves(2)` separately, but cheaper: one
+  ///         cross-contract SLOAD on the packed slot plus three
+  ///         in-memory shifts, instead of three cross-contract
+  ///         SLOADs. Index-aligned with `reserves(uint256)` and with
+  ///         `token0/token1/token2`.
+  /// @dev View only, no state change. The shifts and the `uint72`
+  ///      casts are bounds-checked by the shift count (no overflow
+  ///      possible), so the block is `unchecked`.
+  /// @return reserve0 The reserve of `token0` (WBTC), in token units.
+  /// @return reserve1 The reserve of `token1` (cbBTC), in token units.
+  /// @return reserve2 The reserve of `token2` (LBTC), in token units.
+  function getReserves() external view returns (uint256 reserve0, uint256 reserve1, uint256 reserve2) {
+    uint256 packed = _reservesPacked;
+    unchecked {
+      reserve0 = uint256(uint72(packed));
+      reserve1 = uint256(uint72(packed >> 72));
+      reserve2 = uint256(uint72(packed >> 144));
+    }
+  }
+
   // I.2+R2 — helpers internes du packing de reserves. La lecture
   // prend UN SLOAD et peuple un `uint72[3] memory` (les casts
   // uint256→uint72 sont bornes par le shift, pas de risque
