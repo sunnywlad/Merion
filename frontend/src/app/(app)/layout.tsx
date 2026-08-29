@@ -1,3 +1,5 @@
+import Providers from '@/app/providers';
+import Navbar from '@/components/Navbar';
 import Sidebar from '@/components/Sidebar';
 import AuctionBar from '@/components/AuctionBar';
 import { ChainNowProvider } from '@/hooks/useChainNow';
@@ -5,8 +7,13 @@ import { ChainNowProvider } from '@/hooks/useChainNow';
 /**
  * Coquille applicative — groupe `(app)` (pas de segment d'URL).
  *
+ * C'est ici que vit le web3 : `Providers` (wagmi + react-query + AppKit)
+ * enveloppe tout le sous-arbre applicatif. La landing marketing, en
+ * `app/(marketing)/`, est en dehors de ce groupe et ne charge donc rien
+ * de tout ça — cf. plan perf-frontend §3, Étape C.
+ *
  * Structure — note d'inspiration §1 :
- *   [Navbar]                          ← `app/layout.tsx` racine, h-16
+ *   [Navbar]                          ← h-16, fixe en haut
  *   [Rail | Colonne principale]        ← outer flex
  *     Rail : 320 px (20 rem), bg-slate, padding interne, scrolle si jamais
  *     Colonne : 1fr, gouttière 24 px (1.5 rem)
@@ -31,18 +38,21 @@ export default function AppLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-1 min-h-0 py-6 pr-6 gap-5">
-      <Sidebar className="w-80 shrink-0" />
-      <ChainNowProvider>
-        <div className="flex flex-col flex-1 min-w-0 gap-5">
-          <AuctionBar />
-          <main className="flex-1 min-w-0 flex justify-center">
-            <div className="w-full max-w-[640px] flex flex-col gap-5">
-              {children}
-            </div>
-          </main>
-        </div>
-      </ChainNowProvider>
-    </div>
+    <Providers>
+      <Navbar />
+      <div className="flex flex-1 min-h-0 py-6 pr-6 gap-5">
+        <Sidebar className="w-80 shrink-0" />
+        <ChainNowProvider>
+          <div className="flex flex-col flex-1 min-w-0 gap-5">
+            <AuctionBar />
+            <main className="flex-1 min-w-0 flex justify-center">
+              <div className="w-full max-w-[640px] flex flex-col gap-5">
+                {children}
+              </div>
+            </main>
+          </div>
+        </ChainNowProvider>
+      </div>
+    </Providers>
   );
 }
