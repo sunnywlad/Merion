@@ -1,5 +1,6 @@
 import Sidebar from '@/components/Sidebar';
 import AuctionBar from '@/components/AuctionBar';
+import { ChainNowProvider } from '@/hooks/useChainNow';
 
 /**
  * Coquille applicative — groupe `(app)` (pas de segment d'URL).
@@ -32,14 +33,16 @@ export default function AppLayout({
   return (
     <div className="flex flex-1 min-h-0 py-6 pr-6 gap-5">
       <Sidebar className="w-80 shrink-0" />
-      <div className="flex flex-col flex-1 min-w-0 gap-5">
-        <AuctionBar />
-        <main className="flex-1 min-w-0 flex justify-center">
-          <div className="w-full max-w-[640px] flex flex-col gap-5">
-            {children}
-          </div>
-        </main>
-      </div>
+      <ChainNowProvider>
+        <div className="flex flex-col flex-1 min-w-0 gap-5">
+          <AuctionBar />
+          <main className="flex-1 min-w-0 flex justify-center">
+            <div className="w-full max-w-[640px] flex flex-col gap-5">
+              {children}
+            </div>
+          </main>
+        </div>
+      </ChainNowProvider>
     </div>
   );
 }
