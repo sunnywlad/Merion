@@ -5,13 +5,12 @@ import { useAuctionState } from '@/hooks/useAuctionState';
 import { useAuctionConstants } from '@/hooks/useAuctionConstants';
 import { useEffectiveFees } from '@/hooks/useEffectiveFees';
 import { useManagerOf } from '@/hooks/useManagerOf';
-import { useRentPosition } from '@/hooks/useRentPosition';
+import { useClaimableRent } from '@/hooks/useClaimableRent';
 import { useConstants } from '@/hooks/useConstants';
 import { useChainNow } from '@/hooks/useChainNow';
 import { MRN_DECIMALS } from '@/constants/addresses';
 import { useAddresses } from '@/hooks/useAddresses';
 import { secondsLeft, formatCountdown } from '@/lib/mandateWindow';
-import { rentClaimable } from '@/lib/rentClaimable';
 import { collectReadErrors } from '@/lib/readErrors';
 import AmountLine from '@/components/AmountLine';
 import { MandateTimeline } from '@/components/MandateTimeline';
@@ -41,7 +40,7 @@ export default function MandatePanel() {
   const constants = useAuctionConstants();
   const fees = useEffectiveFees();
   const { feeDen: feeDenEntry, error: errorPoolConstants } = useConstants();
-  const rent = useRentPosition(user);
+  const rent = useClaimableRent(user);
 
   const currentEpoch = auction.currentEpoch?.status === 'success' ? auction.currentEpoch.result : undefined;
   const managerNow = useManagerOf(currentEpoch);
@@ -128,23 +127,7 @@ export default function MandatePanel() {
     lateWindow,
   });
 
-  const rentEntries = rent.data;
-  const rentValues = rentEntries?.every((entry) => entry.status === 'success')
-    ? rentEntries.map((entry) => entry.result as bigint)
-    : undefined;
-  const claimable = rentValues && now !== null
-    ? rentClaimable({
-        accPerShare: rentValues[0],
-        rentRate: rentValues[1],
-        rentEnd: rentValues[2],
-        rentLastUpdate: rentValues[3],
-        supply: rentValues[4],
-        balance: rentValues[5],
-        rentDebt: rentValues[6],
-        rentPending: rentValues[7],
-        now
-      })
-    : undefined;
+  const claimable = rent.data;
 
   const managerInOffice = managerNow.data;
   const hasManagerNow = managerInOffice !== undefined && managerInOffice !== ZERO_ADDRESS;
