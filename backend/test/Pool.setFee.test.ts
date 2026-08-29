@@ -268,10 +268,13 @@ describe("Pool.setFee", async function () {
         const { pool, manager, genesis } = fixture;
 
         await pool.write.setManager([1n, manager.account.address]);
-        await pool.write.setManager([2n, manager.account.address]);
 
         await callAt(epochStart(genesis, 1n));
         await pool.write.setFee([MANDATE_FEE_NUM], { account: manager.account });
+        // AUDIT F6 : la voie d'amorcage de l'owner est bornee a
+        // `currentEpoch() + 1`. La nomination du mandat 2 se fait donc
+        // depuis l'epoch 1, et non plus d'avance depuis l'epoch 0.
+        await pool.write.setManager([2n, manager.account.address]);
 
         await callAt(epochStart(genesis, 2n));
 
@@ -340,8 +343,13 @@ describe("Pool.setFee", async function () {
         const { pool, manager, otherManager, genesis } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
 
         await pool.write.setManager([1n, manager.account.address]);
-        await pool.write.setManager([2n, otherManager.account.address]);
+        // AUDIT F6 : la voie d'amorcage de l'owner est bornee a
+        // `currentEpoch() + 1`. Le mandat 2 est donc nomme UNE FOIS
+        // l'epoch 1 commencee. Le sujet du test est inchange :
+        // otherManager figure bien dans managerOf, mais pas a l'indice
+        // que manager() lit.
         await callAt(epochStart(genesis, 1n));
+        await pool.write.setManager([2n, otherManager.account.address]);
 
         await viem.assertions.revertWithCustomError(
           pool.write.setFee([MANDATE_FEE_NUM], { account: otherManager.account }),
@@ -464,10 +472,13 @@ describe("Pool.setFee", async function () {
         const { pool, manager, genesis } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
 
         await pool.write.setManager([1n, manager.account.address]);
-        await pool.write.setManager([2n, manager.account.address]);
 
         await callAt(epochStart(genesis, 1n));
         await pool.write.setFee([MANDATE_FEE_NUM], { account: manager.account });
+        // AUDIT F6 : la voie d'amorcage de l'owner est bornee a
+        // `currentEpoch() + 1`. La nomination du mandat 2 se fait donc
+        // depuis l'epoch 1, et non plus d'avance depuis l'epoch 0.
+        await pool.write.setManager([2n, manager.account.address]);
 
         await callAt(epochStart(genesis, 2n));
         await pool.write.setFee([SECOND_MANDATE_FEE_NUM], { account: manager.account });
@@ -594,13 +605,15 @@ describe("Pool.setFee", async function () {
         // pas le gestionnaire, ET la fenetre est fermee. C'est la premiere qui
         // parle.
         //
-        // Ce que ca etablit va plus loin que l'ordre : au mandat 0,
-        // lastSetFeeEpoch vaut 0 et currentEpoch() vaut 0, donc la garde
-        // d'unicite serait FAUSSE d'emblee et laisserait passer une ecriture.
-        // Elle ne le fait pas, parce que la garde d'acces referme avant — et
-        // c'est ce test-ci qui montre que la garde d'acces est bien la
-        // premiere. L'amorcage est ferme par du code, pas par une coincidence
-        // de valeurs.
+        // Ce que ca etablit va plus loin que l'ordre : c'est la garde
+        // d'acces qui ferme l'amorcage, pas une coincidence de valeurs sur
+        // la garde d'unicite. AUDIT F7 : avant le correctif, au mandat 0,
+        // lastSetFeeEpoch valait 0 et currentEpoch() valait 0, si bien que
+        // la garde d'unicite se retournait contre le gestionnaire legitime
+        // de la premiere epoch. Le constructeur pose desormais la sentinelle
+        // type(uint32).max ; la garde d'unicite est donc VRAIE au mandat 0,
+        // et ce test continue de montrer que la garde d'acces parle avant
+        // elle, ce qui ne depend d'aucune des deux valeurs.
         const { pool, deployer, manager, genesis } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
 
         await pool.write.setManager([1n, manager.account.address]);
@@ -799,10 +812,13 @@ describe("Pool.setFee", async function () {
         const { pool, manager, genesis } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
 
         await pool.write.setManager([1n, manager.account.address]);
-        await pool.write.setManager([2n, manager.account.address]);
 
         await callAt(epochStart(genesis, 1n));
         await pool.write.setFee([MANDATE_FEE_NUM], { account: manager.account });
+        // AUDIT F6 : la voie d'amorcage de l'owner est bornee a
+        // `currentEpoch() + 1`. La nomination du mandat 2 se fait donc
+        // depuis l'epoch 1, et non plus d'avance depuis l'epoch 0.
+        await pool.write.setManager([2n, manager.account.address]);
 
         await warpTo(epochStart(genesis, 2n));
 

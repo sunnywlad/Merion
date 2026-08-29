@@ -28,24 +28,32 @@ import {Auction} from "../contracts/Auction.sol";
 //   - `highBid`        : la mise en tete de l'enchere en cours.
 //
 // L'assertion est une EGALITE EXACTE : `held == owed + deadMrn`. Le solde MRN
-// de l'Auction depasse son passif on-chain d'un poste unique et mesurable : un
-// mandat capture par une reinitialisation `placeBid` dont l'epoch a deja
-// tourne ne pourra jamais etre regle (`_settle` -> `pool.setManager` revert
-// `EpochAlreadyStarted`) ; quand une SECONDE reinitialisation ecrase
+// de l'Auction depasse son passif on-chain d'un poste unique et mesurable.
+// AUDIT F1 : un mandat capture par une reinitialisation `placeBid` dont
+// l'epoch a deja tourne est desormais REGLABLE — `_settle` detecte l'epoch
+// perimee, credite integralement `refunds[pendingBidder]` et purge le slot,
+// la ou il revertait `EpochAlreadyStarted` a jamais. Ce MRN-la n'est donc
+// plus mort : il figure dans `pendingAmount` avant le reglement et dans
+// `refunds` apres, le passif on-chain le couvre des deux cotes. Le poste
+// residuel est ailleurs : quand une SECONDE reinitialisation ecrase
 // `pendingAmount` avec la mise de l'enchere suivante sans sortir l'ancienne
 // (`Auction.sol` placeBid (1) : la capture `pendingEpoch = sellingEpoch;
 // pendingAmount = highBid;` est inconditionnelle des lors que `highBidder !=
 // address(0)` au reset), le MRN de l'ancien pending reste immobilise dans
 // l'Auction sans obligation en face. Le handler ACCUMULE exactement ces
 // montants ecrases dans `deadMrn`, un par un, a l'instant ou la
-// reinitialisation les rend intracables. `owed + deadMrn` couvre alors la
-// totalite du solde au wei pres, et l'egalite devient discriminante : une
+// reinitialisation les rend intracables (la capture ecrase aussi
+// `pendingBidder`, donc plus personne ne peut reclamer l'ancien montant :
+// c'est ce que le correctif F1 ne repare PAS, et que ce compteur mesure).
+// `owed + deadMrn` couvre alors la totalite du solde au wei pres, et
+// l'egalite devient discriminante : une
 // mutation cote passif (retirer un `refunds[x] +=`, un `pendingAmount =`)
 // casse `held == owed + deadMrn` la ou un `>=` a marge croissante l'aurait
 // absorbee. `deadMrn` ne compte QUE du MRN reellement fige : la part 30/70 de
-// l'ancien pending n'a jamais ete extraite (`_settle` sur lui revert avant
-// tout mouvement) et ce pending n'etait deja plus reglable (son epoch <=
-// currentEpoch()). Aucun MRN encore reglable n'y entre.
+// l'ancien pending n'a jamais ete extraite (un `_settle` sur une epoch
+// perimee ne brule rien et ne verse aucun loyer) et son beneficiaire a ete
+// efface du slot par la capture suivante. Aucun MRN encore reglable ou
+// remboursable n'y entre.
 //
 // DEVIATION consignee (cf. brief I.6 et la fiche I.6-fuzzing-invariants) :
 // la fiche loge tout le Half B dans `Pool.invariant.t.sol`. I4 a son propre
@@ -79,18 +87,42 @@ import {Auction} from "../contracts/Auction.sol";
 //   settleWrapper       : Auction.NoBidToSettle       — aucun mandat en
 //     attente et aucune enchere courante a capturer (slot vide, degradation
 //     R7) ; c'est l'idempotence documentee de `settle`.
-//   settleWrapper       : Pool.EpochAlreadyStarted    — `_settle` appelle
-//     `pool.setManager(pendingEpoch, ...)` avec `pendingEpoch <=
-//     currentEpoch()` : le mandat capture par une reinitialisation `placeBid`
-//     a deja demarre. Garde I.1 du Pool (Pool.sol:187), degradation R7.
-//   settleWrapper       : Pool.ManagerAlreadySet      — un `settle` reussi a
-//     deja nomme le gestionnaire de cet epoch, puis de nouvelles mises sont
-//     tombees sur la MEME `sellingEpoch` (aucun warp entre les deux) et un
-//     second `settle` retente `pool.setManager` sur l'epoch deja pourvue.
-//     Garde I.1 du Pool (Pool.sol:189) : la protection du Pool contre une
-//     double nomination par l'enchere tient, l'Auction ne force rien.
-//     (Ajout au-dela de la liste du brief, meme famille que le point
-//     precedent : deuxieme revert Pool legitime sur le chemin `_settle`.)
+//   settleWrapper       : Auction.WindowStillOpen     — AUDIT F3. La
+//     capture d'une enchere VIVE exige desormais que la fenetre de mise
+//     du mandat vendu soit fermee (`block.timestamp >=
+//     startOfEpoch(sellingEpoch - 1) + auctionWindow`). Le fuzzer appelle
+//     `settle` a des instants quelconques, dont beaucoup tombent dans la
+//     fenetre : c'est un revert LEGITIME, la degradation attendue d'un
+//     bot qui regle trop tot. Le chemin de reglement d'un `pendingEpoch`
+//     deja capture n'est PAS soumis a cette garde.
+//   settleWrapper       : Pool.EpochAlreadyStarted    — CODE MORT depuis
+//     l'AUDIT F1. `_settle` intercepte lui-meme `pendingEpoch <=
+//     currentEpoch()` et rembourse au lieu d'appeler `setManager` ; et sur
+//     le chemin nominal `pendingEpoch == sellingEpoch == currentEpoch() +
+//     1`, strictement futur. Le `catch` est conserve comme garde
+//     defensive : si un futur changement retirait la branche perimee de
+//     `_settle`, ce revert redeviendrait atteignable et ne doit pas
+//     casser la campagne.
+//   settleWrapper       : Pool.ManagerAlreadySet      — CODE MORT, pour
+//     DEUX raisons distinctes qu'il faut tenir ensemble. (1) AUDIT F3 :
+//     une double nomination exigeait un second `settle` sur la MEME
+//     `sellingEpoch` apres de nouvelles mises ; or `settle` n'est accepte
+//     qu'une fois la fenetre fermee, et `placeBid` est refuse des ce meme
+//     instant (`WindowClosed`), donc aucune mise ne peut plus tomber sur
+//     une epoch deja reglee, les deux phases sont disjointes. (2) F3 ne
+//     suffit PAS a lui seul : une epoch strictement future peut avoir ete
+//     pourvue par la voie d'amorcage de l'owner, que F6 borne a
+//     `currentEpoch() + 1` sans la lui interdire. C'est `_settle` qui
+//     ferme ce second chemin, en traitant un `pendingEpoch` deja pourvu
+//     comme un mandat perime : remboursement et purge, jamais d'appel a
+//     `setManager`. `catch` defensif, meme raison que ci-dessus ; la
+//     garde du Pool reste couverte positivement par
+//     test/Pool.manager.test.ts, qui l'atteint par la voie owner en
+//     appelant `setManager` deux fois sur la meme epoch ; et le
+//     remboursement qui la rend inatteignable depuis l'enchere est
+//     epingle par AuctionAlreadyNominatedMandateTest
+//     (test/Auction.security.t.sol) et par AuctionManagerCouplingTest
+//     (contracts/Auction.t.sol), qui n'attendent plus de revert.
 //   withdrawRefundWrapper : Auction.NoBidToRefund     — l'acteur n'a aucun
 //     refund credite. Cas nominal d'un pull-only sur un registre vide.
 //
@@ -135,6 +167,9 @@ contract AuctionHandler is CommonBase, StdUtils, StdAssertions {
   uint256 public noBidToSettleCatches;
   uint256 public epochAlreadyStartedCatches;
   uint256 public managerAlreadySetCatches;
+  // AUDIT F3 : nouveau revert legitime sur `settle` (fenetre de mise
+  // encore ouverte). Voir la liste des selecteurs avales en entete.
+  uint256 public windowStillOpenCatches;
   uint256 public withdrawsOk;
   uint256 public noBidToRefundCatches;
   uint256 public warps;
@@ -293,6 +328,10 @@ contract AuctionHandler is CommonBase, StdUtils, StdAssertions {
         noBidToSettleCatches++;
         return;
       }
+      if (sel == Auction.WindowStillOpen.selector) {
+        windowStillOpenCatches++;
+        return;
+      }
       if (sel == Pool.EpochAlreadyStarted.selector) {
         epochAlreadyStartedCatches++;
         return;
@@ -438,25 +477,29 @@ contract AuctionInvariantTest is Test {
   // sans qu'aucun defaut reel n'existe. La couverture de ces deux
   // chemins est assuree par les tests deterministes a la fin de ce
   // fichier, qui les exercent explicitement :
-  //   - `test_handlerReachesResetAndStuckSettlePaths` : `resetsObserved >= 1`
+  //   - `test_handlerReachesResetAndExpiredSettlePaths` : `resetsObserved >= 1`
   //   - `test_handlerReachesRefundAndWithdrawPaths`  : `withdrawsOk == 1`
   // L'assertion structurelle au niveau run reste sur `placeBidsOk`, qui
   // est l'indicateur de vacuite, et l'indicateur de reellement.
   //
   // `settlesOk` (settle NOMINAL) n'est PAS asserte ici, et c'est structurel,
-  // pas un compromis de seuil. Un settle nominal exige `pendingEpoch == 0` au
-  // moment de l'appel ; or des la premiere reinitialisation `placeBid` qui
-  // porte un enchérisseur, le slot pending se remplit d'un mandat perime que
-  // `_settle` ne peut plus jamais vider (il revert `EpochAlreadyStarted` AVANT
-  // le zeroing), et chaque reinitialisation suivante ne fait que l'ecraser par
-  // un autre mandat perime. Le settle nominal n'existe donc que dans la
-  // fenetre initiale d'un run, avant la premiere reinitialisation portante :
-  // le fuzzer l'y touche de facon dependante de la graine, jamais dans tous
-  // les runs. Sa reachabilite est prouvee, elle, par
-  // `test_handlerReachesResetAndStuckSettlePaths` et
-  // `test_handlerReachesManagerAlreadySetPath`, qui asserts tous deux
-  // `settlesOk == 1` juste apres un `placeBidWrapper`. DEVIATION vs brief §1
-  // (qui en listait quatre), consignee au rapport.
+  // pas un compromis de seuil. AUDIT F3 : un settle nominal exige desormais
+  // DEUX coincidences a l'instant de l'appel — `pendingEpoch == 0` (sinon
+  // on part sur le chemin du slot capture) et une fenetre de mise deja
+  // fermee mais une epoch pas encore tournee, soit une cible de
+  // `epochDuration - auctionWindow` secondes qu'il faut atteindre avec un
+  // slot vide. `warpWrapper` promene le temps librement : le fuzzer y tombe
+  // de facon dependante de la graine, jamais dans tous les runs.
+  //
+  // AUDIT F1 : la raison invoquee ici auparavant n'est plus la bonne. Le
+  // slot pending n'est plus un cul-de-sac — `_settle` sait vider un mandat
+  // perime en remboursant son enchérisseur — mais la conclusion sur
+  // `settlesOk` tient, pour la raison de fenetre ci-dessus. Sa
+  // reachabilite est prouvee par
+  // `test_handlerReachesResetAndExpiredSettlePaths` et
+  // `test_aDoubleNominationIsStructurallyUnreachable`, qui asserts tous
+  // deux `settlesOk == 1`. DEVIATION vs brief §1 (qui en listait quatre),
+  // consignee au rapport.
   function afterInvariant() public view {
     assertGt(handler.placeBidsOk(), 0, "campagne vacue : aucune mise passee");
 
@@ -464,6 +507,7 @@ contract AuctionInvariantTest is Test {
     console.log("windowClosedCatches   ", handler.windowClosedCatches());
     console.log("settlesOk             ", handler.settlesOk());
     console.log("noBidToSettleCatches  ", handler.noBidToSettleCatches());
+    console.log("windowStillOpen       ", handler.windowStillOpenCatches());
     console.log("epochAlreadyStarted   ", handler.epochAlreadyStartedCatches());
     console.log("managerAlreadySet     ", handler.managerAlreadySetCatches());
     console.log("withdrawsOk           ", handler.withdrawsOk());
@@ -483,45 +527,78 @@ contract AuctionInvariantTest is Test {
 
   // close -> open : une enchere fermee laisse `highBid` en place, le premier
   // `placeBid` de l'epoch suivant capture ce montant dans `pendingAmount`
-  // puis remet `highBid` a zero. `settle` sur ce pending revert
-  // `EpochAlreadyStarted` (l'epoch a tourne). L'invariant tient a chaque pas.
-  function test_handlerReachesResetAndStuckSettlePaths() public {
+  // puis remet `highBid` a zero.
+  //
+  // AUDIT F1 + F3, deux changements dans ce test :
+  //   - le `warpWrapper(901)` avant le premier `settleWrapper` est
+  //     desormais EXIGE : `settle` refuse de capturer une enchere vive tant
+  //     que la fenetre de mise n'est pas fermee (`WindowStillOpen`). 901 s
+  //     est la premiere seconde apres `auctionWindow` (900 s), et
+  //     `bound(901, 1, 2 * epochDuration)` rend 901 tel quel.
+  //   - `settle` sur un pending perime ne revert plus
+  //     `EpochAlreadyStarted` : il rembourse integralement son
+  //     enchérisseur et purge le slot. C'est ce que le test epingle
+  //     maintenant, et c'est la propriete qui empeche l'enchere de mourir.
+  // L'invariant tient a chaque pas.
+  function test_handlerReachesResetAndExpiredSettlePaths() public {
     handler.placeBidWrapper(0, 0); // acteur 0 : mise plancher pour l'epoch 1
+    handler.warpWrapper(901); // ferme la fenetre de mise du mandat 1 (F3)
     handler.settleWrapper(); // settle nominal : managerOf[1] = acteur 0
     assertEq(handler.settlesOk(), 1, "un settle nominal doit passer");
     invariant_mrnCoversObligations();
 
-    handler.placeBidWrapper(1, 0); // acteur 1 : nouvelle mise, meme epoch 1
-    handler.warpWrapper(type(uint256).max); // +2 epochs -> currentEpoch 2
+    handler.placeBidWrapper(1, 0); // acteur 1 : mise sur le mandat suivant
+    handler.warpWrapper(type(uint256).max); // +2 epochs : le mandat d'acteur 1 perime
     handler.placeBidWrapper(2, 0); // reset close -> open, pending = mise acteur 1
     assertGe(handler.resetsObserved(), 1, "une transition close->open doit etre observee");
     invariant_mrnCoversObligations();
 
-    handler.settleWrapper(); // _settle -> pool.setManager(1,..) -> EpochAlreadyStarted
-    assertGe(
-      handler.epochAlreadyStartedCatches(),
-      1,
-      "settle d'un pending dont l'epoch a tourne doit reverter EpochAlreadyStarted"
+    uint256 pendingAmountBefore = auction.pendingAmount();
+    handler.settleWrapper(); // _settle -> branche perimee -> remboursement d'acteur 1
+
+    assertEq(
+      auction.refunds(handler.actors(1)),
+      pendingAmountBefore,
+      "F1 : le reglement d'un mandat perime doit rembourser integralement SON encherisseur"
     );
     invariant_mrnCoversObligations();
   }
 
-  // Un `settle` reussi nomme le gestionnaire de l'epoch. De nouvelles mises
-  // sur la MEME `sellingEpoch` (aucun warp) puis un second `settle` retentent
-  // `pool.setManager` sur l'epoch deja pourvue -> `ManagerAlreadySet`.
-  function test_handlerReachesManagerAlreadySetPath() public {
+  // AUDIT F3 : le chemin `ManagerAlreadySet` du handler est devenu
+  // structurellement INATTEIGNABLE, et ce test le prouve plutot que de
+  // l'affirmer. Une double nomination exigeait qu'une nouvelle mise tombe
+  // sur une `sellingEpoch` deja reglee. Or `settle` n'est accepte qu'a
+  // partir de `startOfEpoch(sellingEpoch - 1) + auctionWindow`, et
+  // `placeBid` est refuse a partir du MEME instant : apres un reglement,
+  // toute mise sur cette epoch heurte `WindowClosed`. Les deux phases sont
+  // disjointes, il n'y a donc plus de second `settle` a tenter. La garde
+  // `ManagerAlreadySet` du Pool reste couverte positivement par
+  // test/Pool.manager.test.ts, par la voie owner (deux `setManager` sur
+  // la meme epoch) : depuis l'AUDIT F1, aucun chemin de l'enchere ne
+  // l'atteint plus, `_settle` rembourse au lieu de nommer.
+  function test_aDoubleNominationIsStructurallyUnreachable() public {
     handler.placeBidWrapper(0, 0); // acteur 0 : mise pour l'epoch 1
+    handler.warpWrapper(901); // ferme la fenetre de mise (F3)
     handler.settleWrapper(); // settle nominal : managerOf[1] = acteur 0
     assertEq(handler.settlesOk(), 1, "un settle nominal doit passer");
 
-    handler.placeBidWrapper(1, 12345); // acteur 1 : nouvelle mise, meme epoch 1, pas de warp
-    handler.settleWrapper(); // _settle -> pool.setManager(1, acteur1) -> ManagerAlreadySet
-    assertGe(
-      handler.managerAlreadySetCatches(),
-      1,
-      "un second settle sur une epoch deja pourvue doit reverter ManagerAlreadySet"
-    );
-    invariant_mrnCoversObligations();
+    // La mise qui aurait rouvert la porte. Aucun warp : `sellingEpoch`
+    // vaut encore l'epoch tout juste reglee.
+    //
+    // Les deux lectures externes (`actors(1)`, `minOpeningBid()`) sont
+    // HISSEES avant les cheatcodes, et ce n'est pas cosmetique. Solidity
+    // evalue les arguments d'un appel AVANT l'appel lui-meme : ecrit
+    // `auction.placeBid(auction.minOpeningBid())`, le `staticcall` a
+    // `minOpeningBid()` devient le « prochain appel » que `vm.prank` et
+    // `vm.expectRevert` interceptent. Il ne revert pas, et le test echoue
+    // sur « next call did not revert as expected » sans avoir jamais
+    // atteint `placeBid`.
+    address bidder = handler.actors(1);
+    uint256 openingBid = auction.minOpeningBid();
+
+    vm.prank(bidder);
+    vm.expectRevert(Auction.WindowClosed.selector);
+    auction.placeBid(openingBid);
   }
 
   // Un encherisseur depasse est CREDITE dans `refunds` (jamais pousse), puis

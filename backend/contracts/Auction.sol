@@ -16,9 +16,25 @@ using SafeERC20 for IERC20;
 ///         manager, pays the LP rent, and burns the protocol share.
 /// @dev The pool's clock is snapshotted at construction so the two
 ///      contracts cannot drift. Manager nomination happens once per
-///      auction, inside `settle`, which must be called during the
-///      `bidSilence` window: past the epoch rollover the pool's
-///      `EpochAlreadyStarted` guard fires and the epoch runs unmanaged.
+///      auction, inside `settle`, which is only accepted once the
+///      bidding window of the epoch being sold has closed (F3 guard,
+///      see `settle`). A settlement that misses the epoch rollover is
+///      no longer a permanent brick: `_settle` detects the expired
+///      mandate and refunds the captured bidder (F1).
+///
+/// AUDIT F1/F2/F3 — trois failles corrigees dans ce fichier :
+///   F1 : un `pendingEpoch` perime faisait reverter `_settle` pour
+///        toujours (`Pool.EpochAlreadyStarted`), l'enchere etait morte
+///        et le MRN du gagnant capture etait piege sans aucun chemin de
+///        sortie. `_settle` rembourse desormais et purge le slot.
+///   F2 : `settle()` passait `highBidder` (le meneur de l'enchere
+///        COURANTE) a `_settle`, qui nommait donc le mauvais gagnant
+///        pour `pendingEpoch`. Le gagnant capture est maintenant
+///        memorise dans `pendingBidder`.
+///   F3 : `settle()` n'avait aucune garde temporelle : n'importe qui
+///        pouvait, dans une seule transaction, poser `minOpeningBid`
+///        puis regler, et rafler le mandat au prix plancher. La
+///        fermeture de la fenetre est desormais exigee.
 contract Auction {
 
   uint256 internal immutable genesis;
@@ -35,9 +51,15 @@ contract Auction {
   /// @notice Length of the settle window at the end of the epoch, in
   ///         seconds, during which the bot is expected to call
   ///         `settle` and nominate the manager.
-  /// @dev Not enforced on-chain at I.3: the A4 gate that would close
-  ///      bidding during this window is still a FIXME, so this value
-  ///      is read by off-chain callers only.
+  /// @dev F3: bidding is now effectively closed for the whole stretch
+  ///      between `startOfEpoch(sellingEpoch - 1) + auctionWindow` and
+  ///      the epoch rollover, because `placeBid` already refuses bids
+  ///      past `auctionWindow` (`WindowClosed`) and `settle` now
+  ///      refuses to run before it (`WindowStillOpen`). `bidSilence`
+  ///      remains a scheduling hint for the off-chain bot: it says how
+  ///      late in the epoch the bot should aim, not when the contract
+  ///      opens or closes. It is deliberately NOT the gate itself, so
+  ///      that a bot outage cannot shrink the settle window.
   uint256 public immutable bidSilence;
   /// @notice Minimum first bid of any new auction, in MRN (18 decimals).
   uint256 public immutable minOpeningBid;
@@ -95,6 +117,16 @@ contract Auction {
   /// @notice The winning bid amount waiting to be settled, in MRN
   ///         (18 decimals). Zero means no pending settlement.
   uint256 public pendingAmount;
+  /// @notice The winner of `pendingEpoch`, captured at the same instant
+  ///         as `pendingEpoch` and `pendingAmount`.
+  /// @dev F2: before this field existed, `settle()` handed `_settle` the
+  ///      CURRENT auction's `highBidder`. When the pending slot had been
+  ///      filled by a `placeBid` reset, that address had nothing to do
+  ///      with the mandate being settled: the last bidder of the live
+  ///      auction was nominated for someone else's epoch, and the real
+  ///      winner never appeared anywhere. The three pending fields are
+  ///      now written and purged as one unit, always together.
+  address public pendingBidder;
 
   /// @notice Outstanding refund credits, per address, in MRN
   ///         (18 decimals). Pulled by `withdrawRefund`.
@@ -114,6 +146,13 @@ contract Auction {
   /// @notice There is no winning bid awaiting settlement, and no live
   ///         auction to capture either.
   error NoBidToSettle();
+  /// @notice F3: `settle` was called while the bidding window of the
+  ///         epoch being sold is still open. Settling early would
+  ///         freeze the auction at the current high bid, since a
+  ///         second settlement on the same epoch is refused by the
+  ///         pool (`ManagerAlreadySet`).
+  /// @param closesAt The unix timestamp from which `settle` is allowed.
+  error WindowStillOpen(uint256 closesAt);
 
   /// @notice Emitted when a new highest bid is placed in the auction.
   /// @param epoch The epoch whose manager the bid is for.
@@ -149,6 +188,14 @@ contract Auction {
   /// @param reservesAtClose The three pool reserves read at settle
   ///        time, in token units.
   event Settled(uint256 indexed epoch, address indexed manager, uint256 clearingPrice, uint256 fee, uint256[3] reservesAtClose);
+  /// @notice F1: emitted when a pending settlement is abandoned because
+  ///         its epoch has already started. No manager is nominated, no
+  ///         MRN is burned, no rent is paid: the whole amount is
+  ///         credited back to the captured bidder's refund balance.
+  /// @param epoch The expired epoch that will run unmanaged.
+  /// @param bidder The captured winner, refunded in full.
+  /// @param amount The refunded amount in MRN (18 decimals).
+  event SettlementExpired(uint256 indexed epoch, address indexed bidder, uint256 amount);
 
   /// @notice Deploys the auction, snapshots the pool's `GENESIS` and
   ///         `EPOCH_DURATION` to keep the two clocks aligned, records
@@ -248,8 +295,12 @@ contract Auction {
     uint256 nextEpoch = currentEpoch() + 1;
     if (sellingEpoch != nextEpoch) {
       if (highBidder != address(0)) {
+        // F2: the three pending fields are written together. Capturing
+        // the epoch and the amount without the winner is what let
+        // `settle()` nominate the wrong address.
         pendingEpoch = sellingEpoch;
         pendingAmount = highBid;
+        pendingBidder = highBidder;
       }
       sellingEpoch = nextEpoch;
       highBid = 0;
@@ -291,33 +342,120 @@ contract Auction {
     emit RefundWithdrawn(msg.sender, owed);
   }
 
-  /// @notice Settles the winning bid: burns 30 % of `pendingAmount`,
-  ///         pays the caller a `SETTLE_REWARD_BPS` reward on the LP
-  ///         share, hands the rest to the pool as rent via
-  ///         `Pool.notifyRent`, and nominates the high bidder as
-  ///         the manager of `pendingEpoch`.
+  /// @notice Settles the pending winning bid: burns 30 % of
+  ///         `pendingAmount`, pays the caller a `SETTLE_REWARD_BPS`
+  ///         reward on the LP share, hands the rest to the pool as rent
+  ///         via `Pool.notifyRent`, and nominates `pendingBidder` as
+  ///         the manager of `pendingEpoch`. When no settlement is
+  ///         queued, first captures the live auction into the pending
+  ///         slot, which is only allowed once its bidding window has
+  ///         closed (`WindowStillOpen`). If `pendingEpoch` can no
+  ///         longer be nominated, nothing is burned or paid and the
+  ///         captured bidder is refunded in full (`SettlementExpired`).
   /// @dev Permissionless. Captures a live auction into the pending
   ///      slot if no previous settlement is queued. Not idempotent:
   ///      reverts with `NoBidToSettle` when there is nothing to
   ///      settle and no live auction either, which is what a second
   ///      consecutive call hits.
+  ///
+  ///      F3 — the capture branch now requires the bidding window of
+  ///      `sellingEpoch` to be closed. What was possible before: bid
+  ///      `minOpeningBid` and call `settle()` in the SAME transaction,
+  ///      at the first second of the window. The caller became manager
+  ///      of the next epoch at the floor price, and no one could outbid
+  ///      him any more, because a second `settle` on that epoch hits the
+  ///      pool's `ManagerAlreadySet`. The guard holds because
+  ///      `placeBid` refuses any bid at or after the very same instant
+  ///      (`WindowClosed`, strict `<` on the identical expression): the
+  ///      bidding phase and the settlement phase are now disjoint, so a
+  ///      settlement can never freeze a price that is still contestable.
+  ///
+  ///      The pending-settlement branch is deliberately NOT gated: a
+  ///      slot captured by a `placeBid` reset must stay drainable at any
+  ///      time, otherwise F1 would come back through the front door.
+  ///
+  ///      The capture MOVES the live auction into the pending slot: it
+  ///      writes the three pending fields AND zeroes `highBid` /
+  ///      `highBidder`. Zeroing here is not cosmetic, it is what makes
+  ///      the capture idempotent. Leaving the live auction in place
+  ///      would let a stale `sellingEpoch` (the bot never settled, the
+  ///      epoch rolled over) be captured, refunded by the expired
+  ///      branch of `_settle`, and then captured AGAIN by the next
+  ///      `settle()` call, crediting `refunds[highBidder] += highBid`
+  ///      once per call and draining the contract's MRN to anyone
+  ///      willing to spend the gas. The move also keeps the solvency
+  ///      invariant `balanceOf(this) == sum(refunds) + pendingAmount +
+  ///      highBid` true across the capture, exactly as the `placeBid`
+  ///      reset already does.
   function settle() external {
     if (pendingEpoch == 0 && pendingAmount == 0) {
       if (highBidder == address(0)) {
         revert NoBidToSettle();
       }
+      uint256 closes = startOfEpoch(sellingEpoch - 1) + auctionWindow;
+      require(block.timestamp >= closes, WindowStillOpen(closes));
       pendingEpoch = sellingEpoch;
       pendingAmount = highBid;
+      pendingBidder = highBidder;
+      highBid = 0;
+      highBidder = address(0);
     }
-    _settle(highBidder);
+    _settle();
   }
 
   /// @dev Splits `pendingAmount` 30 % burn / 70 % LP, pays the caller
   ///      the settle reward, pulls the remainder to the pool as rent,
   ///      nominates the manager, emits `Settled`, then clears both the
   ///      pending slot and the live auction state.
-  /// @param manager The bidder to designate for `pendingEpoch`.
-  function _settle(address manager) internal {
+  ///
+  ///      F1 — expired-mandate branch. `pendingEpoch` is written from
+  ///      `sellingEpoch`, and `sellingEpoch` is only ever assigned
+  ///      `currentEpoch() + 1`. So a `pendingEpoch` that differs from
+  ///      `currentEpoch() + 1` is necessarily STRICTLY BELOW it, i.e.
+  ///      `pendingEpoch <= currentEpoch()`. What was possible before:
+  ///      `pool.setManager(pendingEpoch, ...)` reverted
+  ///      `EpochAlreadyStarted`, the revert happened BEFORE the zeroing
+  ///      at the end of this function, so the slot was never purged and
+  ///      every later `settle()` replayed the same revert. The auction
+  ///      was dead for good, the rent stream stopped, and the captured
+  ///      winner's MRN sat in this contract with no exit at all
+  ///      (`refunds` was never credited for him).
+  ///
+  ///      The decision taken here: the mandate is simply LOST, the money
+  ///      goes back to its owner. Nothing is burned, no rent is paid,
+  ///      the epoch runs unmanaged at the nominal fee, and the live
+  ///      auction (`highBid` / `highBidder` / `sellingEpoch`) is left
+  ///      untouched so the next mandate keeps being contested. Refunding
+  ///      rather than re-auctioning is the conservative choice: the
+  ///      bidder paid for a mandate that no longer exists, and charging
+  ///      him for the bot's outage would be theft.
+  ///      The same branch also swallows a `pendingEpoch` that ALREADY
+  ///      has a manager. That state is reachable even after F6: the
+  ///      owner's bootstrap path may legitimately nominate
+  ///      `currentEpoch() + 1` before `setAuction` is wired, and the
+  ///      auction may then sell that very epoch. Without this arm,
+  ///      `pool.setManager` would revert `ManagerAlreadySet` before the
+  ///      zeroing at the end of this function — the F1 brick again,
+  ///      with a different trigger, holding the bidder's MRN hostage
+  ///      until the epoch rolls over. Folding it into the expired
+  ///      branch is what makes `Pool.ManagerAlreadySet` genuinely
+  ///      unreachable from the auction path, which is the claim
+  ///      `test/Auction.invariant.t.sol` rests on.
+  function _settle() internal {
+    uint256 epoch_ = pendingEpoch;
+    address manager = pendingBidder;
+
+    if (epoch_ <= currentEpoch() || pool.managerOf(epoch_) != address(0)) {
+      uint256 stranded = pendingAmount;
+      pendingEpoch = 0;
+      pendingAmount = 0;
+      pendingBidder = address(0);
+      refunds[manager] += stranded;
+      emit RefundCredited(manager, stranded);
+      emit SettlementExpired(epoch_, manager, stranded);
+      return;
+    }
+
     uint256 burnAmount = pendingAmount * BURN_BPS / SPLIT_DEN;
     uint256 lpAmount = pendingAmount - burnAmount;
     ERC20Burnable(address(mrn)).burn(burnAmount);
@@ -341,6 +479,7 @@ contract Auction {
 
     pendingEpoch = 0;
     pendingAmount = 0;
+    pendingBidder = address(0);
     highBid = 0;
     highBidder = address(0);
     sellingEpoch = currentEpoch() + 1;

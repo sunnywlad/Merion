@@ -11,11 +11,15 @@ import {Pool} from "../contracts/Pool.sol";
 // feeInForce() (Pool.sol:134-136) est INDISTINGUABLE d'un
 // `return NOMINAL_FEE_NUM` :
 //
-//   - lastSetFeeEpoch vaut 0 au deploiement, et le seul organe qui l'ecrive
-//     est setFee, qu'aucun test de ce fichier n'appelle ;
-//   - pendant l'epoch 0, la seule epoch ou la comparaison peut donc etre
-//     vraie, feeNum vaut exactement NOMINAL_FEE_NUM, pose par le
-//     constructeur (Pool.sol:100).
+//   - le seul organe qui ecrive lastSetFeeEpoch APRES le deploiement est
+//     setFee, qu'aucun test de ce fichier n'appelle ;
+//   - AUDIT F7 : le constructeur pose desormais la sentinelle
+//     type(uint32).max, une epoch que l'horloge n'atteindra jamais, donc
+//     la comparaison du ternaire est fausse a TOUTES les epochs tant que
+//     setFee n'a pas parle. Avant F7, lastSetFeeEpoch valait 0 et la
+//     comparaison etait vraie pendant l'epoch 0 — sans rien distinguer
+//     pour autant, feeNum y valant exactement NOMINAL_FEE_NUM, pose par
+//     le constructeur.
 //
 // Autrement dit, la branche "mandat courant" du ternaire n'est jamais prise
 // avec une valeur qui la distingue de l'autre branche. Une suite qui
@@ -83,8 +87,13 @@ abstract contract FeeInForceTestBase is Test, PoolTestBase {
       vm.store(address(pool), slot, original);
 
       if (bothMoved) {
+        // AUDIT F7 : au deploiement, `lastSetFeeEpoch` ne vaut plus 0
+        // mais la sentinelle `type(uint32).max` ("aucun tarif de mandat
+        // jamais pose"). Le zero par defaut etait un numero d'epoch
+        // REEL, qui coincidait avec l'epoch 0 et fermait `setFee` a son
+        // gestionnaire.
         require(
-          pool.feeNum() == uint16(pool.NOMINAL_FEE_NUM()) && pool.lastSetFeeEpoch() == 0,
+          pool.feeNum() == uint16(pool.NOMINAL_FEE_NUM()) && pool.lastSetFeeEpoch() == type(uint32).max,
           "sonde: l'etat n'a pas ete restaure apres le balayage"
         );
         return slot;
@@ -159,18 +168,24 @@ contract FeeInForcePackingTest is FeeInForceTestBase {
     // Le test precedent prouverait encore le partage si l'ordre etait inverse,
     // puisque _pack() et les getters se liraient alors de travers ensemble.
     // Ce test-ci lit le mot BRUT au deploiement, sans rien forger : le
-    // constructeur pose feeNum = NOMINAL_FEE_NUM et laisse lastSetFeeEpoch a
-    // 0, donc le slot doit valoir exactement NOMINAL_FEE_NUM, c'est-a-dire 5,
-    // et non 5 << 16 ni rien d'autre. Il fixe du meme coup que RIEN d'autre ne
-    // partage ce slot : les 240 bits hauts sont nuls.
+    // constructeur pose feeNum = NOMINAL_FEE_NUM et lastSetFeeEpoch =
+    // type(uint32).max (sentinelle F7), donc le slot doit valoir
+    // exactement `NOMINAL_FEE_NUM | (type(uint32).max << 16)`, et non
+    // l'inverse ni rien d'autre. Il fixe du meme coup que RIEN d'autre
+    // ne partage ce slot : les 208 bits hauts sont nuls.
+    //
+    // AUDIT F7 : avant le correctif, `lastSetFeeEpoch` restait a sa
+    // valeur par defaut et le mot valait exactement NOMINAL_FEE_NUM. La
+    // sentinelle occupe desormais les 32 bits qui suivent, ce qui rend
+    // ce test encore plus discriminant sur l'ORDRE des deux champs.
     bytes32 slot = _findFeeSlot();
 
     uint256 raw = uint256(vm.load(address(pool), slot));
 
     assertEq(
       raw,
-      pool.NOMINAL_FEE_NUM(),
-      "au deploiement le slot partage doit valoir exactement NOMINAL_FEE_NUM : feeNum en bits bas, lastSetFeeEpoch nul au-dessus, rien d'autre dans le mot"
+      pool.NOMINAL_FEE_NUM() | (uint256(type(uint32).max) << 16),
+      "au deploiement le slot partage doit valoir NOMINAL_FEE_NUM en bits bas et la sentinelle F7 sur les 32 bits suivants, rien d'autre dans le mot"
     );
   }
 
@@ -218,11 +233,15 @@ contract FeeInForceCurrentMandateTest is FeeInForceTestBase {
 
     // A) L'epoch est NON NULLE, deliberement
     //
-    // A l'epoch 0, lastSetFeeEpoch vaut deja 0 et la comparaison est vraie
-    // sans rien forger : un test pose la serait passe sur un contrat ou
-    // lastSetFeeEpoch ne serait jamais ecrit, ce qui est justement l'etat
-    // d'aujourd'hui. En se placant a l'epoch 3, la comparaison ne peut etre
-    // vraie que parce que le slot porte reellement 3.
+    // L'epoch 3 est choisie pour que la comparaison ne puisse etre vraie
+    // QUE parce que le slot porte reellement 3, et pour rester
+    // independante de la valeur initiale de lastSetFeeEpoch. Avant
+    // l'AUDIT F7 cette precaution etait indispensable : lastSetFeeEpoch
+    // valait 0 au deploiement, donc a l'epoch 0 la comparaison etait vraie
+    // sans rien forger et le test serait passe sur un contrat ou
+    // lastSetFeeEpoch n'aurait jamais ete ecrit. Depuis F7 la sentinelle
+    // type(uint32).max ferme ce faux positif a la source ; on garde
+    // l'epoch 3, qui prouve la meme chose sans dependre de la sentinelle.
     _warpToEpoch(MANDATE_EPOCH);
     _forgeFee(feeSlot, MANDATE_FEE_NUM, uint32(MANDATE_EPOCH));
   }

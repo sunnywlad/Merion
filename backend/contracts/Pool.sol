@@ -9,6 +9,7 @@ using SafeERC20 for IERC20;
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 
 /// @title Pool
@@ -20,7 +21,20 @@ import "@openzeppelin/contracts/utils/math/Math.sol";
 ///      the `reserves(uint256)` ABI-compatible getter. The fee is reset
 ///      lazily each epoch rather than written on rollover. `pause` gates
 ///      `addLiquidity` and `swap` only: exits and claims stay open.
-contract Pool is ERC20, Ownable, Pausable {
+///
+/// AUDIT F4/F5/F6/F7/F8 — cinq failles corrigees dans ce fichier :
+///   F4 : `addLiquidity` / `removeLiquidity` / `swap` sont desormais
+///        `nonReentrant` (voir `addLiquidity`).
+///   F5 : la rente qui s'ecoulait pendant que le pool n'a plus de LP
+///        vivant etait attribuee a l'adresse morte, donc perdue. Elle
+///        est reportee dans `rentLeftOver` (voir `_updateRent`).
+///   F6 : l'owner pouvait reserver toutes les epochs futures d'un coup
+///        (voir `setManager`).
+///   F7 : le gestionnaire de l'epoch 0 ne pouvait pas appeler `setFee`
+///        (voir le constructeur et `lastSetFeeEpoch`).
+///   F8 : la branche d'amorcage d'`addLiquidity` n'avait pas la garde
+///        d'overflow uint72 de la branche normale.
+contract Pool is ERC20, Ownable, Pausable, ReentrancyGuard {
 
   /// @notice First token of the pool's basket (e.g. WBTC).
   address public immutable token0;
@@ -48,6 +62,17 @@ contract Pool is ERC20, Ownable, Pausable {
   /// @notice Epoch number at which `feeNum` was last written by the
   ///         manager. Compared against `currentEpoch` to decide
   ///         whether the manager's override still applies.
+  /// @dev F7: seeded to `type(uint32).max` by the constructor as a
+  ///      "never set" sentinel. It used to be left at the default 0,
+  ///      which collides with epoch 0: the manager of the very first
+  ///      epoch got `FeeAlreadySetThisEpoch` without having written
+  ///      anything, and `feeInForce()` took the manager branch during
+  ///      that epoch on a value nobody had chosen. The sentinel is a
+  ///      real epoch number in theory, reached about 1.96 million years
+  ///      after `GENESIS`; if the chain ever got there, the only effect
+  ///      would be that this single epoch's manager cannot set a fee and
+  ///      the pool charges `feeNum` (which equals `NOMINAL_FEE_NUM`
+  ///      unless a manager wrote it). No value can be stolen either way.
   uint32 public lastSetFeeEpoch;
   /// @notice Absolute maximum fee numerator (in `FEE_DEN` units) that
   ///         any surcharge may reach. `MAX_FEE_NUM / UNBALANCE_FACTOR`
@@ -128,6 +153,13 @@ contract Pool is ERC20, Ownable, Pausable {
   /// @notice MRN accumulated while the pool had no live LPs (only
   ///         the dead-address minimum-liquidity shares). Folded
   ///         into the next stream when LPs return.
+  /// @dev Two sources feed it. `notifyRent` parks a whole settlement
+  ///      here when it lands on an already empty pool. F5 added the
+  ///      second: `_updateRent` parks the slice of a RUNNING stream
+  ///      that elapsed after the last LP exited, instead of letting
+  ///      `accPerShare` credit it to the dead address, where it was
+  ///      lost for good. Both are drained by the next `notifyRent`
+  ///      that finds a live supply.
   uint256 public rentLeftOver;
   /// @notice Per-address pending rent credit, captured by `_update`
   ///         when shares move.
@@ -190,6 +222,12 @@ contract Pool is ERC20, Ownable, Pausable {
   error ZeroManager();
   /// @notice `setManager` was called twice for the same epoch.
   error ManagerAlreadySet();
+  /// @notice F6: the owner's bootstrap path was used to nominate a
+  ///         manager further than one epoch ahead. The auction path is
+  ///         not subject to this bound.
+  /// @param maxEpoch The furthest epoch the owner may nominate, i.e.
+  ///        `currentEpoch() + 1`.
+  error OwnerEpochTooFar(uint256 maxEpoch);
   /// @notice `setAuction` was called while `auction` is already set.
   error AuctionAlreadySet();
   /// @notice `setFee` was called by an address that is not the
@@ -321,6 +359,10 @@ contract Pool is ERC20, Ownable, Pausable {
     mrn = _mrn;
 
     feeNum = uint16(_nominalFeeNum);
+    // F7: sentinelle "aucun tarif de mandat n'a jamais ete pose". Voir
+    // la NatSpec de `lastSetFeeEpoch`. Sans elle, le zero par defaut
+    // egale l'epoch 0 et ferme `setFee` au tout premier gestionnaire.
+    lastSetFeeEpoch = type(uint32).max;
 
     token0 = _tokens[0];
     token1 = _tokens[1];
@@ -417,12 +459,36 @@ contract Pool is ERC20, Ownable, Pausable {
   ///      not strictly in the future, with `ZeroManager` for the
   ///      zero address, and with `ManagerAlreadySet` on duplicate
   ///      nominations.
+  ///
+  ///      F6 — the owner's bootstrap path is bounded to
+  ///      `currentEpoch() + 1`. What was possible before: while
+  ///      `auction` is still the zero address, the owner could nominate
+  ///      a manager for ANY future epoch, as many times as he liked, and
+  ///      `managerOf` is write-once. A malicious owner reserved the next
+  ///      N epochs before wiring the auction; every settlement of those
+  ///      epochs then reverted `ManagerAlreadySet` inside `_settle`,
+  ///      which was exactly the F1 brick with a different trigger. The
+  ///      bound holds because the owner can now only ever hold the one
+  ///      epoch the auction has not yet had time to sell, and each new
+  ///      grab costs him one epoch of wall-clock time.
+  ///
+  ///      The auction path is untouched on purpose: the auction only
+  ///      ever writes `currentEpoch() + 1` anyway (it derives
+  ///      `pendingEpoch` from its own `sellingEpoch`), and adding a
+  ///      bound there would be a second, redundant place to keep in
+  ///      sync with the auction's clock.
   /// @param _epoch The epoch to set, strictly greater than
-  ///        `currentEpoch`.
+  ///        `currentEpoch`, and at most `currentEpoch + 1` when the
+  ///        caller is the owner.
   /// @param _who The address to designate as manager.
   function setManager(uint256 _epoch, address _who) external {
-    require(msg.sender == auction || (auction == address(0) && msg.sender == owner()), NotAuctionOrOwner());
-    require(_epoch > currentEpoch(), EpochAlreadyStarted());
+    bool isAuction = msg.sender == auction;
+    require(isAuction || (auction == address(0) && msg.sender == owner()), NotAuctionOrOwner());
+    uint256 epochNow = currentEpoch();
+    require(_epoch > epochNow, EpochAlreadyStarted());
+    if (!isAuction) {
+      require(_epoch <= epochNow + 1, OwnerEpochTooFar(epochNow + 1));
+    }
     require(_who != address(0), ZeroManager());
     require(managerOf[_epoch] == address(0), ManagerAlreadySet());
     managerOf[_epoch] = _who;
@@ -543,15 +609,44 @@ contract Pool is ERC20, Ownable, Pausable {
   ///      address. On subsequent adds, mints shares proportionally
   ///      to the anchor reserve. Pulls the three token amounts via
   ///      `safeTransferFrom` after the mint.
+  ///
+  ///      F4 — `nonReentrant`. What was possible before: the shares are
+  ///      minted and the three reserves are written BEFORE the loop of
+  ///      three `safeTransferFrom`. A basket token with a payer-side
+  ///      hook could re-enter `removeLiquidity` (which carries neither
+  ///      `nonReentrant` nor `whenNotPaused`) from inside the first
+  ///      transfer, at a moment where the pool has credited three
+  ///      reserves but collected exactly one token, and walk out with a
+  ///      pro-rata slice of reserves it never funded. Not reachable with
+  ///      WBTC / cbBTC / LBTC / MockWrappedBTC, which have no such hook,
+  ///      but that is a property of today's basket, not an invariant of
+  ///      the pool: the guard makes it one. The operation ORDER is left
+  ///      exactly as it was, deliberately — it is covered by existing
+  ///      tests, and the guard alone closes the hole.
   /// @param _anchorIndex The reserve to anchor the deposit against.
   /// @param _amount The amount of the anchor token to deposit.
   /// @param _minShares Minimum LP shares the caller accepts.
   /// @return mintedShares The LP shares minted to the caller.
-  function addLiquidity(uint256 _anchorIndex, uint256 _amount, uint256 _minShares) external whenNotPaused returns (uint256 mintedShares) {
+  function addLiquidity(uint256 _anchorIndex, uint256 _amount, uint256 _minShares) external whenNotPaused nonReentrant returns (uint256 mintedShares) {
     uint256[3] memory amounts;
     uint256 supply = totalSupply();
 
     if (supply == 0) {
+      // F8: garde d'overflow uint72, par symetrie avec la branche
+      // normale ci-dessous. Avant, le `uint72(...)` plus bas tronquait
+      // en silence tout `_amount` au-dela de 2^72 - 1. Le plafond de 21M
+      // des jetons du panier le rendait inatteignable, mais c'etait une
+      // dependance implicite au JETON, pas une invariante du POOL : un
+      // panier futur au plafond plus haut rouvrirait la troncature. La
+      // garde en fait une invariante.
+      //
+      // Elle est posee EN TETE de branche, avant le `3 * _amount` :
+      // place apres, un `_amount` au-dela de 2^254 declencherait le
+      // panic 0x11 de la multiplication avant d'atteindre la garde, et
+      // l'appelant lirait un panic arithmetique la ou la branche normale
+      // lui rend `ReserveOverflow`.
+      require(_amount <= type(uint72).max, ReserveOverflow());
+
       mintedShares = 3 * _amount - MINIMUM_LIQUIDITY;
       require(mintedShares >= _minShares, BadSlippage());
       amounts[0] = amounts[1] = amounts[2] = _amount;
@@ -595,8 +690,15 @@ contract Pool is ERC20, Ownable, Pausable {
   /// @param _burnedShares The amount of LP shares to burn.
   /// @param _minOut Per-token minimum the caller accepts, index-aligned
   ///        with `token0`/`token1`/`token2`.
+  ///
+  ///      F4 — `nonReentrant`. This is the function the add-liquidity
+  ///      re-entrancy landed on: it stays open while paused (an exit
+  ///      must always be possible), so the pause was not a guard here.
+  ///      The shared re-entrancy lock is: it closes the exit only for
+  ///      the duration of another entry point's own call, never for a
+  ///      standalone exit.
   /// @return amountsOut The three token amounts sent to the caller.
-  function removeLiquidity(uint256 _burnedShares, uint256[3] calldata _minOut) external returns (uint256[3] memory amountsOut) {
+  function removeLiquidity(uint256 _burnedShares, uint256[3] calldata _minOut) external nonReentrant returns (uint256[3] memory amountsOut) {
     uint256 supply = totalSupply();
     require(supply != 0, NotBootstrapped());
     uint72[3] memory cachedReserves = _loadReserves();
@@ -629,8 +731,13 @@ contract Pool is ERC20, Ownable, Pausable {
   /// @param _amount The input amount, in token units.
   /// @param _indexOut The token index of the output side.
   /// @param _minOut Minimum output the caller accepts.
+  ///
+  ///      F4 — `nonReentrant`. Same lock as `addLiquidity` and
+  ///      `removeLiquidity`: `swap` writes the reserves and the fee
+  ///      registries before its two transfers, so a hooked basket token
+  ///      could re-enter on a state that is written but not funded.
   /// @return amountOut The output amount transferred to the caller.
-  function swap(uint256 _indexIn, uint256 _amount, uint256 _indexOut, uint256 _minOut) external whenNotPaused returns (uint256 amountOut) {
+  function swap(uint256 _indexIn, uint256 _amount, uint256 _indexOut, uint256 _minOut) external whenNotPaused nonReentrant returns (uint256 amountOut) {
     uint72[3] memory cachedReserves = _loadReserves();
 
     uint256 epoch = currentEpoch();
@@ -705,19 +812,54 @@ contract Pool is ERC20, Ownable, Pausable {
     IERC20(indexToAddress(_tokenIndex)).safeTransfer(treasury, owed);
   }
 
+  /// @dev Projection en lecture seule de `accPerShare` a l'instant
+  ///      courant. Partagee avec `claimable()`, donc STRICTEMENT
+  ///      alignee sur `_updateRent` : les deux appliquent la meme
+  ///      condition F5 (`totalSupply() <= MINIMUM_LIQUIDITY`), sinon la
+  ///      vue promettrait une rente que le chemin ecrivain ne credite
+  ///      pas.
   function _accProjected() internal view returns (uint256) {
     if (rentLastUpdate >= rentEnd) return accPerShare;
     uint256 end = block.timestamp < rentEnd ? block.timestamp : rentEnd;
     uint256 dt = end - rentLastUpdate;
     uint256 supply = totalSupply();
     if (dt == 0 || rentRate == 0 || supply == 0) return accPerShare;
+    // F5 : pas de LP vivant, l'accumulateur ne bouge pas. Voir
+    // `_updateRent`, qui reporte la tranche dans `rentLeftOver`.
+    if (supply <= MINIMUM_LIQUIDITY) return accPerShare;
     return accPerShare + dt * rentRate / supply;
   }
 
+  /// @dev Avance l'accumulateur jusqu'a `min(block.timestamp, rentEnd)`.
+  ///
+  ///      F5 — quand `totalSupply() <= MINIMUM_LIQUIDITY`, l'unique
+  ///      porteur restant est l'adresse morte (les 1000 parts du
+  ///      bootstrap), qui ne reclamera jamais. Avant, `accPerShare`
+  ///      avancait quand meme de `dt * rentRate / totalSupply` : toute
+  ///      la queue d'un flux traverse par une sortie totale des LP etait
+  ///      attribuee a l'adresse morte, donc brulee. Le garde-fou
+  ///      `rentLeftOver` ne couvrait que le cas ou `notifyRent` arrive
+  ///      sur un pool deja vide, pas celui ou le pool se vide PENDANT le
+  ///      flux. On reporte desormais la tranche dans `rentLeftOver`, ou
+  ///      le prochain `notifyRent` la fondra dans le flux suivant, et on
+  ///      recale `rentLastUpdate` pour ne jamais la compter deux fois.
+  ///      L'echelle est celle de `notifyRent` (`rentRate` est en 1e18
+  ///      par seconde, `rentLeftOver` en MRN), d'ou le `/ 1e18`.
   function _updateRent() internal {
     if (rentLastUpdate >= rentEnd) return;
+    uint256 end = block.timestamp < rentEnd ? block.timestamp : rentEnd;
+
+    if (totalSupply() <= MINIMUM_LIQUIDITY) {
+      uint256 dt = end - rentLastUpdate;
+      if (dt != 0 && rentRate != 0) {
+        rentLeftOver += dt * rentRate / 1e18;
+      }
+      rentLastUpdate = end;
+      return;
+    }
+
     accPerShare = _accProjected();
-    rentLastUpdate = block.timestamp < rentEnd ? block.timestamp : rentEnd;
+    rentLastUpdate = end;
   }
 
   /// @notice Returns the MRN rent `_who` could claim right now.
@@ -774,6 +916,16 @@ contract Pool is ERC20, Ownable, Pausable {
   ///      rewritten. CEI strict: state first, then `safeTransferFrom`
   ///      on the allowance the auction sets in its constructor, so a
   ///      missing allowance reverts the whole settlement.
+  ///
+  ///      F5 coherence: the leading `_updateRent()` has already parked
+  ///      into `rentLeftOver` every second the pool spent without a live
+  ///      LP, and moved `rentLastUpdate` past them. The `rentEnd >
+  ///      block.timestamp` roll-in below therefore covers only the
+  ///      untravelled tail `[block.timestamp, rentEnd]`: the two sources
+  ///      are disjoint and nothing is counted twice. The
+  ///      `rentLeftOver = 0` that follows is still correct, since the
+  ///      whole balance is folded into the new `rentRate` on the line
+  ///      above it.
   /// @param amount The MRN amount of the new stream, in 18 decimals.
   function notifyRent(uint256 amount) external {
     require(msg.sender == auction, NotAuction());

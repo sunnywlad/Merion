@@ -323,14 +323,26 @@ describe("Auction", async function () {
       });
     });
 
-    describe("D) Mise pendant BID_SILENCE revert (test 21)", function () {
-      // BID_SILENCE == 0 sur cette fixture (A4 roadmap, pas livre a
-      // I.3). Le brief demande explicitement de documenter le cas
-      // sans le supprimer : la valeur de demonstration ne declenche
-      // jamais la garde, et un test actif de BID_SILENCE exigerait de
-      // deployer avec une valeur non nulle, ce qui est hors perimetre
-      // de cette tache. Le test est marque skip avec FIXME.
-      it.skip("BID_SILENCE == 0 : la garde n'est jamais declenchee, FIXME deployer avec une valeur non nulle pour activer", function () {
+    describe("D) Mise pendant BID_SILENCE (test 21)", function () {
+      // Deux raisons, desormais, et il faut les tenir separees.
+      //
+      // 1) `bidSilence` n'est PAS une garde on-chain, et l'AUDIT F3 a
+      //    rendu ce point explicite dans la NatSpec d'`Auction.sol` :
+      //    aucune ligne du contrat ne compare `block.timestamp` a
+      //    `bidSilence`. C'est une consigne d'ordonnancement pour le bot
+      //    off-chain, deliberement laissee hors du contrat pour qu'une
+      //    panne du bot ne puisse pas retrecir la fenetre de reglement.
+      //    Ce qui ferme reellement les mises est `auctionWindow`
+      //    (`WindowClosed`, couvert en C ci-dessus), et ce qui interdit
+      //    un reglement premature est `WindowStillOpen` (F3).
+      // 2) `BID_SILENCE == 0` sur cette fixture (gate A4, roadmap), donc
+      //    meme une future garde ne serait pas declenchee ici.
+      //
+      // Le brief demande de documenter le cas sans le supprimer. Le test
+      // reste skip avec son FIXME : il ne pourra devenir actif que le
+      // jour ou A4 posera une vraie garde on-chain ET ou la fixture
+      // deploiera une valeur non nulle.
+      it.skip("bidSilence n'est pas applique on-chain (et vaut 0 ici) : rien a declencher, FIXME activer avec le gate A4", function () {
         // Pas de corps : skip explicite. Voir le commentaire ci-dessus
         // pour la raison.
       });
@@ -462,6 +474,13 @@ describe("Auction", async function () {
         // Le settle externe est permissionless (test 26). On l'appelle
         // par un tiers, ni BIDDER_A ni BIDDER_B, pour verifier que
         // l'identite de l'appelant n'importe pas.
+        //
+        // Le saut dans la fenetre BID_SILENCE est EXIGE depuis la
+        // correction F3 : `settle` refuse de capturer une enchere vive
+        // tant que la fenetre de mise n'est pas fermee
+        // (`WindowStillOpen`). Regler des la premiere seconde figerait
+        // le mandat au prix plancher, ce que la garde ferme.
+        await warpToBidSilenceWindow(genesis, 1n);
         await auction.write.settle({ account: thirdParty.account });
 
         // Apres settle : managerOf[1] est BIDDER_B, le dernier

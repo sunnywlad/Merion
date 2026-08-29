@@ -402,25 +402,33 @@ describe("Pool.addLiquidity", async function () {
         );
       });
 
-      it("_amount hors bornes uint72 sur pool vide : aucune garde ReserveOverflow, l'allowance manquante revert en premier", async function () {
-        // Constat important : la branche d'amorcage (Pool.sol:90-99) ne porte
-        // AUCUN require de type ReserveOverflow, contrairement a la branche
-        // supply != 0 (Pool.sol:109) et a swap() (Pool.sol:144). Le cast
-        // `uint72(amounts[i])` (Pool.sol:96) tronquerait silencieusement un
-        // _amount hors bornes plutot que de revert. Ce n'est pas exploitable
-        // en pratique : MockWrappedBTC est plafonne a 21 000 000e8
-        // (ERC20Capped), tres en dessous de uint72.max (~4,7e21), donc aucun
-        // depositor ne peut jamais reellement detenir/approuver un montant
-        // pareil. Sans mint ni approve (comme ici), le premier echec reel
-        // est simplement l'allowance manquante au moment du safeTransferFrom
-        // (Pool.sol:115), sur le token d'indice 0.
-        const { pool, tokens, depositor } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
+      it("_amount hors bornes uint72 sur pool vide : la garde ReserveOverflow revert avant meme l'allowance manquante", async function () {
+        // AUDIT F8. Ce test documentait exactement l'inverse jusqu'au
+        // correctif : la branche d'amorcage (Pool.sol, `supply == 0`) ne
+        // portait AUCUN require de type ReserveOverflow, contrairement a la
+        // branche `supply != 0` et a `swap()`. Le cast `uint72(amounts[i])`
+        // tronquait donc en silence tout _amount au-dela de 2^72 - 1, et le
+        // premier echec observable etait l'allowance manquante au
+        // safeTransferFrom, plusieurs lignes plus loin. Ce n'etait pas
+        // exploitable avec le panier actuel — MockWrappedBTC est plafonne a
+        // 21 000 000e8 par ERC20Capped, tres en dessous de uint72.max
+        // (~4,7e21) — mais c'etait une dependance implicite au JETON, pas une
+        // invariante du POOL : un panier futur au plafond plus haut rouvrait
+        // la troncature.
+        //
+        // Le require est desormais pose EN TETE de branche, avant le
+        // `3 * _amount` et avant tout transfert. Il tire donc le premier,
+        // sans qu'aucun mint ni approve n'ait ete pose ici : c'est
+        // precisement ce que cette assertion epingle, l'ordre autant que
+        // l'existence de la garde. Le selecteur attendu est celui de
+        // ReserveOverflow(), 0x446c8cc9.
+        const { pool, depositor } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
         const tooLargeAmount = UINT72_MAX + 1n;
 
         await viem.assertions.revertWithCustomError(
           pool.write.addLiquidity([0n, tooLargeAmount, 0n], { account: depositor.account }),
-          tokens[0],
-          "ERC20InsufficientAllowance",
+          pool,
+          "ReserveOverflow",
         );
       });
 

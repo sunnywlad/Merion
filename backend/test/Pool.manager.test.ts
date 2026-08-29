@@ -237,12 +237,18 @@ describe("Pool.manager", async function () {
     describe("D) Epoch 7, managerOf[7] setté", function () {
       it("manager() rend l'adresse settée pour une epoque lointaine", async function () {
         // Cas symetrique de la section B, huit epoques plus loin : on pose
-        // managerOf[7] (autorise car 7 > currentEpoch() == 0 au moment de
-        // l'ecriture), on saute le temps au milieu de l'epoch 7, et on relit
+        // managerOf[7], on saute le temps au milieu de l'epoch 7, et on relit
         // manager(). Calcul a la main : 7 * 14400 + 7200 = 108000,
         //   108000 / 14400 = 7,5 -> 7 en division entiere.
+        //
+        // AUDIT F6 : la voie d'amorcage de l'owner est desormais bornee a
+        // `currentEpoch() + 1`. La nomination du mandat 7 se fait donc
+        // depuis l'epoch 6, et non plus d'avance depuis l'epoch 0. Le
+        // sujet du test — `manager()` lit `managerOf[currentEpoch()]`,
+        // pas un indice fige — est inchange.
         const { pool, auctioneer, genesis } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
 
+        await warpTo(genesis + (FAR_EPOCH - 1n) * EPOCH_DURATION);
         await pool.write.setManager([FAR_EPOCH, auctioneer.account.address]);
         await warpTo(genesis + FAR_EPOCH * EPOCH_DURATION + EPOCH_DURATION / 2n);
 
@@ -658,14 +664,23 @@ describe("Pool.manager", async function () {
       });
 
       it("setManager(1, X) puis setManager(2, Y) : les deux reussissent, epoques differentes", async function () {
-        // Le pendant positif du precedent. La garde discrimine par EPOQUE,
-        // pas par destinataire, et deux appels sur des epoques distinctes
-        // lisent a chaque fois un managerOf vide pour leur epoque. C'est
-        // ce qui permet de preparer un calendrier de gestionnaires sur
-        // plusieurs epoques a l'avance.
-        const { pool, auctioneer, thirdParty } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
+        // Le pendant positif du precedent. La garde ManagerAlreadySet
+        // discrimine par EPOQUE, pas par destinataire, et deux appels sur
+        // des epoques distinctes lisent a chaque fois un managerOf vide
+        // pour leur epoque.
+        //
+        // AUDIT F6 : ce qui n'est PLUS vrai, c'est de pouvoir preparer un
+        // calendrier de gestionnaires sur plusieurs epoques a l'avance
+        // depuis la voie owner. `setManager` borne desormais l'owner a
+        // `currentEpoch() + 1` — c'etait la faille : un owner
+        // malveillant reservait les N prochains mandats et chaque
+        // reglement heurtait ensuite ManagerAlreadySet dans `_settle`.
+        // On avance donc d'une epoch entre les deux nominations. La borne
+        // elle-meme est le sujet de test/Pool.security.t.sol.
+        const { pool, auctioneer, thirdParty, genesis } = await networkHelpers.loadFixture(deployTokensAndPoolFixture);
 
         await pool.write.setManager([1n, auctioneer.account.address]);
+        await warpTo(genesis + EPOCH_DURATION);
         await pool.write.setManager([2n, thirdParty.account.address]);
 
         const stored1 = await pool.read.managerOf([1n]);
