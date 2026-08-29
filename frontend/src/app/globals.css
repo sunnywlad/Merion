@@ -25,6 +25,11 @@
   --color-cloud: #F3F5F8;
   --color-white: #ffffff;
   --color-merion-blue: #1E4BFF;
+  /* Turquoise — accent ajouté pour la zone « potential » (slippage
+     buffer) du Decomposition bar, distinct de merion-blue qui reste
+     la couleur des pertes certaines. Choisi pour le contraste chaud
+     sur fond Midnight. */
+  --color-turquoise: #2DD4BF;
 
   /* Palette sémantique — §2 */
   --color-success: #16A34A;

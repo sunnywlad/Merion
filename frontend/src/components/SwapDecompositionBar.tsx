@@ -1,18 +1,21 @@
 /**
- * Merion swap decomposition bar — II.4.
+ * Merion swap decomposition bar — II.4 / V.4.
  *
- * Single horizontal bar that visualises the swap's input split into four
- * segments, in brand-book order: fee, price impact, slippage ceiling, and
- * over-dead-band (Warning). All widths are fractions of the input.
+ * Two-zone horizontal bar that contrasts the swap's CERTAIN loss
+ * (fee + price impact) against its POTENTIAL loss (slippage buffer).
+ * The visual treatment makes the two categories distinguishable
+ * without needing to read the legend: solid merion-blue for the
+ * certain zone, striped turquoise for the potential zone.
  *
  * Reads come from `quoteSwap`:
  *   - `fee` (input units, bigint)
- *   - `priceImpact` (output units, bigint — converted via `amountOut` when provided)
+ *   - `priceImpact` (output units, bigint — converted via `amountOut`)
  *   - `slippage` (user tolerance in percent, e.g. 0.5)
  *   - `input` (input amount, bigint)
  *
- * When no quote is available (input === 0, or any segment is undefined / NaN),
- * the bar renders a neutral empty state with the « Awaiting quote » label.
+ * When no quote is available (input === 0, or any segment is
+ * undefined / NaN), the bar renders a neutral empty state with the
+ * « Awaiting quote » label.
  */
 
 type SwapDecompositionBarProps = {
@@ -26,8 +29,8 @@ type SwapDecompositionBarProps = {
   slippage: number;
   /**
    * Optional expected output amount. When present, the output-unit
-   * `priceImpact` is converted to its input-equivalent so the three
-   * segments compare on a single scale. When absent, the segment renders
+   * `priceImpact` is converted to its input-equivalent so the two
+   * zones compare on a single scale. When absent, the bar renders
    * with a direct ratio (the visual width is approximate).
    */
   amountOut?: number;
@@ -38,17 +41,6 @@ type SwapDecompositionBarProps = {
   /** Slippage label suffix (defaults to '%'). */
   slippageUnit?: string;
   className?: string;
-};
-
-type Segment = {
-  key: string;
-  width: number;
-  className: string;
-  label: string;
-  /** Formatted value for the legend. */
-  valueText: string;
-  /** When true, marks the bar as having an over-dead-band segment. */
-  highlight?: boolean;
 };
 
 /** Strip trailing zeros so 0.025000 reads as 0.025, 1.000000 reads as 1. */
@@ -85,104 +77,99 @@ export function SwapDecompositionBar({
   }
 
   // Each loss as a fraction of input. `priceImpact` is denominated in the
-  // OUTPUT token (see `quoteSwap.ts`); to render alongside the input-token
-  // fee, we convert via the user's actual quote ratio: `input / amountOut`
-  // is the spot proxy that turns `impactOut` into `impactIn`, then divided
-  // by `input` to land in fraction-of-input space. The two cancel, leaving
-  // `priceImpact / amountOut` — the proportion of OUTPUT that the curve is
-  // eating, treated as a fraction of input via the trade ratio.
+  // OUTPUT token (see `quoteSwap.ts`); we convert via the spot rate
+  // `input / amountOut` so all three values live on a single scale.
+  // (See git history for the previous three-segment formulation.)
   const feeW = fee / input;
   const impactW = amountOut !== undefined && amountOut > 0
     ? priceImpact / amountOut
     : priceImpact / input;
-  // User-typed tolerance expressed as a percent. Visualised as a fraction of
-  // input (the tolerance is conceptually against the OUTPUT, but rendering it
-  // as a fraction of input keeps the three segments on a comparable scale).
   const slippageW = slippage / 100;
 
-  const lossesTotal = feeW + impactW + slippageW;
-  const overDeadBandW = Math.max(0, lossesTotal - 1);
-  const untouchedW = Math.max(0, 1 - lossesTotal);
+  // The two zones. `certain` is what the swap will definitely cost the
+  // user; `potential` is the additional loss the user is accepting by
+  // setting slippage tolerance. Both are fractions of input.
+  const certainW = feeW + impactW;
+  const potentialW = slippageW;
+  const totalW = certainW + potentialW;
 
-  const segments: Segment[] = [
-    {
-      key: 'fee',
-      width: feeW,
-      className: 'bg-merion-blue',
-      label: 'Fee',
-      valueText: `${trim(fee)}${feeUnit ? ' ' + feeUnit : ''}`,
-    },
-    {
-      key: 'impact',
-      width: impactW,
-      className: 'bg-merion-blue',
-      label: 'Price impact',
-      valueText: `${trim(priceImpact)}${impactUnit ? ' ' + impactUnit : ''}`,
-    },
-    {
-      key: 'slippage',
-      width: slippageW,
-      className: 'bg-merion-blue',
-      label: 'Slippage',
-      valueText: `${trim(slippage)}${slippageUnit}`,
-    },
-  ];
+  // When the two zones combined exceed 100% of input, the user is
+  // accepting a worst case greater than the whole trade — render the
+  // bar with a warning outline so it cannot be mistaken for a normal
+  // state. Both zones are then scaled to fit.
+  const overDeadBand = totalW > 1;
+  const scale = overDeadBand && totalW > 0 ? 1 / totalW : 1;
 
-  if (overDeadBandW > 0) {
-    segments.push({
-      key: 'over',
-      width: overDeadBandW,
-      className: 'bg-warning',
-      label: 'Over-dead-band',
-      valueText: trim(overDeadBandW * input),
-      highlight: true,
-    });
-  }
-
-  // Scale every segment + untouched to fit 100% of the bar when the loss
-  // segments overflow. Preserves the warning segment's relative size.
-  const totalForBar = segments.reduce((acc, s) => acc + s.width, 0) + untouchedW;
-  const scale = totalForBar > 0 ? 1 / totalForBar : 0;
-
-  const accessibleSummary = segments
-    .map((s) => `${s.label} ${s.valueText}`)
-    .join(', ');
+  // For the legend: sum the certain loss in INPUT units so the user
+  // sees one number, not two in different tokens. `priceImpact` is
+  // converted via the spot rate.
+  const impactInInput = amountOut !== undefined && amountOut > 0
+    ? priceImpact * (input / amountOut)
+    : priceImpact;
+  const certainInInput = fee + impactInInput;
 
   return (
     <div className={`flex flex-col gap-2 ${className}`}>
       <div
-        className="flex h-3 w-full overflow-hidden rounded"
+        className={`flex h-3 w-full overflow-hidden rounded ${
+          overDeadBand ? 'ring-1 ring-warning' : ''
+        }`}
         role="img"
-        aria-label={`Swap decomposition: ${accessibleSummary}`}
+        aria-label={
+          `Swap decomposition: certain ${trim(certainInInput)}${feeUnit ? ' ' + feeUnit : ''}` +
+          `, potential ${trim(slippage)}${slippageUnit}`
+        }
       >
-        {segments.map((s) => (
-          <div
-            key={s.key}
-            className={`merion-decomp-segment ${s.className}`}
-            style={{ width: `${s.width * scale * 100}%` }}
-            title={`${s.label}: ${s.valueText}`}
-          />
-        ))}
-        {untouchedW > 0 ? (
+        {/* CERTAIN — fee + price impact, solid merion-blue */}
+        <div
+          className="merion-decomp-segment bg-merion-blue"
+          style={{ width: `${certainW * scale * 100}%` }}
+          title={`Certain: ${trim(certainInInput)}${feeUnit ? ' ' + feeUnit : ''} (fee + price impact)`}
+        />
+        {/* POTENTIAL — slippage buffer, striped turquoise */}
+        <div
+          className="merion-decomp-segment bg-turquoise/40"
+          style={{
+            width: `${potentialW * scale * 100}%`,
+            backgroundImage:
+              'repeating-linear-gradient(45deg, transparent 0 4px, rgba(45,212,191,0.55) 4px 8px)',
+          }}
+          title={`Potential: ${trim(slippage)}${slippageUnit} (max extra if market moves)`}
+        />
+        {/* Untraded remainder of the input — light fill, only when both zones fit. */}
+        {!overDeadBand && certainW + potentialW < 1 ? (
           <div
             className="merion-decomp-segment bg-cloud/10"
-            style={{ width: `${untouchedW * scale * 100}%` }}
+            style={{ width: `${(1 - certainW - potentialW) * 100}%` }}
             aria-hidden="true"
           />
         ) : null}
       </div>
 
       <ul className="flex flex-wrap gap-x-4 gap-y-1 text-caption">
-        {segments.map((s) => (
-          <li key={s.key} className="flex items-center gap-1.5">
-            <span
-              aria-hidden="true"
-              className={`inline-block h-2 w-2 rounded-full ${s.className}`}
-            />
-            <span className="text-cloud/70">{s.label}</span>
-            <span className="font-mono text-code-sm text-cloud">{s.valueText}</span>
-          </li>
-        ))}
+        <li className="flex items-center gap-1.5">
+          <span aria-hidden="true" className="inline-block h-2 w-2 rounded-full bg-merion-blue" />
+          <span className="text-cloud/70">Certain</span>
+          <span className="font-mono text-code-sm text-cloud">
+            {trim(certainInInput)}{feeUnit ? ' ' + feeUnit : ''}
+          </span>
+          <span className="text-cloud/50">(fee + impact)</span>
+        </li>
+        <li className="flex items-center gap-1.5">
+          <span
+            aria-hidden="true"
+            className="inline-block h-2 w-2 rounded-sm bg-turquoise/60"
+            style={{
+              backgroundImage:
+                'repeating-linear-gradient(45deg, transparent 0 2px, rgba(45,212,191,0.8) 2px 3px)',
+            }}
+          />
+          <span className="text-cloud/70">Potential</span>
+          <span className="font-mono text-code-sm text-cloud">
+            {trim(slippage)}{slippageUnit}
+          </span>
+          <span className="text-cloud/50">(max extra)</span>
+        </li>
       </ul>
     </div>
   );
