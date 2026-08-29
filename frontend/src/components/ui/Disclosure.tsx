@@ -104,7 +104,7 @@ export function Disclosure({
         className={`merion-retractable ${className}`}
         aria-hidden={!open}
       >
-        <div className="merion-retractable-inner">{children}</div>
+        <div className="merion-retractable-inner">{open ? children : null}</div> {/* enfants montés seulement à l'ouverture, plan §1 perf */}
       </div>
     </>
   );
