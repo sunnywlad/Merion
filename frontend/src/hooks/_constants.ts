@@ -11,6 +11,7 @@
 // comme littéral local. Centralisé ici pour qu'une éventuelle
 // évolution (par ex. validation runtime) n'ait qu'un point d'entrée.
 
-export const AUCTION_POLL_MS = 15_000;
+export const AUCTION_POLL_MS = 15_000;    // état vivant de l'enchère
+export const MANDATE_POLL_MS = 60_000;    // ce qui bouge à l'échelle du mandat (4 h) — distinct de l'état vivant d'enchère (15 s)
 
 export const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';

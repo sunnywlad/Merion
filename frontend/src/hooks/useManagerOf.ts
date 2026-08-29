@@ -1,7 +1,7 @@
 import { useReadContract } from 'wagmi';
 import { useAddresses } from '@/hooks/useAddresses';
 import { poolAbi } from '@/constants/abi';
-import { AUCTION_POLL_MS } from '@/hooks/_constants';
+import { MANDATE_POLL_MS } from '@/hooks/_constants';
 
 // I.5 — Le gestionnaire nommé pour un mandat donné, lu sur le Pool.
 //
@@ -25,7 +25,7 @@ export function useManagerOf(epoch: bigint | undefined) {
     args: epoch === undefined ? undefined : [epoch],
     query: {
       enabled: epoch !== undefined,
-      refetchInterval: AUCTION_POLL_MS
+      refetchInterval: MANDATE_POLL_MS
     }
   });
 }

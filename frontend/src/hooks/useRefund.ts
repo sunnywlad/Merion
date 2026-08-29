@@ -1,7 +1,7 @@
 import { useReadContract } from 'wagmi';
 import { useAddresses } from '@/hooks/useAddresses';
 import { auctionAbi } from '@/constants/abi';
-import { AUCTION_POLL_MS } from '@/hooks/_constants';
+import { MANDATE_POLL_MS } from '@/hooks/_constants';
 
 // I.6 — Le remboursement crédité et jamais poussé pour une adresse (`refunds`
 // est un mapping public de l'Auction). Sur le modèle de `useManagerOf` :
@@ -15,7 +15,7 @@ export function useRefund(user: `0x${string}` | undefined) {
     args: user === undefined ? undefined : [user],
     query: {
       enabled: auction !== null && user !== undefined,
-      refetchInterval: AUCTION_POLL_MS
+      refetchInterval: MANDATE_POLL_MS
     }
   });
 }

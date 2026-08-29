@@ -1,5 +1,6 @@
 import { useAddresses } from '@/hooks/useAddresses';
 import { poolAbi } from '@/constants/abi';
+import { MANDATE_POLL_MS } from '@/hooks/_constants';
 import { useReadContract } from 'wagmi';
 
 // The pool's `paused` flag. The owner pauses swaps and deposits and nothing
@@ -19,6 +20,6 @@ export function usePoolPaused() {
     abi: poolAbi,
     functionName: 'paused',
     args: [],
-    query: { refetchInterval: 15000 }
+    query: { refetchInterval: MANDATE_POLL_MS }
   });
 }
