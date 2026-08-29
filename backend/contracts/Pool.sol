@@ -358,28 +358,6 @@ contract Pool is ERC20, Ownable, Pausable {
     revert InvalidReserveIndex();
   }
 
-  /// @notice Returns the three basket reserves in a single external
-  ///         call. Equivalent to calling `reserves(0)`, `reserves(1)`
-  ///         and `reserves(2)` separately, but cheaper: one
-  ///         cross-contract SLOAD on the packed slot plus three
-  ///         in-memory shifts, instead of three cross-contract
-  ///         SLOADs. Index-aligned with `reserves(uint256)` and with
-  ///         `token0/token1/token2`.
-  /// @dev View only, no state change. The shifts and the `uint72`
-  ///      casts are bounds-checked by the shift count (no overflow
-  ///      possible), so the block is `unchecked`.
-  /// @return reserve0 The reserve of `token0` (WBTC), in token units.
-  /// @return reserve1 The reserve of `token1` (cbBTC), in token units.
-  /// @return reserve2 The reserve of `token2` (LBTC), in token units.
-  function getReserves() external view returns (uint256 reserve0, uint256 reserve1, uint256 reserve2) {
-    uint256 packed = _reservesPacked;
-    unchecked {
-      reserve0 = uint256(uint72(packed));
-      reserve1 = uint256(uint72(packed >> 72));
-      reserve2 = uint256(uint72(packed >> 144));
-    }
-  }
-
   function _loadReserves() internal view returns (uint72[3] memory r) {
     uint256 packed = _reservesPacked;
     unchecked {
@@ -395,6 +373,15 @@ contract Pool is ERC20, Ownable, Pausable {
         (uint256(r[0])) |
         (uint256(r[1]) << 72) |
         (uint256(r[2]) << 144);
+    }
+  }
+
+  function _setReserves(uint72 r0, uint72 r1, uint72 r2) internal {
+    unchecked {
+      _reservesPacked =
+        (uint256(r0)) |
+        (uint256(r1) << 72) |
+        (uint256(r2) << 144);
     }
   }
 
@@ -569,12 +556,7 @@ contract Pool is ERC20, Ownable, Pausable {
       require(mintedShares >= _minShares, BadSlippage());
       amounts[0] = amounts[1] = amounts[2] = _amount;
 
-      uint72[3] memory r = [
-        uint72(amounts[0]),
-        uint72(amounts[1]),
-        uint72(amounts[2])
-      ];
-      _storeReserves(r);
+      _setReserves(uint72(amounts[0]), uint72(amounts[1]), uint72(amounts[2]));
       _mint(0x000000000000000000000000000000000000dEaD, MINIMUM_LIQUIDITY);
 
     } else {

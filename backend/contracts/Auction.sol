@@ -332,8 +332,12 @@ contract Auction {
       ? uint256(pool.feeNum())
       : pool.NOMINAL_FEE_NUM();
 
-    (uint256 r0, uint256 r1, uint256 r2) = pool.getReserves();
-    emit Settled(pendingEpoch, manager, pendingAmount, fee, [r0, r1, r2]);
+    uint256[3] memory reservesAtClose;
+    reservesAtClose[0] = uint256(pool.reserves(0));
+    reservesAtClose[1] = uint256(pool.reserves(1));
+    reservesAtClose[2] = uint256(pool.reserves(2));
+
+    emit Settled(pendingEpoch, manager, pendingAmount, fee, reservesAtClose);
 
     pendingEpoch = 0;
     pendingAmount = 0;
