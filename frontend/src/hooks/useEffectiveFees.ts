@@ -1,5 +1,5 @@
 import { useReadContracts } from 'wagmi';
-import { deployedPool } from '@/constants/addresses';
+import { useAddresses } from '@/hooks/useAddresses';
 import { poolAbi } from '@/constants/abi';
 
 // I.5 — `effectiveFeeNum(i, j)` sur les six couples ordonnés, en un multicall.
@@ -24,9 +24,10 @@ const pairIndex = (indexIn: number, indexOut: number) =>
   FEE_PAIRS.findIndex(([i, j]) => i === indexIn && j === indexOut);
 
 export function useEffectiveFees() {
+  const { pool } = useAddresses();
   const { data, isLoading, error, queryKey } = useReadContracts({
     contracts: FEE_PAIRS.map(([i, j]) => ({
-      address: deployedPool,
+      address: pool,
       abi: poolAbi,
       functionName: 'effectiveFeeNum',
       args: [BigInt(i), BigInt(j)]

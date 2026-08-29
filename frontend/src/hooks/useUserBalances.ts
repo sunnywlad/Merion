@@ -1,5 +1,5 @@
 import { useConnection, useReadContracts } from 'wagmi';
-import {deployedAuction, deployedMrn, tokensInfo} from '@/constants/addresses';
+import { useAddresses } from '@/hooks/useAddresses';
 import {auctionAbi, mrnAbi, mockWrappedBTCAbi} from '@/constants/abi';
 
 // Toutes les balances utilisateur dans un seul multicall : trois BTCs + MRN +
@@ -30,23 +30,24 @@ type ReadEntry = { status: 'success' | 'failure'; result?: bigint; error?: Error
 
 export function useUserBalances() {
   const userAddress = useConnection().address;
+  const { tokens, mrn, auction } = useAddresses();
 
   const { data, isLoading, error } = useReadContracts({
     contracts: [
-      ...tokensInfo.map((token) => ({
+      ...tokens.map((token) => ({
         address: token.address,
         abi: mockWrappedBTCAbi,
         functionName: 'balanceOf',
         args: [userAddress!]
       })),
       {
-        address: deployedMrn,
+        address: mrn,
         abi: mrnAbi,
         functionName: 'balanceOf',
         args: [userAddress!]
       },
       {
-        address: deployedAuction ?? undefined,
+        address: auction ?? undefined,
         abi: auctionAbi,
         functionName: 'refunds',
         args: [userAddress!]
@@ -55,7 +56,7 @@ export function useUserBalances() {
     query: { enabled: Boolean(userAddress) }
   });
 
-  const btcBalances = tokensInfo.map((_, i) => data?.[i] as ReadEntry | undefined);
+  const btcBalances = tokens.map((_, i) => data?.[i] as ReadEntry | undefined);
   const mrnBalance = data?.[3] as ReadEntry | undefined;
   const refundBalance = data?.[4] as ReadEntry | undefined;
 

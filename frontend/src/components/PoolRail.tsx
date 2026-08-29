@@ -1,7 +1,7 @@
 'use client';
 
 import { useReserves } from '@/hooks/useReserves';
-import { tokensInfo } from '@/constants/addresses';
+import { useAddresses } from '@/hooks/useAddresses';
 import Chevron from '@/components/ui/Chevron';
 import Disclosure from '@/components/ui/Disclosure';
 import Reserves from '@/components/Reserves';
@@ -28,6 +28,7 @@ import Reserves from '@/components/Reserves';
  */
 export default function PoolRail() {
   const { reserves } = useReserves();
+  const { tokens } = useAddresses();
   // Le résumé parle toujours de 3 actifs (BTC wrappé + 2) tant qu'on n'a
   // pas un tableau complet ; sans charger le contrat pour `paused`, le
   // signal de pause reste dans le panneau de réserves.
@@ -36,18 +37,18 @@ export default function PoolRail() {
       reserves?.map((entry) =>
         entry?.status === 'success' ? entry.result : undefined,
       ) ?? [];
-    if (values.length < tokensInfo.length) return `${tokensInfo.length} assets`;
+    if (values.length < tokens.length) return `${tokens.length} assets`;
     const defined = values.filter((v): v is bigint => v !== undefined);
-    if (defined.length < tokensInfo.length) return `${tokensInfo.length} assets`;
+    if (defined.length < tokens.length) return `${tokens.length} assets`;
     const total = defined.reduce<bigint>((acc, v) => acc + v, 0n);
-    if (total === 0n) return `${tokensInfo.length} assets`;
+    if (total === 0n) return `${tokens.length} assets`;
     const target = 1 / 3;
     const band = 0.04;
     const shares = defined.map(
       (v) => Number((v * 10000n) / total) / 10000,
     );
     const balanced = shares.every((s) => Math.abs(s - target) <= band);
-    return `${tokensInfo.length} assets, ${balanced ? 'balanced' : 'off-band'}`;
+    return `${tokens.length} assets, ${balanced ? 'balanced' : 'off-band'}`;
   })();
 
   return (

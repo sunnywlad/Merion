@@ -1,23 +1,24 @@
 import { useReadContracts } from 'wagmi';
-import {deployedPool} from '@/constants/addresses';
+import { useAddresses } from '@/hooks/useAddresses';
 import {poolAbi} from '@/constants/abi';
 
 export function useConstants() {
+  const { pool } = useAddresses();
   const { data, isLoading, error } = useReadContracts({
     contracts: [{
-        address: deployedPool,
+        address: pool,
         abi: poolAbi,
         functionName: 'FEE_DEN',
         args: []
       },
       {
-        address: deployedPool,
+        address: pool,
         abi: poolAbi,
         functionName: 'MAX_FEE_NUM',
         args: []
       },
       {
-        address: deployedPool,
+        address: pool,
         abi: poolAbi,
         functionName: 'MIN_FEE_NUM',
         args: []

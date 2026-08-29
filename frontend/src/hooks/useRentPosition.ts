@@ -1,5 +1,5 @@
 import { useReadContracts } from 'wagmi';
-import { deployedPool } from '@/constants/addresses';
+import { useAddresses } from '@/hooks/useAddresses';
 import { poolAbi } from '@/constants/abi';
 import { AUCTION_POLL_MS } from '@/hooks/useAuctionState';
 
@@ -14,16 +14,17 @@ import { AUCTION_POLL_MS } from '@/hooks/useAuctionState';
 // rendrait rien d'exploitable pour un LP à zéro. Les scalaires sont tous
 // publics, le front refait donc le calcul du contrat.
 export function useRentPosition(user: `0x${string}` | undefined) {
+  const { pool } = useAddresses();
   const { data, isLoading, error, queryKey } = useReadContracts({
     contracts: [
-      { address: deployedPool, abi: poolAbi, functionName: 'accPerShare', args: [] },
-      { address: deployedPool, abi: poolAbi, functionName: 'rentRate', args: [] },
-      { address: deployedPool, abi: poolAbi, functionName: 'rentEnd', args: [] },
-      { address: deployedPool, abi: poolAbi, functionName: 'rentLastUpdate', args: [] },
-      { address: deployedPool, abi: poolAbi, functionName: 'totalSupply', args: [] },
-      { address: deployedPool, abi: poolAbi, functionName: 'balanceOf', args: [user ?? '0x0000000000000000000000000000000000000000'] },
-      { address: deployedPool, abi: poolAbi, functionName: 'rentDebt', args: [user ?? '0x0000000000000000000000000000000000000000'] },
-      { address: deployedPool, abi: poolAbi, functionName: 'rentPending', args: [user ?? '0x0000000000000000000000000000000000000000'] }
+      { address: pool, abi: poolAbi, functionName: 'accPerShare', args: [] },
+      { address: pool, abi: poolAbi, functionName: 'rentRate', args: [] },
+      { address: pool, abi: poolAbi, functionName: 'rentEnd', args: [] },
+      { address: pool, abi: poolAbi, functionName: 'rentLastUpdate', args: [] },
+      { address: pool, abi: poolAbi, functionName: 'totalSupply', args: [] },
+      { address: pool, abi: poolAbi, functionName: 'balanceOf', args: [user ?? '0x0000000000000000000000000000000000000000'] },
+      { address: pool, abi: poolAbi, functionName: 'rentDebt', args: [user ?? '0x0000000000000000000000000000000000000000'] },
+      { address: pool, abi: poolAbi, functionName: 'rentPending', args: [user ?? '0x0000000000000000000000000000000000000000'] }
     ] as const,
     query: {
       // Sans adresse connectée il n'y a pas de position à lire, et les trois

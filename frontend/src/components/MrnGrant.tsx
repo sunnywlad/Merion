@@ -3,7 +3,8 @@
 import { useState, useRef, useEffect } from 'react';
 import { useWriteContract, useConnection, useWaitForTransactionReceipt, useReadContract, useWatchAsset } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
-import { deployedFaucet, deployedMrn, MRN_DECIMALS } from '@/constants/addresses';
+import { useAddresses } from '@/hooks/useAddresses';
+import { MRN_DECIMALS } from '@/constants/addresses';
 import { mrnFaucetAbi } from '@/constants/abi';
 import Panel from '@/components/Panel';
 import { Button } from '@/components/ui/Button';
@@ -23,6 +24,7 @@ const MrnGrant = () => {
   const { isLoading, isSuccess } = useWaitForTransactionReceipt({ hash });
   const waiting = isPending || isLoading;
   const queryClient = useQueryClient();
+  const { faucet, mrn } = useAddresses();
 
   // `dripInterval` et `dripAmount` sont des `immutable` cote contrat : une
   // lecture par session suffit (staleTime Infinity). Lire depuis le contrat
@@ -30,18 +32,18 @@ const MrnGrant = () => {
   // faucet change, le front suit en silence, sans desync entre le label, le
   // cooldown et la regle on-chain.
   const dripInterval = useReadContract({
-    address: deployedFaucet ?? undefined,
+    address: faucet ?? undefined,
     abi: mrnFaucetAbi,
     functionName: 'dripInterval',
     args: [],
-    query: { enabled: deployedFaucet !== null, staleTime: Infinity }
+    query: { enabled: faucet !== null, staleTime: Infinity }
   });
   const dripAmount = useReadContract({
-    address: deployedFaucet ?? undefined,
+    address: faucet ?? undefined,
     abi: mrnFaucetAbi,
     functionName: 'dripAmount',
     args: [],
-    query: { enabled: deployedFaucet !== null, staleTime: Infinity }
+    query: { enabled: faucet !== null, staleTime: Infinity }
   });
 
   // Le `lastDripAt` lu en polling lent (30 s) suffit : la valeur bouge une
@@ -51,18 +53,18 @@ const MrnGrant = () => {
   const connection = useConnection();
   const userAddress = connection.address;
   const lastDrip = useReadContract({
-    address: deployedFaucet ?? undefined,
+    address: faucet ?? undefined,
     abi: mrnFaucetAbi,
     functionName: 'lastDripAt',
     args: userAddress === undefined ? undefined : [userAddress],
-    query: { enabled: deployedFaucet !== null && userAddress !== undefined, refetchInterval: 30000 }
+    query: { enabled: faucet !== null && userAddress !== undefined, refetchInterval: 30000 }
   });
   const lastDripAt = lastDrip.data;
 
   const drip = () => {
-    if (!userAddress || deployedFaucet === null) return;
+    if (!userAddress || faucet === null) return;
     mutate({
-      address: deployedFaucet,
+      address: faucet,
       abi: mrnFaucetAbi,
       functionName: 'drip',
       args: []
@@ -82,7 +84,7 @@ const MrnGrant = () => {
         asked.current = true;
         // L'ajout au wallet regarde MRN, pas le faucet : c'est MRN que
         // l'utilisateur veut voir avec 18 decimales dans MetaMask.
-        watchAsset({ type: 'ERC20', options: { address: deployedMrn, symbol: 'MRN', decimals: MRN_DECIMALS } });
+        watchAsset({ type: 'ERC20', options: { address: mrn, symbol: 'MRN', decimals: MRN_DECIMALS } });
       }
     }
   }, [isSuccess, queryClient, watchAsset]);
@@ -106,7 +108,7 @@ const MrnGrant = () => {
     ? Number(lastDripAt) + Number(dripInterval.data) - now
     : 0;
   const inCooldown = lastDripAt !== undefined && cooldownSeconds > 0;
-  const faucetMissing = deployedFaucet === null;
+  const faucetMissing = faucet === null;
   // Note §4 « Montants en MRN » : 2 décimales, grouping français,
   // troncature. Le helper `formatAmount` ne reçoit pas d'unité : on la
   // rend en `<span>` séparé dans chaque carte ci-dessous, comme pour

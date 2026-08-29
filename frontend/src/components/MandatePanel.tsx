@@ -8,7 +8,8 @@ import { useManagerOf } from '@/hooks/useManagerOf';
 import { useRentPosition } from '@/hooks/useRentPosition';
 import { useConstants } from '@/hooks/useConstants';
 import { useChainNow } from '@/hooks/useChainNow';
-import { deployedAuction, tokensInfo, MRN_DECIMALS } from '@/constants/addresses';
+import { MRN_DECIMALS } from '@/constants/addresses';
+import { useAddresses } from '@/hooks/useAddresses';
 import { secondsLeft, formatCountdown } from '@/lib/mandateWindow';
 import { rentClaimable } from '@/lib/rentClaimable';
 import { collectReadErrors } from '@/lib/readErrors';
@@ -26,9 +27,6 @@ const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 // reconnaître la sienne.
 const short = (address: string) => `${address.slice(0, 6)}…${address.slice(-4)}`;
 
-const nameOf = (index: number) =>
-  tokensInfo.find((token) => token.index === BigInt(index))?.name ?? String(index);
-
 export default function MandatePanel() {
   // Le décompte se cale sur le temps de la chaîne (`useChainNow`), pas sur
   // l'horloge navigateur (`useNow`) : une dérive de quelques minutes entre
@@ -37,6 +35,7 @@ export default function MandatePanel() {
   // deux blocs, donc la précision seconde-par-seconde est préservée.
   const now = useChainNow();
   const user = useConnection().address;
+  const { auction: deployedAuction, tokens: tokensInfo } = useAddresses();
 
   const auction = useAuctionState();
   const constants = useAuctionConstants();
@@ -226,7 +225,7 @@ export default function MandatePanel() {
                 unit="%"
               />
               <li>
-                Surcharge active on: {fees.surcharged.map(([i, j]) => `${nameOf(i)} → ${nameOf(j)}`).join(', ')}
+                Surcharge active on: {fees.surcharged.map(([i, j]) => `${tokensInfo.find((t) => t.index === BigInt(i))?.name ?? i} → ${tokensInfo.find((t) => t.index === BigInt(j))?.name ?? j}`).join(', ')}
               </li>
             </>
           )}

@@ -4,7 +4,8 @@ import { useState } from 'react';
 import { useConnection, useWriteContract, usePublicClient, useReadContract } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
 import { formatUnits } from 'viem';
-import { deployedAuction, deployedMrn, deployedPool, MRN_DECIMALS } from '@/constants/addresses';
+import { MRN_DECIMALS } from '@/constants/addresses';
+import { useAddresses } from '@/hooks/useAddresses';
 import { auctionAbi, mrnAbi, poolAbi } from '@/constants/abi';
 import { useAuctionState } from '@/hooks/useAuctionState';
 import { useAuctionConstants } from '@/hooks/useAuctionConstants';
@@ -36,6 +37,7 @@ export default function AuctionPanel() {
   const publicClient = usePublicClient();
   const queryClient = useQueryClient();
   const { mutateAsync } = useWriteContract();
+  const { auction: deployedAuction, mrn: deployedMrn, pool: deployedPool } = useAddresses();
 
   const [bidInput, setBidInput] = useState('');
   const [feeInput, setFeeInput] = useState('');

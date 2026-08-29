@@ -3,7 +3,7 @@
 import { useReserves } from "@/hooks/useReserves";
 import { useMinimumLiquidity } from "@/hooks/useMinimumLiquidity";
 import { useState } from "react";
-import { deployedPool, tokensInfo } from "@/constants/addresses";
+import { useAddresses } from "@/hooks/useAddresses";
 import {mockWrappedBTCAbi, poolAbi} from '@/constants/abi';
 import {useWriteContract, useConnection, usePublicClient} from 'wagmi';
 import { useQueryClient } from "@tanstack/react-query";
@@ -44,6 +44,7 @@ const AddLiquidity = () => {
   const { mutateAsync } = useWriteContract();
   const publicClient = usePublicClient();
   const queryClient = useQueryClient();
+  const { pool: deployedPool, tokens: tokensInfo } = useAddresses();
 
   const { reserves: reserveEntries, supply: supplyEntry, error: errorReserves } = useReserves();
   const supply = supplyEntry?.status === 'success' ? supplyEntry.result : undefined;

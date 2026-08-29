@@ -5,7 +5,8 @@ import { useConnection } from 'wagmi';
 import { useUserBalances } from '@/hooks/useUserBalances';
 import { useLpBalance } from '@/hooks/useLpBalance';
 import { useReserves } from '@/hooks/useReserves';
-import { MRN_DECIMALS, tokensInfo } from '@/constants/addresses';
+import { MRN_DECIMALS } from '@/constants/addresses';
+import { useAddresses } from '@/hooks/useAddresses';
 import AmountLine from '@/components/AmountLine';
 import { AppStateBoundary } from '@/components/ui/AppStateBoundary';
 
@@ -31,6 +32,7 @@ import { AppStateBoundary } from '@/components/ui/AppStateBoundary';
  */
 export default function Balances() {
   const { status } = useConnection();
+  const { tokens: tokensInfo } = useAddresses();
 
   const { btcBalances, mrnBalance, refundBalance, isLoading, error } =
     useUserBalances();

@@ -1,7 +1,7 @@
 'use client';
 
 import { useReserves } from '@/hooks/useReserves';
-import { tokensInfo } from '@/constants/addresses';
+import { useAddresses } from '@/hooks/useAddresses';
 import AmountLine from '@/components/AmountLine';
 import { AppStateBoundary } from '@/components/ui/AppStateBoundary';
 import ReservesBar from '@/components/ReservesBar';
@@ -20,6 +20,7 @@ import ReservesBar from '@/components/ReservesBar';
  */
 export default function Reserves() {
   const { reserves, supply, isLoading, error } = useReserves();
+  const { tokens } = useAddresses();
 
   if (error) {
     return (
@@ -35,7 +36,7 @@ export default function Reserves() {
   }
 
   const reserveResults =
-    reserves?.length === tokensInfo.length
+    reserves?.length === tokens.length
       ? reserves.map((entry) =>
           entry?.status === 'success' ? entry.result : undefined,
         )
@@ -46,7 +47,7 @@ export default function Reserves() {
   const totalReserves = allLoaded
     ? reserveResults!.reduce<bigint>((acc, v) => acc + (v ?? 0n), 0n)
     : 0n;
-  const shares = tokensInfo.map((_token, i) => {
+  const shares = tokens.map((_token, i) => {
     const v = reserveResults?.[i];
     if (v === undefined || totalReserves === 0n) return 0;
     return Number((v * 10000n) / totalReserves) / 10000;
@@ -57,7 +58,7 @@ export default function Reserves() {
       <h3 className="text-h5 font-medium text-cloud/80">Pool reserves</h3>
 
       <div className="flex flex-col gap-2">
-        {tokensInfo.map((token, i) => (
+        {tokens.map((token, i) => (
           <ReservesBar
             key={token.name}
             tokenSymbol={token.name}
@@ -67,7 +68,7 @@ export default function Reserves() {
       </div>
 
       <ul className="border-t border-cloud/10 pt-2">
-        {tokensInfo.map((token, i) => {
+        {tokens.map((token, i) => {
           const entry = reserves?.[i];
           return (
             <AmountLine

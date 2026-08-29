@@ -4,7 +4,7 @@ import { useReserves } from "@/hooks/useReserves";
 import { useLpBalance } from "@/hooks/useLpBalance";
 import { useState } from "react";
 import { formatUnits } from "viem";
-import { deployedPool, tokensInfo } from "@/constants/addresses";
+import { useAddresses } from "@/hooks/useAddresses";
 import {poolAbi} from '@/constants/abi';
 import {useWriteContract, useConnection, usePublicClient} from 'wagmi';
 import { useQueryClient } from "@tanstack/react-query";
@@ -47,6 +47,7 @@ const RemoveLiquidity = () => {
   const { mutateAsync } = useWriteContract();
   const publicClient = usePublicClient();
   const queryClient = useQueryClient();
+  const { pool: deployedPool, tokens: tokensInfo } = useAddresses();
 
   const { reserves: reserveEntries, supply: supplyEntry, error: errorReserves } = useReserves();
   const supply = supplyEntry?.status === 'success' ? supplyEntry.result : undefined;

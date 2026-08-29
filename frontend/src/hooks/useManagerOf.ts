@@ -1,5 +1,5 @@
 import { useReadContract } from 'wagmi';
-import { deployedPool } from '@/constants/addresses';
+import { useAddresses } from '@/hooks/useAddresses';
 import { poolAbi } from '@/constants/abi';
 import { AUCTION_POLL_MS } from '@/hooks/useAuctionState';
 
@@ -17,8 +17,9 @@ import { AUCTION_POLL_MS } from '@/hooks/useAuctionState';
 // mandat vaut quelques dollars, donc un mandat invendu est la prédiction
 // honnête, et le pool tourne alors au tarif nominal.
 export function useManagerOf(epoch: bigint | undefined) {
+  const { pool } = useAddresses();
   return useReadContract({
-    address: deployedPool,
+    address: pool,
     abi: poolAbi,
     functionName: 'managerOf',
     args: epoch === undefined ? undefined : [epoch],

@@ -13,7 +13,7 @@ import { StatusDot } from '@/components/ui/StatusDot';
 // sans casser l'autre.
 const mintedAmount = parseUnits("10", 8);
 
-const MintAllButton = ({ tokens }: { tokens: { name: string; address: Address }[] }) => {
+const MintAllButton = ({ tokens }: { tokens: readonly { name: string; address: Address }[] }) => {
   const userAddress = useConnection().address;
   const publicClient = usePublicClient();
   const { mutateAsync } = useWriteContract();

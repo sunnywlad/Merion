@@ -5,7 +5,7 @@ import { useEffectiveFees } from "@/hooks/useEffectiveFees";
 import { useConstants } from "@/hooks/useConstants";
 import { useUserBalances } from "@/hooks/useUserBalances";
 import { useState } from "react";
-import { deployedPool, tokensInfo } from "@/constants/addresses";
+import { useAddresses } from "@/hooks/useAddresses";
 import {mockWrappedBTCAbi, poolAbi} from '@/constants/abi';
 import {useWriteContract, useConnection, usePublicClient} from 'wagmi';
 import { useQueryClient } from "@tanstack/react-query";
@@ -56,6 +56,7 @@ const Swap = () => {
   const { mutateAsync } = useWriteContract();
   const publicClient = usePublicClient();
   const queryClient = useQueryClient();
+  const { pool: deployedPool, tokens: tokensInfo } = useAddresses();
 
   const { btcBalances } = useUserBalances();
   const balanceInData = btcBalances[indexIn];
