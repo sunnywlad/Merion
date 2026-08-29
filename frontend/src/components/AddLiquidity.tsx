@@ -6,7 +6,6 @@ import { useState } from "react";
 import { useAddresses } from "@/hooks/useAddresses";
 import {mockWrappedBTCAbi, poolAbi} from '@/constants/abi';
 import {useWriteContract, useConnection, usePublicClient} from 'wagmi';
-import { useQueryClient } from "@tanstack/react-query";
 import { getQuote } from "@/lib/quoteAddLiquidity";
 import Panel from "@/components/Panel";
 import { collectReadErrors } from "@/lib/readErrors";
@@ -43,10 +42,9 @@ const AddLiquidity = () => {
 
   const { mutateAsync } = useWriteContract();
   const publicClient = usePublicClient();
-  const queryClient = useQueryClient();
   const { pool: deployedPool, tokens: tokensInfo } = useAddresses();
 
-  const { reserves: reserveEntries, supply: supplyEntry, error: errorReserves } = useReserves();
+  const { reserves: reserveEntries, supply: supplyEntry, error: errorReserves, refetch: refetchReserves } = useReserves();
   const supply = supplyEntry?.status === 'success' ? supplyEntry.result : undefined;
   const { data: minLiq, error: errorMinLiq } = useMinimumLiquidity(supply === 0n);
 
@@ -120,7 +118,11 @@ const AddLiquidity = () => {
         args: [BigInt(anchor), quote.computed[anchor], quote.minExpected]
       })
       await publicClient.waitForTransactionReceipt({hash});
-      queryClient.invalidateQueries();
+      // V.4/bug-race — refetch ciblé des réserves APRÈS settle pour
+      // que la prochaine quote voie le bon état du pool. Le supply
+      // (totalSupply) est inclus dans le même useReadContracts que
+      // les réserves, donc un seul appel RPC suffit.
+      await refetchReserves();
       setTypedAmount("");
       setAnchor(null);
       setTolerance("");

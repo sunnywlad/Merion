@@ -4,7 +4,7 @@ import {poolAbi} from '@/constants/abi';
 
 export function useReserves() {
   const { pool, tokens } = useAddresses();
-  const { data, isLoading, error, queryKey } = useReadContracts({
+  const { data, isLoading, error, refetch, queryKey } = useReadContracts({
     contracts: [...tokens.map((token) => {
       return {
         address: pool,
@@ -25,6 +25,10 @@ export function useReserves() {
     supply: data?.[3],
     isLoading,
     error,
+    // V.4/bug-race — refetch exposé pour que les flows multi-tx (Swap,
+    // AddLiquidity, RemoveLiquidity) puissent forcer un re-read ciblé
+    // des réserves APRÈS settle, au lieu de `refetchQueries()` global.
+    refetch,
     queryKey
   }
 }

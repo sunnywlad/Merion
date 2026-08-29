@@ -4,11 +4,10 @@ import { useReserves } from "@/hooks/useReserves";
 import { useEffectiveFees } from "@/hooks/useEffectiveFees";
 import { useConstants } from "@/hooks/useConstants";
 import { useUserBalances } from "@/hooks/useUserBalances";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useAddresses } from "@/hooks/useAddresses";
 import {mockWrappedBTCAbi, poolAbi} from '@/constants/abi';
 import {useWriteContract, useConnection, usePublicClient} from 'wagmi';
-import { useQueryClient } from "@tanstack/react-query";
 import { getQuote } from "@/lib/quoteSwap";
 import { shareBps } from "@/lib/quote";
 import Panel from '@/components/Panel';
@@ -55,14 +54,13 @@ const Swap = () => {
 
   const { mutateAsync } = useWriteContract();
   const publicClient = usePublicClient();
-  const queryClient = useQueryClient();
   const { pool: deployedPool, tokens: tokensInfo } = useAddresses();
 
-  const { btcBalances } = useUserBalances();
+  const { btcBalances, refetch: refetchBalances } = useUserBalances();
   const balanceInData = btcBalances[indexIn];
   const balanceIn = balanceInData?.result;
 
-  const {error: errorReserves, reserves: reserveEntries} = useReserves();
+  const {error: errorReserves, reserves: reserveEntries, refetch: refetchReserves} = useReserves();
   const {error: errorFees, feeFor, errorFor} = useEffectiveFees();
   const effectiveFeeNum = feeFor(indexIn, indexOut);
   const {error: errorConstants, feeDen: feeDenData} = useConstants();
@@ -117,8 +115,15 @@ const Swap = () => {
   poolState: {reserves, effectiveFeeNum, feeDen}
   });
 
+  // V.4/bug-race — `setIsPending(true)` est asynchrone, donc entre les
+  // deux clicks d'un double-clic rapide, l'état React n'a pas encore
+  // basculé et le bouton n'est pas encore `disabled`. Un ref synchrone
+  // ferme cette fenêtre, sans dépendre du scheduling React.
+  const swapInFlight = useRef(false);
   const handleSwap = async () => {
+    if (swapInFlight.current) return;
     if (!userAddress || side === null || !quote || !publicClient) return;
+    swapInFlight.current = true;
     setError(null);
     try {
       setIsPending(true);
@@ -137,13 +142,22 @@ const Swap = () => {
         args: [BigInt(quote.tokenIn.index), quote.tokenIn.amount, BigInt(quote.tokenOut.index), quote.tokenOut.minAmount]
       })
       await publicClient.waitForTransactionReceipt({hash: hashSwap});
-      queryClient.invalidateQueries();
+      // V.4/bug-race — `invalidateQueries` marque stale sans refetch ;
+      // le user balance / reserves reste sur l'ancienne valeur jusqu'au
+      // prochain poll, et la quote suivante est calculée sur du faux.
+      // Refetch ciblé sur les deux queries qui bougent réellement (soldes
+      // de l'appelant + réserves du pool) ; le reste (constants, fees,
+      // auction state) n'a aucune raison d'être re-lu.
+      await Promise.all([refetchBalances(), refetchReserves()]);
       setTypedAmount("");
       setSide(null);
       setTolerance("");
     } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
-    } finally {setIsPending(false)};
+    } finally {
+      setIsPending(false);
+      swapInFlight.current = false;
+    }
   }
 
   const expected = quote ? {in: quote.tokenIn.amount, out: quote.tokenOut.amount} : null;

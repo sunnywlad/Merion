@@ -32,7 +32,7 @@ export function useUserBalances() {
   const userAddress = useConnection().address;
   const { tokens, mrn, auction } = useAddresses();
 
-  const { data, isLoading, error } = useReadContracts({
+  const { data, isLoading, error, refetch } = useReadContracts({
     contracts: [
       ...tokens.map((token) => ({
         address: token.address,
@@ -65,6 +65,11 @@ export function useUserBalances() {
     mrnBalance,
     refundBalance,
     isLoading,
+    // V.4/bug-race — refetch exposé pour que les flows multi-tx (Swap)
+    // puissent forcer un re-read ciblé des soldes APRÈS settle, au lieu
+    // de `refetchQueries()` global qui tire aussi les constants, fees,
+    // auction, etc.
+    refetch,
     // Deux niveaux d'erreur replies en un : la requete globale peut mourir
     // (noeud injoignable), ou une entree individuelle peut echouer pendant
     // que ses voisines reussissent (cf. web3-libs-seen, "two error levels").

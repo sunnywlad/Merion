@@ -7,7 +7,6 @@ import { formatUnits } from "viem";
 import { useAddresses } from "@/hooks/useAddresses";
 import {poolAbi} from '@/constants/abi';
 import {useWriteContract, useConnection, usePublicClient} from 'wagmi';
-import { useQueryClient } from "@tanstack/react-query";
 import { getQuote } from "@/lib/quoteRemoveLiquidity";
 import { collectReadErrors } from "@/lib/readErrors";
 import { Button } from "@/components/ui/Button";
@@ -46,12 +45,11 @@ const RemoveLiquidity = () => {
 
   const { mutateAsync } = useWriteContract();
   const publicClient = usePublicClient();
-  const queryClient = useQueryClient();
   const { pool: deployedPool, tokens: tokensInfo } = useAddresses();
 
-  const { reserves: reserveEntries, supply: supplyEntry, error: errorReserves } = useReserves();
+  const { reserves: reserveEntries, supply: supplyEntry, error: errorReserves, refetch: refetchReserves } = useReserves();
   const supply = supplyEntry?.status === 'success' ? supplyEntry.result : undefined;
-  const { data: maxShares, error: errorLpBalance } = useLpBalance();
+  const { data: maxShares, error: errorLpBalance, refetch: refetchLpBalance } = useLpBalance();
 
   const connection = useConnection();
   const userAddress = connection.address;
@@ -111,7 +109,10 @@ const RemoveLiquidity = () => {
         args: [quote.shares, quote.minExpected]
       })
       await publicClient.waitForTransactionReceipt({hash});
-      queryClient.invalidateQueries();
+      // V.4/bug-race — refetch ciblé des réserves ET du solde LP APRÈS
+      // settle : les deux bougent sur un removeLiquidity, et la quote
+      // suivante doit voir le nouvel état sans attendre le poll.
+      await Promise.all([refetchReserves(), refetchLpBalance()]);
       setTypedAmount("");
       setAnchor(null);
       setTolerance("");
