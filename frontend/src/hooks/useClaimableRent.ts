@@ -1,7 +1,7 @@
 import { useReadContract } from 'wagmi';
 import type { Address } from 'viem';
 import { useAddresses } from '@/hooks/useAddresses';
-import { AUCTION_POLL_MS } from '@/hooks/useAuctionState';
+import { AUCTION_POLL_MS } from '@/hooks/_constants';
 
 // I.4 — Vue on-chain `claimable(address)` du Pool (Pool.sol:985). Le
 // commentaire de tête à Pool.sol:977-981 l'annonçait comme la source

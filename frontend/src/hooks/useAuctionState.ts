@@ -1,6 +1,7 @@
 import { useReadContracts } from 'wagmi';
 import { useAddresses } from '@/hooks/useAddresses';
 import { auctionAbi } from '@/constants/abi';
+import { AUCTION_POLL_MS } from '@/hooks/_constants';
 
 // I.5 — L'état vivant de l'enchère, en un seul multicall. Ce qui bouge est ici,
 // ce qui ne bouge jamais est dans `useAuctionConstants` : c'est la séparation
@@ -9,8 +10,8 @@ import { auctionAbi } from '@/constants/abi';
 // L'INTERVALLE : 15 secondes, quand le décompte affiché tique à la seconde.
 // Le décompte est local, dérivé de `closesAt()`, et il ne ment que d'une
 // seconde ; relire la chaîne à chaque tick serait quinze fois le trafic RPC
-// pour la même information.
-export const AUCTION_POLL_MS = 15_000;
+// pour la même information. La constante vit dans `_constants.ts` (R3/B.4)
+// pour qu'un hook applicatif ne serve plus de module de constantes.
 
 export function useAuctionState() {
   const { auction } = useAddresses();

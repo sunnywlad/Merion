@@ -11,17 +11,12 @@ import { useChainNow } from '@/hooks/useChainNow';
 import { useMandateTimeline } from '@/hooks/useMandateTimeline';
 import { MRN_DECIMALS } from '@/constants/addresses';
 import { useAddresses } from '@/hooks/useAddresses';
+import { ZERO_ADDRESS } from '@/hooks/_constants';
 import { secondsLeft, formatCountdown } from '@/lib/mandateWindow';
 import AmountLine from '@/components/AmountLine';
 import { MandateTimeline } from '@/components/MandateTimeline';
 import { AppStateBoundary } from '@/components/ui/AppStateBoundary';
 import { ReadErrorBoundary } from '@/components/ui/ReadErrorBoundary';
-
-const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
-
-// Une adresse entière déborde la barre latérale, et les deux bouts suffisent à
-// reconnaître la sienne.
-const short = (address: string) => `${address.slice(0, 6)}…${address.slice(-4)}`;
 
 export default function MandatePanel() {
   // Le décompte se cale sur le temps de la chaîne (`useChainNow`), pas sur

@@ -1,7 +1,7 @@
 import { useReadContract } from 'wagmi';
 import { useAddresses } from '@/hooks/useAddresses';
 import { poolAbi } from '@/constants/abi';
-import { AUCTION_POLL_MS } from '@/hooks/useAuctionState';
+import { AUCTION_POLL_MS } from '@/hooks/_constants';
 
 // I.5 — Le gestionnaire nommé pour un mandat donné, lu sur le Pool.
 //

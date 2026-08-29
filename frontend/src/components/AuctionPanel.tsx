@@ -18,12 +18,11 @@ import { parseAmount } from '@/lib/parseAmount';
 import Panel from '@/components/Panel';
 import { Button } from '@/components/ui/Button';
 import { ReadErrorBoundary } from '@/components/ui/ReadErrorBoundary';
+import { ZERO_ADDRESS } from '@/hooks/_constants';
 
 // Bande du gestionnaire : `MAX_FEE_NUM / UNBALANCE_FACTOR`, dérivée côté
 // contrat à la volée. Le facteur vit dans le contrat (constant), donc la
 // borne supérieure est calculée ici sans nouvelle lecture.
-
-const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const UNBALANCE_FACTOR = 2n;
 
 // I.6 — Panneau d'enchère : mêmes `Panel`/bordures/champs que le reste de la
