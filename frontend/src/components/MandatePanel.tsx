@@ -8,16 +8,13 @@ import { useManagerOf } from '@/hooks/useManagerOf';
 import { useClaimableRent } from '@/hooks/useClaimableRent';
 import { useConstants } from '@/hooks/useConstants';
 import { useChainNow } from '@/hooks/useChainNow';
+import { useMandateTimeline } from '@/hooks/useMandateTimeline';
 import { MRN_DECIMALS } from '@/constants/addresses';
 import { useAddresses } from '@/hooks/useAddresses';
 import { secondsLeft, formatCountdown } from '@/lib/mandateWindow';
 import { collectReadErrors } from '@/lib/readErrors';
 import AmountLine from '@/components/AmountLine';
 import { MandateTimeline } from '@/components/MandateTimeline';
-import {
-  computeMandateStatus,
-  computeLateWindow,
-} from '@/components/_mandateStatus';
 import { AppStateBoundary } from '@/components/ui/AppStateBoundary';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -41,8 +38,15 @@ export default function MandatePanel() {
   const fees = useEffectiveFees();
   const { feeDen: feeDenEntry, error: errorPoolConstants } = useConstants();
   const rent = useClaimableRent(user);
+  const {
+    currentEpoch,
+    startTime,
+    endTime,
+    totalDuration,
+    lateWindow,
+    timelineStatus,
+  } = useMandateTimeline();
 
-  const currentEpoch = auction.currentEpoch?.status === 'success' ? auction.currentEpoch.result : undefined;
   const managerNow = useManagerOf(currentEpoch);
 
   // L'enchère n'est pas déployée : ce n'est pas une erreur de lecture, et
@@ -92,16 +96,6 @@ export default function MandatePanel() {
   // La fin du mandat courant = début du suivant : `genesis + (currentEpoch + 1)
   // * epochDuration`. La ligne se tait plutôt que d'inventer si l'une des
   // trois lectures manque.
-  const endTime = currentEpoch !== undefined
-    && constants.genesis !== undefined
-    && constants.epochDuration !== undefined
-      ? constants.genesis + (currentEpoch + 1n) * constants.epochDuration
-      : undefined;
-  const startTime = currentEpoch !== undefined
-    && constants.genesis !== undefined
-    && constants.epochDuration !== undefined
-      ? constants.genesis + currentEpoch * constants.epochDuration
-      : undefined;
   const timeToEnd = now !== null && endTime !== undefined ? secondsLeft(endTime, now) : null;
 
   // II.5 — Frise d'enchère. `lateWindow` n'est pas un constant du contrat :
@@ -109,23 +103,11 @@ export default function MandatePanel() {
   // rapport). `silence` utilise `bidSilence` lu par useAuctionConstants
   // s'il est disponible, sinon retombe sur 5 % de la durée (proportion
   // d'exemple du brief).
-  const totalDuration = startTime !== undefined && endTime !== undefined
-    ? Number(endTime - startTime)
-    : undefined;
-  const lateWindow = computeLateWindow(totalDuration);
   const silence = constants.bidSilence !== undefined
     ? Number(constants.bidSilence)
     : totalDuration !== undefined
       ? Math.floor(totalDuration * 0.05)
       : undefined;
-  // Source unique du `timelineStatus` (note §11, tâche 5) — la
-  // formule est partagée avec `AuctionBar` via `_mandateStatus.ts`.
-  const timelineStatus = computeMandateStatus({
-    now,
-    start: startTime,
-    end: endTime,
-    lateWindow,
-  });
 
   const claimable = rent.data;
 

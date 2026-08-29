@@ -1,18 +1,13 @@
 'use client';
 
-import { useAuctionState } from '@/hooks/useAuctionState';
-import { useAuctionConstants } from '@/hooks/useAuctionConstants';
 import { useEffectiveFees } from '@/hooks/useEffectiveFees';
 import { useConstants } from '@/hooks/useConstants';
 import { useChainNow } from '@/hooks/useChainNow';
+import { useMandateTimeline } from '@/hooks/useMandateTimeline';
 import { useAddresses } from '@/hooks/useAddresses';
 import { secondsLeft, formatCountdown } from '@/lib/mandateWindow';
 import AuctionPanel from '@/components/AuctionPanel';
 import MandatePanel from '@/components/MandatePanel';
-import {
-  computeMandateStatus,
-  computeLateWindow,
-} from '@/components/_mandateStatus';
 import Chevron from '@/components/ui/Chevron';
 import Disclosure from '@/components/ui/Disclosure';
 import { Badge, type BadgeVariant } from '@/components/ui/Badge';
@@ -38,45 +33,14 @@ import { Badge, type BadgeVariant } from '@/components/ui/Badge';
  * « Mandate » du rail — le mandat quitte le rail (cf. §7).
  */
 export default function AuctionBar() {
-  const auction = useAuctionState();
-  const constants = useAuctionConstants();
   const fees = useEffectiveFees();
   const poolConstants = useConstants();
   const now = useChainNow();
-
-  // — Statut du mandat courant, calculé exactement comme dans
-  //   MandatePanel (note §11 : pas de re-calcul, on duplique la lecture
-  //   par souci de clarté de la barre — la requête est dédupliquée par
-  //   wagmi sur le queryKey).
-  const currentEpoch =
-    auction.currentEpoch?.status === 'success'
-      ? auction.currentEpoch.result
-      : undefined;
-  const startTime =
-    currentEpoch !== undefined &&
-    constants.genesis !== undefined &&
-    constants.epochDuration !== undefined
-      ? constants.genesis + currentEpoch * constants.epochDuration
-      : undefined;
-  const endTime =
-    currentEpoch !== undefined &&
-    constants.genesis !== undefined &&
-    constants.epochDuration !== undefined
-      ? constants.genesis + (currentEpoch + 1n) * constants.epochDuration
-      : undefined;
-  const totalDuration =
-    startTime !== undefined && endTime !== undefined
-      ? Number(endTime - startTime)
-      : undefined;
-  const lateWindow = computeLateWindow(totalDuration);
-  // Source unique du `timelineStatus` (note §11, tâche 5) — la
-  // formule est partagée avec `MandatePanel` via `_mandateStatus.ts`.
-  const timelineStatus = computeMandateStatus({
-    now,
-    start: startTime,
-    end: endTime,
-    lateWindow,
-  });
+  const {
+    currentEpoch,
+    endTime,
+    timelineStatus,
+  } = useMandateTimeline();
 
   const STATUS_VARIANT: Record<typeof timelineStatus, BadgeVariant> = {
     new: 'new',
