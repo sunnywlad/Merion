@@ -27,6 +27,8 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 /// @notice Demo and consultant-facing MRN faucet. Holds a pre-funded
 ///         MRN reserve and drips a fixed amount to any caller, rate-
 ///         limited per address. No mint, no whitelist.
+/// @dev No mint: the reserve is seeded by a transfer from the deployer,
+///      so the MRN supply is unchanged.
 contract MrnFaucet is Ownable {
   using SafeERC20 for IERC20;
 
@@ -105,7 +107,8 @@ contract MrnFaucet is Ownable {
   /// @notice Withdraws `amount` MRN from the faucet to the owner.
   /// @dev Owner-only. The owner can use this to reclaim the leftover
   ///      reserve at the end of the demo, or to refill the faucet
-  ///      elsewhere.
+  ///      elsewhere. Reverts with `ERC20InsufficientBalance` if the
+  ///      faucet holds less than `amount`.
   /// @param amount Amount of MRN to withdraw.
   function withdraw(uint256 amount) external onlyOwner {
     mrn.safeTransfer(owner(), amount);

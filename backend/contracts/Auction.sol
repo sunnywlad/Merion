@@ -93,6 +93,11 @@ using SafeERC20 for IERC20;
 ///         next epoch. Bidders outbid each other during a fixed window
 ///         in MRN; the highest bid at settle-time designates the
 ///         manager, pays the LP rent, and burns the protocol share.
+/// @dev The pool's clock is snapshotted at construction so the two
+///      contracts cannot drift. Manager nomination happens once per
+///      auction, inside `settle`, which must be called during the
+///      `bidSilence` window: past the epoch rollover the pool's
+///      `EpochAlreadyStarted` guard fires and the epoch runs unmanaged.
 contract Auction {
 
   // -------------------------------------------------------------------------
@@ -111,15 +116,19 @@ contract Auction {
   // dans les tests. Voir build-auction.md 2.2 et 5.0 bis pour les valeurs
   // de demonstration (15 min, 0, 0, 10 MRN a 18 decimales, restated 2026-08-28).
   /// @notice Duration of the bidding window, in seconds, measured from
-  ///         the start of the previous epoch.
+  ///         the start of the epoch preceding the one being auctioned,
+  ///         i.e. the current epoch.
   uint256 public immutable auctionWindow;
   /// @notice Maximum soft-close extension in seconds, reserved for the
   ///         A1 soft-close gate. Set to 0 at I.3; the gate is not
   ///         active yet.
   uint256 public immutable maxExtension;
-  /// @notice Length of the silence window at the end of the bidding
-  ///         window, in seconds, during which the bot must call
-  ///         `settle` to nominate the manager.
+  /// @notice Length of the settle window at the end of the epoch, in
+  ///         seconds, during which the bot is expected to call
+  ///         `settle` and nominate the manager.
+  /// @dev Not enforced on-chain at I.3: the A4 gate that would close
+  ///      bidding during this window is still a FIXME, so this value
+  ///      is read by off-chain callers only.
   uint256 public immutable bidSilence;
   /// @notice Minimum first bid of any new auction, in MRN (18 decimals).
   uint256 public immutable minOpeningBid;
@@ -193,7 +202,7 @@ contract Auction {
   // (regle du projet : un seul denominateur par calcul, jamais partage).
   /// @notice Caller reward on `settle`, in basis points of `lpAmount`,
   ///         paid in MRN to the bot that nominates the manager
-  ///         (0,1 %).
+  ///         (0.1 %).
   uint256 constant public SETTLE_REWARD_BPS = 10;
 
   // -------------------------------------------------------------------------
@@ -206,7 +215,7 @@ contract Auction {
   // comparaison (voir entete de contrat, point (1)).
   /// @notice The epoch whose manager is currently being auctioned.
   ///         Equal to `currentEpoch() + 1` while the auction is live;
-  ///         stale value reset on the next `placeBid`.
+  ///         stale value reset by the next `placeBid` or `settle`.
   uint256 public sellingEpoch;
   /// @notice The current highest bid of the live auction, in MRN
   ///         (18 decimals). Zero when no bid is in flight.
@@ -407,6 +416,10 @@ contract Auction {
   // d'effet de bord.
   /// @notice Returns the closing timestamp of the bidding window for
   ///         the epoch currently being sold.
+  /// @dev Reverts by underflow while `sellingEpoch` is zero, i.e.
+  ///      before the first bid ever placed. Returns a stale value once
+  ///      the auction it describes has closed; pair it with
+  ///      `windowOpen()`.
   /// @return The unix timestamp at which the bidding window closes.
   function closesAt() public view returns (uint256) {
     return startOfEpoch(sellingEpoch - 1) + auctionWindow;
@@ -416,6 +429,10 @@ contract Auction {
   // Helpers internes
   // -------------------------------------------------------------------------
 
+  /// @dev Start timestamp of `epoch`, from the clock snapshotted at
+  ///      construction.
+  /// @param epoch The epoch number.
+  /// @return The unix timestamp at which `epoch` begins.
   function startOfEpoch(uint256 epoch) internal view returns (uint256) {
     return genesis + epoch * epochDuration;
   }
@@ -440,14 +457,16 @@ contract Auction {
   // crédité AVANT que l'Auction ne reçoive le MRN du nouveau, donc un
   // revert sur le transfert entrant n'affecte pas le refund crédité.
 
-  /// @notice Places a bid on the current auction. Reopens the slot
-  ///         for the next epoch if needed, credits the previous
-  ///         high bidder a refund, transfers MRN from the caller,
-  ///         and updates the auction state.
-  /// @dev Reverts with `WindowClosed` if the bidding window has
-  ///      closed, and with `BidTooLow` if the bid is below the
-  ///      minimum (either `minOpeningBid` or +10 % of the current
-  ///      high). Manager nomination is deferred to `settle`.
+  /// @notice Places a bid on the auction for the next epoch.
+  /// @dev When `sellingEpoch` is stale, the slot is reopened at zero
+  ///      and the previous winner is first captured into
+  ///      `pendingEpoch` and `pendingAmount` for `settle` to process;
+  ///      `refunds` are never cleared. The outbid bidder is credited,
+  ///      never paid (pull-only), then the MRN is pulled from the
+  ///      caller, who must have approved the auction first. Manager
+  ///      nomination is deferred to `settle`. Reverts with
+  ///      `WindowClosed` past the deadline and `BidTooLow` below
+  ///      `max(minOpeningBid, highBid * HIGH_BID_BPS / BPS_DEN)`.
   /// @param amount The bid amount, in MRN (18 decimals).
   //
   // La nomination du gestionnaire par `pool.setManager` est reportee a
@@ -527,8 +546,8 @@ contract Auction {
     // fenetre d'enchere plus tot.
 
     // (3) Seuil. La hausse minimale est +10 % (build-auction.md 5.3 (3),
-    // HIGH_BID_BPS = 1100 sur BPS_DEN = 10000). `highBid` valant 0 pour
-    // la premiere mise, `highBid * 1100 / 10000` rend 0, donc le seuil
+    // HIGH_BID_BPS = 11000 sur BPS_DEN = 10000). `highBid` valant 0 pour
+    // la premiere mise, `highBid * 11000 / 10000` rend 0, donc le seuil
     // effectif est `MIN_OPENING_BID`. Le `max` evite une double
     // verification et protege la borne inferieure pour les encheres
     // vides.
@@ -626,10 +645,11 @@ contract Auction {
   ///         share, hands the rest to the pool as rent via
   ///         `Pool.notifyRent`, and nominates the high bidder as
   ///         the manager of `pendingEpoch`.
-  /// @dev Permissionless and idempotent. Captures a live auction
-  ///      into the pending slot if no previous settlement is queued.
-  ///      Reverts with `NoBidToSettle` if there is nothing to settle
-  ///      and no live auction either.
+  /// @dev Permissionless. Captures a live auction into the pending
+  ///      slot if no previous settlement is queued. Not idempotent:
+  ///      reverts with `NoBidToSettle` when there is nothing to
+  ///      settle and no live auction either, which is what a second
+  ///      consecutive call hits.
   function settle() external {
     if (pendingEpoch == 0 && pendingAmount == 0) {
       // Le slot est vide, mais l'enchere COURANTE peut encore etre
@@ -663,6 +683,11 @@ contract Auction {
   // Doit etre appelee SEULEMENT quand le slot pending est non vide,
   // sinon le `pool.setManager(pendingEpoch, address(0))` reverterait
   // `ZeroManager` et l'evenement `Settled` porterait un manager vide.
+  /// @dev Splits `pendingAmount` 30 % burn / 70 % LP, pays the caller
+  ///      the settle reward, pulls the remainder to the pool as rent,
+  ///      nominates the manager, emits `Settled`, then clears both the
+  ///      pending slot and the live auction state.
+  /// @param manager The bidder to designate for `pendingEpoch`.
   function _settle(address manager) internal {
     // Le partage 70 / 30. La regle du projet (build-auction.md E7) : la
     // division ronde en faveur du pool, jamais en faveur de l'appelant.

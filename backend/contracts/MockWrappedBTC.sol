@@ -9,6 +9,8 @@ import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Capped.sol";
 ///         equal to BTC's 21M coin supply. Used as a stand-in for WBTC,
 ///         cbBTC or LBTC in the Merion test suite, never deployed to
 ///         production.
+/// @dev Permissionless `mint`: test fixture only. The 21M cap turns
+///      the pool's `uint72` overflow guards into invariants.
 contract MockWrappedBTC is ERC20Capped {
 
   /// @notice Deploys the mock token with the given name and symbol, and
