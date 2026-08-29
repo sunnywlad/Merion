@@ -44,7 +44,7 @@ const AddLiquidity = () => {
   const publicClient = usePublicClient();
   const { pool: deployedPool, tokens: tokensInfo } = useAddresses();
 
-  const { reserves: reserveEntries, supply: supplyEntry, error: errorReserves, refetch: refetchReserves } = useReserves();
+  const { reserves, entries, supply: supplyEntry, error: errorReserves, refetch: refetchReserves } = useReserves();
   const supply = supplyEntry?.status === 'success' ? supplyEntry.result : undefined;
   const { data: minLiq, error: errorMinLiq } = useMinimumLiquidity(supply === 0n);
 

@@ -20,8 +20,30 @@ export function useReserves() {
       }
     ] as const,
   })
+  // R3/B.2 — Aplatissement typé en tuple `[r0, r1, r2] | undefined` :
+  // les consommateurs lisent `reserves[0]`, `reserves[1]`, `reserves[2]`
+  // directement, sans refaire le `map/filter` local. Le tuple force
+  // l'assertion que les 3 entrées ont chargé, ce qui bloque la dérive
+  // à la 4e jambe.
+  const slice = data?.slice(0, 3);
+  const reserves: [bigint, bigint, bigint] | undefined =
+    slice?.[0]?.status === 'success' &&
+    slice?.[1]?.status === 'success' &&
+    slice?.[2]?.status === 'success'
+      ? [
+          slice[0].result,
+          slice[1].result,
+          slice[2].result,
+        ]
+      : undefined;
   return {
-    reserves: data?.slice(0, 3),
+    reserves,
+    // `entries` reste exposé pour les consommateurs qui ont besoin du
+    // `.error` par jambe (logging per-line dans Swap/AddLiquidity/
+    // RemoveLiquidity, affichage par token dans Reserves/PoolRail).
+    // Les valeurs sont sur `reserves[i]` ; `.error` n'est lisible que
+    // via `entries[i]?.error`.
+    entries: slice,
     supply: data?.[3],
     isLoading,
     error,

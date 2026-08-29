@@ -60,7 +60,7 @@ const Swap = () => {
   const balanceInData = btcBalances[indexIn];
   const balanceIn = balanceInData?.result;
 
-  const {error: errorReserves, reserves: reserveEntries, refetch: refetchReserves} = useReserves();
+  const {error: errorReserves, reserves, entries, refetch: refetchReserves} = useReserves();
   const {error: errorFees, feeFor, errorFor} = useEffectiveFees();
   const effectiveFeeNum = feeFor(indexIn, indexOut);
   const {error: errorConstants, feeDen: feeDenData} = useConstants();

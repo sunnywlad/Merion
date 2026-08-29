@@ -33,18 +33,12 @@ export default function PoolRail() {
   // pas un tableau complet ; sans charger le contrat pour `paused`, le
   // signal de pause reste dans le panneau de réserves.
   const summary = (() => {
-    const values =
-      reserves?.map((entry) =>
-        entry?.status === 'success' ? entry.result : undefined,
-      ) ?? [];
-    if (values.length < tokens.length) return `${tokens.length} assets`;
-    const defined = values.filter((v): v is bigint => v !== undefined);
-    if (defined.length < tokens.length) return `${tokens.length} assets`;
-    const total = defined.reduce<bigint>((acc, v) => acc + v, 0n);
+    if (!reserves) return `${tokens.length} assets`;
+    const total = reserves.reduce<bigint>((acc, v) => acc + v, 0n);
     if (total === 0n) return `${tokens.length} assets`;
     const target = 1 / 3;
     const band = 0.04;
-    const shares = defined.map(
+    const shares = reserves.map(
       (v) => Number((v * 10000n) / total) / 10000,
     );
     const balanced = shares.every((s) => Math.abs(s - target) <= band);

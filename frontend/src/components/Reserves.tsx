@@ -19,7 +19,7 @@ import ReservesBar from '@/components/ReservesBar';
  * tout plafonne dans la colonne du rail.
  */
 export default function Reserves() {
-  const { reserves, supply, isLoading, error } = useReserves();
+  const { reserves, entries, supply, isLoading, error } = useReserves();
   const { tokens } = useAddresses();
 
   if (error) {
@@ -35,20 +35,12 @@ export default function Reserves() {
     );
   }
 
-  const reserveResults =
-    reserves?.length === tokens.length
-      ? reserves.map((entry) =>
-          entry?.status === 'success' ? entry.result : undefined,
-        )
-      : undefined;
-  const allLoaded =
-    reserveResults !== undefined &&
-    reserveResults.every((v) => v !== undefined);
+  const allLoaded = reserves !== undefined;
   const totalReserves = allLoaded
-    ? reserveResults!.reduce<bigint>((acc, v) => acc + (v ?? 0n), 0n)
+    ? reserves!.reduce<bigint>((acc, v) => acc + v, 0n)
     : 0n;
   const shares = tokens.map((_token, i) => {
-    const v = reserveResults?.[i];
+    const v = reserves?.[i];
     if (v === undefined || totalReserves === 0n) return 0;
     return Number((v * 10000n) / totalReserves) / 10000;
   });
@@ -69,7 +61,7 @@ export default function Reserves() {
 
       <ul className="border-t border-cloud/10 pt-2">
         {tokens.map((token, i) => {
-          const entry = reserves?.[i];
+          const entry = entries?.[i];
           return (
             <AmountLine
               key={token.name}
