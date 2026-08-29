@@ -29,7 +29,6 @@ export default function Reserves() {
           kind: 'error',
           title: 'Could not read reserves',
           description: 'Unable to read the reserves.',
-          cause: error.message,
         }}
       />
     );

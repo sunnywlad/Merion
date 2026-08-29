@@ -4,14 +4,16 @@ import { AppStateBoundary } from '@/components/ui/AppStateBoundary';
 
 /**
  * Merion ReadErrorBoundary — dédouble le pattern « collectReadErrors →
- * console.error → borne d'état » répété 5 fois dans le front (Swap,
+ * borne d'état » répété 5 fois dans le front (Swap,
  * AddLiquidity, RemoveLiquidity, MandatePanel, Balances) + 1× la variante
  * `ReadErrors` du panneau d'enchère.
  *
  * 1. Filtre les sources non-vides via `collectReadErrors`.
- * 2. Logge chaque source via `console.error('[Merion]', source.message, source.error)`.
- * 3. Rend l'`AppStateBoundary` (variante `error`) si non-vide, avec
- *    `cause` = message de la première erreur, sinon `children`.
+ * 2. Rend l'`AppStateBoundary` (variante `error`) si non-vide, sinon `children`.
+ *
+ * Rien n'est loggé en console : la borne affiche le libellé que l'appelant a
+ * écrit, et le message viem sous-jacent ne remonte ni à l'écran ni aux outils
+ * de développement.
  *
  * Le préfixe `_` n'est PAS posé : le composant est un export public de
  * l'UI, partagé par les 6 sites applicatifs.
@@ -31,11 +33,7 @@ export function ReadErrorBoundary({
 }) {
   const failedReads = collectReadErrors(sources);
   if (failedReads.length === 0) return <>{children}</>;
-  for (const r of failedReads) {
-    console.error('[Merion]', r.message, r.error);
-  }
   const msgs = failedReads.map((r) => r.message);
-  const cause = failedReads.find((r) => r.error)?.error?.message ?? 'unknown';
   return (
     <AppStateBoundary
       state={{
@@ -44,7 +42,6 @@ export function ReadErrorBoundary({
         description: description
           ? description(msgs)
           : `Unable to read the data. ${msgs.join('; ')}`,
-        cause,
       }}
     />
   );

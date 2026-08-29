@@ -5,9 +5,6 @@ import { Button } from './Button';
 type ErrorStateProps = {
   title?: string;
   description?: string;
-  // Optional underlying error message, kept in a smaller, muted line so the
-  // user-facing description stays legible. Debug-only detail.
-  cause?: string;
   icon?: ReactNode;
   retry?: () => void;
 };
@@ -23,7 +20,6 @@ type ErrorStateProps = {
 export function ErrorState({
   title = 'Could not read on-chain data',
   description,
-  cause,
   icon,
   retry,
 }: ErrorStateProps) {
@@ -38,11 +34,6 @@ export function ErrorState({
           <h3 className="text-h4 font-medium text-cloud">{title}</h3>
           {description ? (
             <p className="text-body text-cloud/70">{description}</p>
-          ) : null}
-          {cause ? (
-            <p className="text-small text-cloud/60">
-              <span className="text-neutral">Cause:</span> {cause}
-            </p>
           ) : null}
           {retry ? (
             <div className="pt-1">

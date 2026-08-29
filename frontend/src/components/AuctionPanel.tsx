@@ -15,6 +15,9 @@ import { useRefund } from '@/hooks/useRefund';
 import { useChainNow } from '@/hooks/useChainNow';
 import { nextMinimumBid, secondsLeft, formatCountdown } from '@/lib/mandateWindow';
 import { parseAmount } from '@/lib/parseAmount';
+import { describeTxError } from '@/lib/txError';
+import { useIsWrongNetwork } from '@/hooks/useIsWrongNetwork';
+import { SUPPORTED_CHAINS_LABEL } from '@/components/ui/deployment';
 import Panel from '@/components/Panel';
 import { Button } from '@/components/ui/Button';
 import { ReadErrorBoundary } from '@/components/ui/ReadErrorBoundary';
@@ -33,6 +36,7 @@ export default function AuctionPanel() {
   // dans le même domaine temporel que `closesAt`, `genesis`, etc.
   const now = useChainNow();
   const user = useConnection().address;
+  const wrongNetwork = useIsWrongNetwork();
   const publicClient = usePublicClient();
   const queryClient = useQueryClient();
   const { mutateAsync } = useWriteContract();
@@ -168,7 +172,7 @@ export default function AuctionPanel() {
   const maxManagerFeeNum = maxFeeNum !== undefined ? maxFeeNum / UNBALANCE_FACTOR : undefined;
 
   const handlePlaceBid = async () => {
-    if (!user || !publicClient) return;
+    if (!user || !publicClient || wrongNetwork) return;
     const amount = parseAmount(bidInput, MRN_DECIMALS);
     if (amount === null) { setActionError('bid', 'Invalid amount'); return; }
     setActionError('bid', null);
@@ -192,12 +196,12 @@ export default function AuctionPanel() {
       queryClient.invalidateQueries();
       setBidInput('');
     } catch (e) {
-      setActionError('bid', e instanceof Error ? e.message : String(e));
+      setActionError('bid', describeTxError(e));
     } finally { setPending(null); }
   };
 
   const handleWithdrawRefund = async () => {
-    if (!user || !publicClient) return;
+    if (!user || !publicClient || wrongNetwork) return;
     setActionError('refund', null);
     try {
       setPending('refund');
@@ -210,12 +214,12 @@ export default function AuctionPanel() {
       await publicClient.waitForTransactionReceipt({ hash });
       queryClient.invalidateQueries();
     } catch (e) {
-      setActionError('refund', e instanceof Error ? e.message : String(e));
+      setActionError('refund', describeTxError(e));
     } finally { setPending(null); }
   };
 
   const handleSettle = async () => {
-    if (!user || !publicClient) return;
+    if (!user || !publicClient || wrongNetwork) return;
     setActionError('settle', null);
     try {
       setPending('settle');
@@ -228,14 +232,14 @@ export default function AuctionPanel() {
       await publicClient.waitForTransactionReceipt({ hash });
       queryClient.invalidateQueries();
     } catch (e) {
-      setActionError('settle', e instanceof Error ? e.message : String(e));
+      setActionError('settle', describeTxError(e));
     } finally { setPending(null); }
   };
 
   // `setFee` ne déplace aucun token : pas d'`approve`. Le tarif est saisi en
   // pourcentage et converti en `feeNum` à deux décimales (5 bp → 5).
   const handleSetFee = async () => {
-    if (!user || !publicClient) return;
+    if (!user || !publicClient || wrongNetwork) return;
     const feeNum = parseAmount(feeInput, 2);
     if (feeNum === null) { setActionError('setFee', 'Invalid fee'); return; }
     setActionError('setFee', null);
@@ -251,7 +255,7 @@ export default function AuctionPanel() {
       queryClient.invalidateQueries();
       setFeeInput('');
     } catch (e) {
-      setActionError('setFee', e instanceof Error ? e.message : String(e));
+      setActionError('setFee', describeTxError(e));
     } finally { setPending(null); }
   };
 
@@ -268,6 +272,12 @@ export default function AuctionPanel() {
     >
       <Panel>
       <p className='font-semibold pb-2'>Auction for the next mandate</p>
+
+      {wrongNetwork && (
+        <p className='text-small text-danger pb-3' role='alert'>
+          Wrong network — switch to {SUPPORTED_CHAINS_LABEL} to bid, settle or claim.
+        </p>
+      )}
 
       <div>Mandate for sale: {sellingEpoch === undefined ? '—' : String(sellingEpoch)}</div>
       <div>Window: {windowOpen === undefined ? '—' : (windowOpen ? 'open' : 'closed')}</div>
@@ -305,7 +315,7 @@ export default function AuctionPanel() {
           level="primary"
           onClick={handlePlaceBid}
           aria-busy={pending === 'bid' || undefined}
-          disabled={!user || pending !== null || bidInput === '' || bidBelowMinimum || windowOpen !== true}>
+          disabled={!user || pending !== null || wrongNetwork || bidInput === '' || bidBelowMinimum || windowOpen !== true}>
           {pending === 'bid' ? 'Approve + bid in progress' : 'Approve and bid'}
         </Button>
       </div>
@@ -337,7 +347,7 @@ export default function AuctionPanel() {
           level="secondary"
           onClick={handleWithdrawRefund}
           aria-busy={pending === 'refund' || undefined}
-          disabled={!user || pending !== null || !hasRefund}>
+          disabled={!user || pending !== null || wrongNetwork || !hasRefund}>
           {pending === 'refund' ? 'Withdrawal in progress' : 'Withdraw my refund'}
         </Button>
       </div>
@@ -348,7 +358,7 @@ export default function AuctionPanel() {
           level="secondary"
           onClick={handleSettle}
           aria-busy={pending === 'settle' || undefined}
-          disabled={!user || pending !== null || !hasBidToSettle}>
+          disabled={!user || pending !== null || wrongNetwork || !hasBidToSettle}>
           {pending === 'settle' ? 'Settlement in progress' : 'Settle'}
         </Button>
       </div>
@@ -379,7 +389,7 @@ export default function AuctionPanel() {
             level="secondary"
             onClick={handleSetFee}
             aria-busy={pending === 'setFee' || undefined}
-            disabled={!canSetFee || pending !== null || feeInput === ''}>
+            disabled={!canSetFee || pending !== null || wrongNetwork || feeInput === ''}>
             {pending === 'setFee' ? 'Applying fee' : 'Set fee'}
           </Button>
         </div>

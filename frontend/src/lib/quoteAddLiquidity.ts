@@ -31,15 +31,15 @@ export const getQuote = ({
 
   const amount = parseAmount(typedAmount);
   if (amount === null || amount < 0) {
-    return {quote: null, reason: "Montant invalide"};
+    return {quote: null, reason: "Invalid amount"};
   }
-  if (amount === 0n) return { quote: null, reason: "Montant trop faible"}
+  if (amount === 0n) return { quote: null, reason: "Amount too small"}
 
   if (supply === 0n) {
     if (minLiq === undefined) return {quote: null, reason: null};
     const expected = 3n * amount - minLiq;
     if (expected <= 0n) {
-      return {quote: null, reason: `Dépôt initial trop faible : plus de ${formatUnits(minLiq / 3n, 8)} par token`};
+      return {quote: null, reason: `Initial deposit too small — at least ${formatUnits(minLiq / 3n, 8)} per token`};
     }
     return {quote: {computed: [amount, amount, amount], expected, minExpected: expected}, reason: null};
   }

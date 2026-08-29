@@ -22,10 +22,10 @@ export function shareBps(part: bigint, whole: bigint): bigint {
 export function parseTolerance(toleranceInput: string): ToleranceResult {
   const tolerance = parseAmount(toleranceInput === "" ? "0.5" : toleranceInput, 2);
   if (tolerance === null || tolerance < 0) {
-    return {tolerance: null, reason: "Tolérance invalide"};
+    return {tolerance: null, reason: "Invalid tolerance"};
   }
   if (tolerance > 10000n) {
-    return {tolerance: null, reason: "La tolérance ne peut pas dépasser 100 %"};
+    return {tolerance: null, reason: "Tolerance cannot exceed 100%"};
   }
   return {tolerance, reason: null};
 }

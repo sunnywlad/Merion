@@ -5,6 +5,8 @@ import { useConnection, useWriteContract, usePublicClient } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
 import { parseUnits, Address } from 'viem';
 import { mockWrappedBTCAbi } from '@/constants/abi';
+import { describeTxError } from '@/lib/txError';
+import { useIsWrongNetwork } from '@/hooks/useIsWrongNetwork';
 import { Button } from '@/components/ui/Button';
 import { StatusDot } from '@/components/ui/StatusDot';
 
@@ -15,6 +17,7 @@ const mintedAmount = parseUnits("10", 8);
 
 const MintAllButton = ({ tokens }: { tokens: readonly { name: string; address: Address }[] }) => {
   const userAddress = useConnection().address;
+  const wrongNetwork = useIsWrongNetwork();
   const publicClient = usePublicClient();
   const { mutateAsync } = useWriteContract();
   const [pending, setPending] = useState(false);
@@ -26,7 +29,7 @@ const MintAllButton = ({ tokens }: { tokens: readonly { name: string; address: A
   // `catch` poser l'erreur et le `finally` dégriser le bouton ; les mints
   // déjà confirmés ne sont pas rejoués (l'utilisateur relance s'il le faut).
   const handleMintAll = async () => {
-    if (!userAddress || !publicClient) return;
+    if (!userAddress || !publicClient || wrongNetwork) return;
     setError(null);
     setPending(true);
     try {
@@ -41,7 +44,7 @@ const MintAllButton = ({ tokens }: { tokens: readonly { name: string; address: A
       }
       queryClient.invalidateQueries();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(describeTxError(e));
     } finally {
       setPending(false);
     }
@@ -56,7 +59,11 @@ const MintAllButton = ({ tokens }: { tokens: readonly { name: string; address: A
     ? 'Mint failed'
     : pending
       ? 'Minting all tokens'
-      : 'Ready to mint';
+      : wrongNetwork
+        ? 'Wrong network'
+        : !userAddress
+          ? 'Connect a wallet'
+          : 'Ready to mint';
 
   return (
     <div className="flex flex-col gap-2">
@@ -64,7 +71,7 @@ const MintAllButton = ({ tokens }: { tokens: readonly { name: string; address: A
         level="primary"
         onClick={handleMintAll}
         aria-busy={pending || undefined}
-        disabled={pending || !userAddress}
+        disabled={pending || !userAddress || wrongNetwork}
       >
         {pending ? 'Minting all three…' : 'Mint 10 × 3'}
       </Button>

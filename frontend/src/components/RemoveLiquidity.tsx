@@ -2,18 +2,20 @@
 
 import { useReserves } from "@/hooks/useReserves";
 import { useLpBalance } from "@/hooks/useLpBalance";
+import { usePoolPaused } from "@/hooks/usePoolPaused";
 import { useState } from "react";
 import { formatUnits } from "viem";
 import { useAddresses } from "@/hooks/useAddresses";
 import {poolAbi} from '@/constants/abi';
 import {useWriteContract, useConnection, usePublicClient} from 'wagmi';
 import { getQuote } from "@/lib/quoteRemoveLiquidity";
+import { describeTxError } from "@/lib/txError";
 import { Button } from "@/components/ui/Button";
 import { StatusDot } from "@/components/ui/StatusDot";
 import { KpiCard } from "@/components/ui/KpiCard";
 import { AppStateBoundary } from "@/components/ui/AppStateBoundary";
 import { ReadErrorBoundary } from "@/components/ui/ReadErrorBoundary";
-import { EXPECTED_CHAIN_ID } from '@/components/ui/deployment';
+import { isSupportedChain } from '@/constants/addresses';
 import Chevron from "@/components/ui/Chevron";
 import Disclosure from "@/components/ui/Disclosure";
 import { INPUT_CLASS_MONO } from "@/components/ui/formClasses";
@@ -48,6 +50,7 @@ const RemoveLiquidity = () => {
   const { reserves, entries, supply: supplyEntry, error: errorReserves, refetch: refetchReserves } = useReserves();
   const supply = supplyEntry?.status === 'success' ? supplyEntry.result : undefined;
   const { data: maxShares, error: errorLpBalance, refetch: refetchLpBalance } = useLpBalance();
+  const { data: paused, error: errorPaused } = usePoolPaused();
 
   const connection = useConnection();
   const userAddress = connection.address;
@@ -70,7 +73,7 @@ const RemoveLiquidity = () => {
   const {quote, reason} = quoteResult;
 
   const handleRem = async () => {
-    if (!userAddress || anchor === null || !quote || !publicClient) return;
+    if (paused || !userAddress || anchor === null || !quote || !publicClient) return;
     setError(null);
     try {
       setIsPending(true);
@@ -89,7 +92,7 @@ const RemoveLiquidity = () => {
       setAnchor(null);
       setTolerance("");
     } catch (e) {
-        setError(e instanceof Error ? e.message : String(e))
+        setError(describeTxError(e))
     } finally {setIsPending(false)};
   }
 
@@ -119,11 +122,10 @@ const RemoveLiquidity = () => {
         })),
         {message: "Failed to read total LP shares.", error: supplyEntry?.error},
         {message: "Failed to read your LP shares.", error: errorLpBalance},
+        {message: "Failed to read whether the pool is paused.", error: errorPaused},
       ]}
     >
-      {connection.status === 'disconnected' ? (
-        <AppStateBoundary state={{ kind: 'wallet-not-connected' }} />
-      ) : connection.status === 'connected' && connection.chainId !== EXPECTED_CHAIN_ID ? (
+      {connection.status === 'connected' && !isSupportedChain(connection.chainId) ? (
         <AppStateBoundary state={{ kind: 'wrong-network' }} />
       ) : !reserves || supply === undefined ? (
         <AppStateBoundary state={{ kind: 'loading', title: 'Loading pool data…' }} />
@@ -244,24 +246,38 @@ const RemoveLiquidity = () => {
                 <StatusDot
                   tone={quoteTone}
                   label={
-                    quoteTone === 'success'
-                      ? 'Quote ready'
-                      : quoteTone === 'danger'
-                        ? (reason ?? 'Quote rejected')
-                        : 'Awaiting quote'
+                    paused
+                      ? 'Pool paused'
+                      : !userAddress
+                        ? 'Wallet not connected'
+                        : quoteTone === 'success'
+                          ? 'Quote ready'
+                          : quoteTone === 'danger'
+                            ? (reason ?? 'Quote rejected')
+                            : 'Awaiting quote'
                   }
                 />
                 <Button
                   level="primary"
                   onClick={handleRem}
                   aria-busy={isPending || undefined}
-                  disabled={isPending || !userAddress || !quote}>
+                  disabled={isPending || paused === true || !userAddress || !quote}>
                   {isPending ? "Withdrawal pending" : "Remove Liquidity"}
                 </Button>
               </div>
 
+              {paused && (
+                <p className="text-small text-danger" role="alert">
+                  The pool is paused — withdrawals are suspended until the owner unpauses it.
+                </p>
+              )}
+              {!userAddress && (
+                <p className="text-small text-cloud/70" role="status">
+                  Connect a wallet to withdraw — the quote keeps updating while you are disconnected.
+                </p>
+              )}
               {reason && (
-                <p className="text-small text-warning" role="status">
+                <p className="text-small text-danger" role="alert">
                   {reason}
                 </p>
               )}

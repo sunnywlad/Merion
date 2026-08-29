@@ -52,6 +52,27 @@ const addresses = {
 export type SupportedChainId = keyof typeof addresses;
 export type ChainAddresses = (typeof addresses)[SupportedChainId];
 
+/** Every chain this front-end has deployed addresses for. */
+export const SUPPORTED_CHAIN_IDS = Object.keys(addresses).map(Number) as SupportedChainId[];
+
+/** Human-facing names, keyed by chain, so the UI never re-hardcodes an ID. */
+export const CHAIN_NAMES: Record<SupportedChainId, string> = {
+  31337: 'Hardhat (local)',
+  84532: 'Base Sepolia',
+};
+
+/**
+ * Whether the wallet is on a chain the pool actually exists on.
+ *
+ * The single test every write path gates on. It replaced a hard-coded
+ * `chainId !== 84532`, which contradicted the table above: the addresses were
+ * already resolved per chain, so a Hardhat wallet resolved correct addresses
+ * and was still refused at every button.
+ */
+export function isSupportedChain(chainId: number | undefined): chainId is SupportedChainId {
+  return chainId !== undefined && chainId in addresses;
+}
+
 /** Static helper : chainId → addresses, default to Base Sepolia. */
 export function getAddressesForChain(chainId: number | undefined): ChainAddresses {
   if (chainId !== undefined && chainId in addresses) {

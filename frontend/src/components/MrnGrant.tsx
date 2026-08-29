@@ -6,11 +6,12 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useAddresses } from '@/hooks/useAddresses';
 import { MRN_DECIMALS } from '@/constants/addresses';
 import { mrnFaucetAbi } from '@/constants/abi';
+import { describeTxError } from '@/lib/txError';
 import Panel from '@/components/Panel';
 import { Button } from '@/components/ui/Button';
 import { KpiCard } from '@/components/ui/KpiCard';
 import { StatusDot } from '@/components/ui/StatusDot';
-import { EXPECTED_CHAIN_ID } from '@/components/ui/deployment';
+import { isSupportedChain } from '@/constants/addresses';
 import { AppStateBoundary } from '@/components/ui/AppStateBoundary';
 import { formatAmount } from '@/components/ui/formatAmount';
 
@@ -87,7 +88,10 @@ const MrnGrant = () => {
         watchAsset({ type: 'ERC20', options: { address: mrn, symbol: 'MRN', decimals: MRN_DECIMALS } });
       }
     }
-  }, [isSuccess, queryClient, watchAsset]);
+    // `mrn` is a frozen per-chain constant, so listing it cannot re-fire the
+    // effect; it is here so the wallet is offered the token of the chain the
+    // user is actually on after a network switch.
+  }, [isSuccess, queryClient, watchAsset, mrn]);
 
   // Bouton desactive aussi pendant le cooldown. `lastDripAt` et `dripInterval`
   // sont en secondes (block.timestamp), `now` aussi : l'ecart est direct.
@@ -140,7 +144,7 @@ const MrnGrant = () => {
   if (connection.status === 'disconnected') {
     return <AppStateBoundary state={{ kind: 'wallet-not-connected' }} />;
   }
-  if (connection.status === 'connected' && connection.chainId !== EXPECTED_CHAIN_ID) {
+  if (connection.status === 'connected' && !isSupportedChain(connection.chainId)) {
     return <AppStateBoundary state={{ kind: 'wrong-network' }} />;
   }
 
@@ -198,7 +202,7 @@ const MrnGrant = () => {
 
         {error && (
           <p className="text-small text-danger" role="alert">
-            {error.message}
+            {describeTxError(error)}
           </p>
         )}
       </div>

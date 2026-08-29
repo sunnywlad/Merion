@@ -4,19 +4,23 @@ import { useReserves } from "@/hooks/useReserves";
 import { useEffectiveFees } from "@/hooks/useEffectiveFees";
 import { useConstants } from "@/hooks/useConstants";
 import { useUserBalances } from "@/hooks/useUserBalances";
+import { usePoolPaused } from "@/hooks/usePoolPaused";
+import { useFeeRouting } from "@/hooks/useFeeRouting";
 import { useState, useRef } from "react";
 import { useAddresses } from "@/hooks/useAddresses";
 import {mockWrappedBTCAbi, poolAbi} from '@/constants/abi';
 import {useWriteContract, useConnection, usePublicClient} from 'wagmi';
 import { getQuote } from "@/lib/quoteSwap";
 import { shareBps } from "@/lib/quote";
+import { describeTxError } from "@/lib/txError";
+import { breachedBand, reservesAfterSwap, type FeeRouting } from "@/lib/bands";
 import Panel from '@/components/Panel';
 import { Button } from "@/components/ui/Button";
 import { StatusDot } from "@/components/ui/StatusDot";
 import { AppStateBoundary } from "@/components/ui/AppStateBoundary";
 import { ReadErrorBoundary } from "@/components/ui/ReadErrorBoundary";
 import { SwapDecompositionBar } from "@/components/SwapDecompositionBar";
-import { EXPECTED_CHAIN_ID } from '@/components/ui/deployment';
+import { isSupportedChain } from '@/constants/addresses';
 import { formatAmount } from '@/components/ui/formatAmount';
 import { INPUT_CLASS_MONO, SELECT_CLASS } from '@/components/ui/formClasses';
 
@@ -39,7 +43,6 @@ const Swap = () => {
   const [tolerance, setTolerance] = useState("");
   const [isPending, setIsPending] = useState(false);
 
-  const { mutateAsync } = useWriteContract();
   const publicClient = usePublicClient();
   const { pool: deployedPool, tokens: tokensInfo } = useAddresses();
 
@@ -50,8 +53,12 @@ const Swap = () => {
   const {error: errorReserves, reserves, entries, refetch: refetchReserves} = useReserves();
   const {error: errorFees, feeFor, errorFor} = useEffectiveFees();
   const effectiveFeeNum = feeFor(indexIn, indexOut);
-  const {error: errorConstants, feeDen: feeDenData} = useConstants();
+  const {error: errorConstants, feeDen: feeDenData, floorBps: floorEntry, ceilingBps: ceilingEntry} = useConstants();
   const feeDen = feeDenData?.result;
+  const floorBps = floorEntry?.status === 'success' ? BigInt(floorEntry.result) : undefined;
+  const ceilingBps = ceilingEntry?.status === 'success' ? BigInt(ceilingEntry.result) : undefined;
+  const { data: paused, error: errorPaused } = usePoolPaused();
+  const { routing, error: errorRouting } = useFeeRouting();
 
   const connection = useConnection();
   const userAddress = connection.address;
@@ -73,11 +80,11 @@ const Swap = () => {
         },
         {message: "Could not read the pool constants.", error: errorConstants},
         {message: "Could not read the fee denominator.", error: feeDenData?.error},
+        {message: "Could not read whether the pool is paused.", error: errorPaused},
+        {message: "Could not read the fee routing.", error: errorRouting},
       ]}
     >
-      {connection.status === 'disconnected' ? (
-        <AppStateBoundary state={{ kind: 'wallet-not-connected' }} />
-      ) : connection.status === 'connected' && connection.chainId !== EXPECTED_CHAIN_ID ? (
+      {connection.status === 'connected' && !isSupportedChain(connection.chainId) ? (
         <AppStateBoundary state={{ kind: 'wrong-network' }} />
       ) : !reserves || effectiveFeeNum===undefined || !feeDen ? (
         <AppStateBoundary state={{ kind: 'loading', title: 'Loading swap data…' }} />
@@ -108,6 +115,10 @@ const Swap = () => {
           reserves={reserves}
           effectiveFeeNum={effectiveFeeNum}
           feeDen={feeDen}
+          paused={paused === true}
+          floorBps={floorBps}
+          ceilingBps={ceilingBps}
+          routing={routing}
         />
       )}
     </ReadErrorBoundary>
@@ -140,6 +151,12 @@ type SwapFormProps = {
   reserves: [bigint, bigint, bigint];
   effectiveFeeNum: bigint;
   feeDen: bigint;
+  paused: boolean;
+  /** Reserve bands as percentages of the post-swap sum. Undefined until read. */
+  floorBps: bigint | undefined;
+  ceilingBps: bigint | undefined;
+  /** Fee routing, to advance the reserves exactly as `Pool.swap` does. */
+  routing: FeeRouting | undefined;
 };
 
 function SwapForm(props: SwapFormProps) {
@@ -148,7 +165,7 @@ function SwapForm(props: SwapFormProps) {
     typedAmount, setTypedAmount, tolerance, setTolerance,
     isPending, setIsPending, error, setError, userAddress, balanceInData,
     balanceIn, deployedPool, publicClient, refetchBalances, refetchReserves,
-    tokensInfo, reserves, effectiveFeeNum, feeDen
+    tokensInfo, reserves, effectiveFeeNum, feeDen, paused, floorBps, ceilingBps, routing
   } = props;
   const { mutateAsync } = useWriteContract();
 
@@ -164,7 +181,7 @@ function SwapForm(props: SwapFormProps) {
   const swapInFlight = useRef(false);
   const handleSwap = async () => {
     if (swapInFlight.current) return;
-    if (!userAddress || side === null || !quote || !publicClient) return;
+    if (paused || !userAddress || side === null || !quote || !publicClient || bandError !== null) return;
     swapInFlight.current = true;
     setError(null);
     try {
@@ -195,7 +212,7 @@ function SwapForm(props: SwapFormProps) {
       setSide(null);
       setTolerance("");
     } catch (e) {
-        setError(e instanceof Error ? e.message : String(e))
+        setError(describeTxError(e))
     } finally {
       setIsPending(false);
       swapInFlight.current = false;
@@ -222,9 +239,44 @@ function SwapForm(props: SwapFormProps) {
     zeroOut: quote.tokenOut.amount === 0n ? "Swap output is zero." : null
   } : null;
 
+  // Band guard — the one revert the quote libraries cannot see. Stays null
+  // until the constants have landed, so the form never blocks on data it
+  // does not have (a guard without its data stays silent).
+  const reservesAfter = quote && routing
+    ? reservesAfterSwap(
+        reserves, indexIn, quote.tokenIn.amount, routing,
+        indexOut, quote.tokenOut.amount,
+      )
+    : null;
+
+  const bandBreach = reservesAfter && floorBps !== undefined && ceilingBps !== undefined
+    ? breachedBand(reservesAfter, floorBps, ceilingBps)
+    : null;
+
+  // The band value is deliberately absent from the copy: the user is told the
+  // trade is impossible and what to do about it, not handed a protocol
+  // parameter he has no way to act on.
+  const bandError = bandBreach
+    ? bandBreach.kind === 'ceiling'
+      ? `${nameOf(bandBreach.index) ?? 'This token'} would rise above its ceiling. Try a smaller amount.`
+      : `${nameOf(bandBreach.index) ?? 'This token'} would fall below its floor. Try a smaller amount.`
+    : null;
+
+  // Share the token will hold after the swap, shown alongside the band so the
+  // user can see how far past the limit the trade would push it.
+  const bandSharePct = bandBreach && reservesAfter
+    ? (() => {
+        const sum = reservesAfter[0] + reservesAfter[1] + reservesAfter[2];
+        return sum === 0n
+          ? null
+          : (Number((reservesAfter[bandBreach.index] * 10000n) / sum) / 100)
+              .toFixed(2).replace('.', ',');
+      })()
+    : null;
+
   const quoteTone: 'success' | 'danger' | 'neutral' = !quote
     ? 'neutral'
-    : infos?.balanceError || infos?.zeroOut
+    : infos?.balanceError || infos?.zeroOut || bandError
       ? 'danger'
       : 'success';
 
@@ -342,7 +394,6 @@ function SwapForm(props: SwapFormProps) {
               slippage={tolerance === '' ? 0 : Number(tolerance) || 0}
               amountOut={Number(btcAmount(quote.tokenOut.amount))}
               feeUnit={nameOf(indexIn) ?? ''}
-              impactUnit={nameOf(indexOut) ?? ''}
             />
           </Panel>
         ) : (
@@ -357,21 +408,36 @@ function SwapForm(props: SwapFormProps) {
           <StatusDot
             tone={quoteTone}
             label={
-              quoteTone === 'success'
-                ? 'Quote ready'
-                : quoteTone === 'danger'
-                  ? (infos?.balanceError ?? infos?.zeroOut ?? 'Quote rejected')
-                  : 'Awaiting quote'
+              paused
+                ? 'Pool paused'
+                : !userAddress
+                  ? 'Wallet not connected'
+                  : quoteTone === 'success'
+                    ? 'Quote ready'
+                  : quoteTone === 'danger'
+                    ? (infos?.balanceError ?? infos?.zeroOut ?? bandError ?? 'Quote rejected')
+                    : 'Awaiting quote'
             }
           />
           <Button
             level="primary"
             onClick={handleSwap}
             aria-busy={isPending || undefined}
-            disabled={isPending || !userAddress || !quote || Boolean(infos?.balanceError)}>
+            disabled={isPending || paused || !userAddress || !quote || Boolean(infos?.balanceError) || Boolean(infos?.zeroOut) || Boolean(bandError)}>
             {isPending ? "Swap pending" : "Swap"}
           </Button>
         </div>
+
+        {paused && (
+          <p className="text-small text-danger" role="alert">
+            The pool is paused — swaps are suspended until the owner unpauses it.
+          </p>
+        )}
+        {!userAddress && (
+          <p className="text-small text-cloud/70" role="status">
+            Connect a wallet to swap — the quote keeps updating while you are disconnected.
+          </p>
+        )}
 
         {balanceInData?.error && (
           <p className="text-small text-danger" role="alert">
@@ -384,7 +450,7 @@ function SwapForm(props: SwapFormProps) {
           </p>
         )}
         {reason && (
-          <p className="text-small text-warning" role="status">
+          <p className="text-small text-danger" role="alert">
             {reason}
           </p>
         )}
@@ -457,7 +523,30 @@ function SwapForm(props: SwapFormProps) {
                 </span>
               </span>
             </p>
+
+            {bandSharePct !== null && bandSharePct !== undefined ? (
+              <div className="flex items-baseline justify-between gap-4 py-1 border-t border-cloud/10 mt-1 pt-2">
+                <span className="text-cloud/80">
+                  {bandBreach?.kind === 'ceiling' ? 'Ceiling after swap' : 'Floor after swap'}
+                </span>
+                <span className="flex items-baseline gap-1.5 min-w-0">
+                  <span className="font-mono text-code num-tabular text-danger">
+                    {bandSharePct}%
+                  </span>
+                  <span className="font-mono text-code-sm text-neutral">
+                    {' '}
+                    {nameOf(bandBreach!.index)}
+                  </span>
+                </span>
+              </div>
+            ) : null}
           </div>
+        )}
+
+        {bandError && (
+          <p className="text-small text-danger" role="alert">
+            {bandError}
+          </p>
         )}
       </div>
     </Panel>

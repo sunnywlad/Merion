@@ -2,18 +2,21 @@
 
 import { useReserves } from "@/hooks/useReserves";
 import { useMinimumLiquidity } from "@/hooks/useMinimumLiquidity";
+import { useUserBalances } from "@/hooks/useUserBalances";
+import { usePoolPaused } from "@/hooks/usePoolPaused";
 import { useState } from "react";
 import { useAddresses } from "@/hooks/useAddresses";
 import {mockWrappedBTCAbi, poolAbi} from '@/constants/abi';
 import {useWriteContract, useConnection, usePublicClient} from 'wagmi';
 import { getQuote } from "@/lib/quoteAddLiquidity";
+import { describeTxError } from "@/lib/txError";
 import Panel from "@/components/Panel";
 import { Button } from "@/components/ui/Button";
 import { StatusDot } from "@/components/ui/StatusDot";
 import { KpiCard } from "@/components/ui/KpiCard";
 import { AppStateBoundary } from "@/components/ui/AppStateBoundary";
 import { ReadErrorBoundary } from "@/components/ui/ReadErrorBoundary";
-import { EXPECTED_CHAIN_ID } from '@/components/ui/deployment';
+import { isSupportedChain } from '@/constants/addresses';
 import { formatAmount } from '@/components/ui/formatAmount';
 import { INPUT_CLASS_MONO } from '@/components/ui/formClasses';
 
@@ -38,6 +41,8 @@ const AddLiquidity = () => {
   const { reserves, entries, supply: supplyEntry, error: errorReserves, refetch: refetchReserves } = useReserves();
   const supply = supplyEntry?.status === 'success' ? supplyEntry.result : undefined;
   const { data: minLiq, error: errorMinLiq } = useMinimumLiquidity(supply === 0n);
+  const { btcBalances } = useUserBalances();
+  const { data: paused, error: errorPaused } = usePoolPaused();
 
   const connection = useConnection();
   const userAddress = connection.address;
@@ -59,8 +64,22 @@ const AddLiquidity = () => {
     : { quote: null, reason: null };
   const {quote, reason} = quoteResult;
 
+  // A guard without its data stays silent: `useUserBalances` is disabled when
+  // no wallet is connected, so `btcBalances[i].result` is undefined and no
+  // shortfall is ever reported. The form therefore stays fully usable while
+  // disconnected, and the check only bites once balances are actually known.
+  const shortfalls = quote
+    ? quote.computed.flatMap((amount, i) => {
+        const balance = btcBalances[i]?.result;
+        return balance !== undefined && amount > balance ? [tokensInfo[i].name] : [];
+      })
+    : [];
+  const balanceError = shortfalls.length > 0
+    ? `Insufficient balance: ${shortfalls.join(', ')}.`
+    : null;
+
   const handleAdd = async () => {
-    if (!userAddress || anchor === null || !quote || !publicClient) return;
+    if (paused || !userAddress || anchor === null || !quote || !publicClient || balanceError !== null) return;
     setError(null);
     try {
       for (let i = 0 ; i < 3 ; i++) {
@@ -92,7 +111,7 @@ const AddLiquidity = () => {
       setAnchor(null);
       setTolerance("");
     } catch (e) {
-        setError(e instanceof Error ? e.message : String(e))
+        setError(describeTxError(e))
     } finally {setStep(null)};
   }
 
@@ -101,7 +120,7 @@ const AddLiquidity = () => {
 
   const quoteTone: 'success' | 'danger' | 'neutral' = !quote
     ? 'neutral'
-    : reason
+    : reason || balanceError
       ? 'danger'
       : 'success';
 
@@ -117,11 +136,10 @@ const AddLiquidity = () => {
         })),
         {message: "Failed to read total LP shares.", error: supplyEntry?.error},
         {message: "Failed to read minimum liquidity.", error: errorMinLiq},
+        {message: "Failed to read whether the pool is paused.", error: errorPaused},
       ]}
     >
-      {connection.status === 'disconnected' ? (
-        <AppStateBoundary state={{ kind: 'wallet-not-connected' }} />
-      ) : connection.status === 'connected' && connection.chainId !== EXPECTED_CHAIN_ID ? (
+      {connection.status === 'connected' && !isSupportedChain(connection.chainId) ? (
         <AppStateBoundary state={{ kind: 'wrong-network' }} />
       ) : !reserves || supply === undefined ? (
         <AppStateBoundary state={{ kind: 'loading', title: 'Loading pool data…' }} />
@@ -209,24 +227,43 @@ const AddLiquidity = () => {
               <StatusDot
                 tone={quoteTone}
                 label={
-                  quoteTone === 'success'
-                    ? 'Quote ready'
-                    : quoteTone === 'danger'
-                      ? (reason ?? 'Quote rejected')
-                      : 'Awaiting quote'
+                  paused
+                    ? 'Pool paused'
+                    : !userAddress
+                      ? 'Wallet not connected'
+                      : quoteTone === 'success'
+                        ? 'Quote ready'
+                        : quoteTone === 'danger'
+                          ? (reason ?? balanceError ?? 'Quote rejected')
+                          : 'Awaiting quote'
                 }
               />
               <Button
                 level="primary"
                 onClick={handleAdd}
                 aria-busy={isPending || undefined}
-                disabled={isPending || !userAddress || !quote}>
+                disabled={isPending || paused === true || !userAddress || !quote || balanceError !== null}>
                 {step !== null ? `Deposit in progress (${step + 1}/4)` : "Add Liquidity"}
               </Button>
             </div>
 
+            {paused && (
+              <p className="text-small text-danger" role="alert">
+                The pool is paused — deposits are suspended until the owner unpauses it.
+              </p>
+            )}
+            {balanceError && (
+              <p className="text-small text-danger" role="alert">
+                {balanceError}
+              </p>
+            )}
+            {!userAddress && (
+              <p className="text-small text-cloud/70" role="status">
+                Connect a wallet to deposit — the quote keeps updating while you are disconnected.
+              </p>
+            )}
             {reason && (
-              <p className="text-small text-warning" role="status">
+              <p className="text-small text-danger" role="alert">
                 {reason}
               </p>
             )}

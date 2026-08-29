@@ -8,7 +8,6 @@ import { useReserves } from '@/hooks/useReserves';
 import { MRN_DECIMALS } from '@/constants/addresses';
 import { useAddresses } from '@/hooks/useAddresses';
 import AmountLine from '@/components/AmountLine';
-import { AppStateBoundary } from '@/components/ui/AppStateBoundary';
 import { ReadErrorBoundary } from '@/components/ui/ReadErrorBoundary';
 
 /**

@@ -41,9 +41,9 @@ export const getQuote = ({
 
     const amount = parseAmount(typedAmount);
     if (amount===null || amount < 0) {
-      return {quote: null, reason: "Montant invalide"};
+      return {quote: null, reason: "Invalid amount"};
     }
-    if (!reserves[indexIn] || reserves[indexOut] === 0n) return {quote: null, reason: "Réserve vide"};
+    if (!reserves[indexIn] || reserves[indexOut] === 0n) return {quote: null, reason: "Empty reserve"};
 
     let amountIn;
     let amountOut;
@@ -54,7 +54,7 @@ export const getQuote = ({
       amountOut = amountAfterFee * reserves[indexOut] / (amountAfterFee + reserves[indexIn]);
     } else {
       amountOut = amount;
-      if (amountOut >= reserves[indexOut]) return {quote: null, reason: `Réserve insuffisante pour cette opération, max : ${formatUnits(reserves[indexOut] - 1n, 8)}`};
+      if (amountOut >= reserves[indexOut]) return {quote: null, reason: `Not enough reserve for this trade — max ${formatUnits(reserves[indexOut] - 1n, 8)}`};
       const num = feeDen * amountOut * reserves[indexIn];
       const den = (feeDen - effectiveFeeNum) * (reserves[indexOut] - amountOut);
       amountIn = (num + den - 1n) / den;

@@ -13,4 +13,10 @@
 
 export const AUCTION_POLL_MS = 15_000;
 
+// Le routage des frais (`feeNum`, `lastSetFeeEpoch`, mandat courant) ne bouge
+// qu'aux frontières de mandat, soit toutes les 4 h. Le rafraîchir à la minute
+// est déjà 240 fois plus fréquent que le changement sous-jacent ; le caler sur
+// `AUCTION_POLL_MS` serait quatre fois le trafic RPC pour rien.
+export const FEE_ROUTING_POLL_MS = 60_000;
+
 export const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';

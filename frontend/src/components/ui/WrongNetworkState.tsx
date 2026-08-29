@@ -1,5 +1,5 @@
 import Panel from '@/components/Panel';
-import { EXPECTED_CHAIN_ID, EXPECTED_CHAIN_NAME } from './deployment';
+import { SUPPORTED_CHAINS_LABEL } from './deployment';
 
 /**
  * Merion wrong-network state — wallet connected but on a chain other than the
@@ -21,8 +21,8 @@ export function WrongNetworkState() {
         <div className="flex flex-col gap-3 min-w-0">
           <h3 className="text-h4 font-medium text-cloud">Wrong network</h3>
           <p className="text-body text-cloud/70">
-            This pool is deployed on {EXPECTED_CHAIN_NAME} (chain ID{' '}
-            {EXPECTED_CHAIN_ID}). Switch networks in your wallet to continue.
+            Merion is deployed on {SUPPORTED_CHAINS_LABEL}. Switch to one of them
+            in your wallet to continue.
           </p>
           <div className="pt-1">
             <appkit-button balance="hide" />

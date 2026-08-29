@@ -18,16 +18,21 @@ import { useBlockNumber, usePublicClient } from 'wagmi';
 // Tick seconde-par-seconde : un `setInterval(1000)` interne force un
 // re-render entre deux blocs pour que la translation reste à jour. Sans lui,
 // le décompte saute par paliers de bloc, ce qui rend la dernière minute de
-// fenêtre inutilement saccadée. L'état `tick` n'est lu par personne : c'est
-// juste un déclencheur de re-render.
+// fenêtre inutilement saccadée.
+//
+// L'intervalle porte l'heure courante plutôt qu'un compteur dont personne ne
+// lit la valeur : lire `Date.now()` dans le corps du rendu est un appel impur
+// (react-hooks/purity), la translation se fait donc depuis cet état.
 export function useChainNow(): bigint | null {
   const publicClient = usePublicClient();
   const { data: blockNumber } = useBlockNumber({ watch: true });
   const [chainNow, setChainNow] = useState<bigint | null>(null);
   const [readAtMs, setReadAtMs] = useState<number | null>(null);
-  const [, setTick] = useState(0);
+  const [nowMs, setNowMs] = useState<number | null>(null);
   useEffect(() => {
-    const id = setInterval(() => setTick((n) => n + 1), 1000);
+    const tick = () => setNowMs(Date.now());
+    tick();
+    const id = setInterval(tick, 1000);
     return () => clearInterval(id);
   }, []);
 
@@ -47,7 +52,7 @@ export function useChainNow(): bigint | null {
   // Translation : on ajoute l'écart entre `Date.now()` et le moment de la
   // lecture pour lisser le tick à la seconde entre deux blocs. La source
   // reste le timestamp de bloc, jamais `Date.now()` seul.
-  if (chainNow === null || readAtMs === null) return null;
-  const drifted = BigInt(Math.floor((Date.now() - readAtMs) / 1000));
+  if (chainNow === null || readAtMs === null || nowMs === null) return null;
+  const drifted = BigInt(Math.floor((nowMs - readAtMs) / 1000));
   return chainNow + (drifted > 0n ? drifted : 0n);
 }

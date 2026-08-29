@@ -34,10 +34,12 @@ type SwapDecompositionBarProps = {
    * with a direct ratio (the visual width is approximate).
    */
   amountOut?: number;
-  /** Suffix appended to the fee value (e.g. 'wBTC'). */
+  /**
+   * Suffix appended to the certain-loss value (e.g. 'wBTC'). Covers the fee
+   * AND the price impact: the legend converts the impact into input units so
+   * the two read as one number. There is deliberately no separate impact unit.
+   */
   feeUnit?: string;
-  /** Suffix appended to the price-impact value (e.g. 'cbBTC'). */
-  impactUnit?: string;
   /** Slippage label suffix (defaults to '%'). */
   slippageUnit?: string;
   className?: string;
@@ -57,7 +59,6 @@ export function SwapDecompositionBar({
   slippage,
   amountOut,
   feeUnit = '',
-  impactUnit = '',
   slippageUnit = '%',
   className = '',
 }: SwapDecompositionBarProps) {

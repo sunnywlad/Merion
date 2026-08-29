@@ -16,7 +16,6 @@ import { secondsLeft, formatCountdown } from '@/lib/mandateWindow';
 import { short } from '@/lib/formatAddress';
 import AmountLine from '@/components/AmountLine';
 import { MandateTimeline } from '@/components/MandateTimeline';
-import { AppStateBoundary } from '@/components/ui/AppStateBoundary';
 import { ReadErrorBoundary } from '@/components/ui/ReadErrorBoundary';
 
 export default function MandatePanel() {
