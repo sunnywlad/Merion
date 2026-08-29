@@ -29,16 +29,6 @@ contract Pool is ERC20, Ownable, Pausable {
   /// @notice Third token of the pool's basket (e.g. LBTC).
   address public immutable token2;
 
-  // I.2+R2 — packing des reserves en UN slot de 32 octets. Le format est
-  // [reserve0 : 72 | reserve1 : 72 | reserve2 : 72 | 40 bits libres], ce qui
-  // tient : 3 * 72 = 216 bits < 256. La lecture passe par le getter public
-  // `reserves(uint256)` qui preserve la signature ABI d'origine (les tests
-  // Pool.depeg, Pool.forgedState, Pool.removeLiquidity, Pool.swap, Pool.feeSplit
-  // et `Auction._settle` lisent `pool.reserves(i)`). L'ecriture passe par
-  // `_loadReserves` / `_storeReserves`, internes. Une seule
-  // SLOAD au lieu de 3, une seule SSTORE au lieu de 3 sur les chemins
-  // ecrivants (addLiquidity, removeLiquidity, swap) : economies d'environ
-  // 2 * 2100 + 2 * 5000 = ~14 200 gas sur le chemin nominal de swap.
   /// @dev Current reserves of the three basket tokens, packed in a
   ///      single 256-bit storage slot. Indexed 0/1/2 to match
   ///      `token0/token1/token2`. Read via the `reserves(uint256)`
@@ -51,16 +41,6 @@ contract Pool is ERC20, Ownable, Pausable {
   ///         `ceiling * sum / 100` after a swap.
   uint8 public constant ceiling = 53;
 
-  // Slot packing : uint16 feeNum + uint32 lastSetFeeEpoch partagent UN slot de
-  // 32 octets, dont ils n'occupent que 6 ; les 26 restants sont libres.
-  // Le compilateur aligne feeNum sur les bits bas (16 bits) puis lastSetFeeEpoch
-  // au-dessus (32 bits), soit feeNum | (lastSetFeeEpoch << 16). 2 octets couvrent
-  // MAX_FEE_NUM = 50 ; 4 octets couvrent 4,3 milliards d'epochs (~4 970 ans à
-  // 4 h/epoch). priorityBlock a quitté ce slot avec l'exclusivité qu'il servait
-  // (septième passe, item 3) et ne reviendra pas.
-  // Aucune fonction n'écrit ce slot au passage d'epoch : la lecture passe par le
-  // reset paresseux, feeInForce() rend NOMINAL_FEE_NUM dès que lastSetFeeEpoch
-  // diffère de currentEpoch().
   /// @notice Base fee numerator for the current epoch, in units of
   ///         `FEE_DEN`. Reset lazily to `NOMINAL_FEE_NUM` once the
   ///         epoch advances; see `feeInForce`.
@@ -111,13 +91,6 @@ contract Pool is ERC20, Ownable, Pausable {
   ///         `claimProtocolFees` payouts. Immutable on purpose so
   ///         the cash flow does not follow ownership changes.
   address public immutable treasury;
-  // I.4 — MRN que le Pool doit connaitre pour transferer le loyer
-  // accumule en MRN aux LP via `claimRent`. L'Auction a deja sa
-  // propre reference (en argument de constructeur) ; le Pool
-  // prend la sienne en immuable de deploiement, ce qui l'expose
-  // a un changement de token MRN entre Pool et Auction seulement
-  // si le deploiement est incoherent — c'est une garde de plus
-  // contre un couplage mal assemble.
   /// @notice Address of the MRN token used to pay LP rent.
   /// @dev Captured at deployment as an additional guard against a
   ///      mismatched Pool/Auction wiring: any inconsistency between
@@ -132,11 +105,6 @@ contract Pool is ERC20, Ownable, Pausable {
   ///         via `setAuction` and never changed.
   address public auction;
 
-  // I.2 — sortie des reserves : deux registres, l'un par gestionnaire
-  // (l'adresse du mandat, pas le role) et l'un global pour la part
-  // protocole. L'argent reste dans le pool tant que les fonctions de tirage
-  // ne l'ont pas pousse vers le manager ou vers la tresorerie, et CEI tient
-  // chaque tirage : remise a zero AVANT le transfert.
   /// @notice Outstanding base-fee credits owed to each manager,
   ///         per token index. Pulled by `claimManagerFees`.
   mapping(address manager => uint256[3]) public feesOwed;
@@ -145,12 +113,6 @@ contract Pool is ERC20, Ownable, Pausable {
   ///         `claimProtocolFees`.
   uint256[3] public protocolFeesOwed;
 
-  // I.4 — loyer LP : un accumulateur `accPerShare` echelonne par 1e18,
-  // une dette par adresse, et un stream lineaire sur `EPOCH_DURATION`
-  // a partir de chaque `notifyRent`. La regle Synthetix/MasterChef tient :
-  // `pending = balance * accPerShare / 1e18 - rentDebt`. La mise a jour
-  // est paresseuse, declenchee par chaque touch (`_update`, `notifyRent`,
-  // `claimRent`), jamais par une boucle sur les LP.
   /// @notice Lazy rent accumulator, scaled by 1e18. Holds the
   ///         per-share accrued rent; LPs compute their share as
   ///         `balance * accPerShare / 1e18`.
@@ -238,21 +200,15 @@ contract Pool is ERC20, Ownable, Pausable {
   /// @notice `setFee` was already called during the current epoch
   ///         by the same manager.
   error FeeAlreadySetThisEpoch();
-  // Seule erreur de setFee à porter des arguments : c'est la seule dont
-  // l'appelant ne peut pas dériver la cause sans lire deux constantes.
   /// @notice The manager-provided fee numerator is outside the
   ///         allowed `[min, max]` band.
   /// @param min The minimum allowed fee numerator (`MIN_FEE_NUM`).
   /// @param max The maximum allowed fee numerator for this epoch
   ///        (`MAX_FEE_NUM / UNBALANCE_FACTOR`).
   error FeeOutOfBand(uint256 min, uint256 max);
-  // I.2 — appel d'un tirage alors que le registre est vide ; distincte de
-  // BadSlippage parce que la cause n'est pas un seuil rate mais une
-  // quantite nulle.
   /// @notice `claimManagerFees` or `claimProtocolFees` was called
   ///         for a token index with no accrued fees.
   error ZeroFeesOwed();
-  // I.4 — notifyRent par un non-auction, claimRent sur un registre vide.
   /// @notice `notifyRent` was called by an address that is not the
   ///         configured auction.
   error NotAuction();
@@ -308,15 +264,12 @@ contract Pool is ERC20, Ownable, Pausable {
   /// @param epoch The epoch the manager is designated for.
   /// @param manager The address chosen as manager.
   event ManagerSet(uint256 indexed epoch, address indexed manager);
-  // I.4 — loyer LP : notification d'un nouveau stream de rent, avec
-  // montant, taux par seconde (echelle 1e18) et timestamp de fin.
   /// @notice Emitted when the auction notifies a new rent stream.
   /// @param amount The MRN amount of the new stream (excluding any
   ///        rolled-in `rentLeftOver`).
   /// @param rate The new emission rate, scaled by 1e18.
   /// @param end The unix timestamp at which the stream ends.
   event RentNotified(uint256 amount, uint256 rate, uint256 end);
-  // I.4 — tirage du loyer LP : quand un LP reclame sa part.
   /// @notice Emitted when an LP successfully claims accrued rent.
   /// @param claimant The address that received the MRN.
   /// @param amount The MRN amount transferred.
@@ -372,13 +325,6 @@ contract Pool is ERC20, Ownable, Pausable {
     token0 = _tokens[0];
     token1 = _tokens[1];
     token2 = _tokens[2];
-    // I.7 #3 : garde d'erreur de deploiement sur l'adresse nulle des
-    // trois jetons du panier, avant la garde de doublons et celle des
-    // decimales. Sans elle, `decimals()` reverterait en panic 0x21 (appel
-    // sur adresse nulle ERC-20) au lieu d'une erreur nommee : le
-    // deployer verrait un revert sans cause lisible. Meme classe que la
-    // garde decimales acceptee le 24-08 : le deployer doit pouvoir
-    // nommer la faute.
     require(token0 != address(0) && token1 != address(0) && token2 != address(0), InvalidTokenAddress());
     require(token0 != token1 && token1 != token2 && token0 != token2, DuplicateToken());
     require(_mrn != address(0) && _mrn != token0 && _mrn != token1 && _mrn != token2, InvalidMrn());
@@ -412,17 +358,6 @@ contract Pool is ERC20, Ownable, Pausable {
     revert InvalidReserveIndex();
   }
 
-  // R2-bis — vue de batch des trois reserves en un seul appel. Concu
-  // pour les consommateurs externes (Auction._settle) qui lisent
-  // `reserves(0/1/2)` separement, chacun payant un SLOAD warm
-  // cross-contract (~2 100 gas chacun). Un seul SLOAD sur le slot
-  // packe + trois decoupages en memoire cote caller, soit ~2 600 gas
-  // au total contre ~7 800. Le pattern de lecture reste strictement
-  // identique a `_loadReserves` (meme decoupage, meme `unchecked`),
-  // seule la surface publique change : `uint256` au lieu de `uint72`
-  // pour eviter au caller de re-caster. ABI tuple, pas de struct,
-  // pour rester compatible avec le pattern d'appel off-chain qui
-  // attend deja 3 valeurs positionnelles alignees sur `reserves(i)`.
   /// @notice Returns the three basket reserves in a single external
   ///         call. Equivalent to calling `reserves(0)`, `reserves(1)`
   ///         and `reserves(2)` separately, but cheaper: one
@@ -445,11 +380,6 @@ contract Pool is ERC20, Ownable, Pausable {
     }
   }
 
-  // I.2+R2 — helpers internes du packing de reserves. La lecture
-  // prend UN SLOAD et peuple un `uint72[3] memory` (les casts
-  // uint256→uint72 sont bornes par le shift, pas de risque
-  // d'overflow, d'ou le `unchecked`). L'ecriture prend UNE SSTORE,
-  // contre 3 dans la version `uint72[3]` (3 SSTOREs distincts).
   function _loadReserves() internal view returns (uint72[3] memory r) {
     uint256 packed = _reservesPacked;
     unchecked {
@@ -521,28 +451,6 @@ contract Pool is ERC20, Ownable, Pausable {
     return lastSetFeeEpoch == currentEpoch() ? feeNum : NOMINAL_FEE_NUM;
   }
 
-  // I.2 — surcharge directionnelle, lue sur l'etat d'avant-swap.
-  // Le swap et get_dy passent tous deux par cette vue, ce qui garantit
-  // l'accord entre le devis execute et le devis quotable.
-  //
-  // DEUX BRANCHES, pas de palier intermediaire : la remise directionnelle
-  // (R3 bis) et la lecture au point milieu (E6) sont roadmap. La forme
-  // reduite tient la demi-journee du chantier, parce que le swap n'a qu'un
-  // appel a _getAmountOut et get_dy reste trois lignes au-dessus.
-  //
-  // La direction se compare sur les RESERVES, jamais sur les parts cibles,
-  // et depuis 2026-08-22 les trois cibles sont egales : la regle est exacte
-  // dans les deux sens, l'asymetrie du 45/45/10 ne reapparait que le jour
-  // ou les cibles cessent d'etre egales.
-  //
-  // BANDE MORTE lue sur TOL_DEN, JAMAIS sur FEE_DEN. Granularite de tarif
-  // et granularite de bande morte ne partagent pas un denominateur (voir
-  // build-auction.md 2.1).
-  //
-  // Le max dans la branche skew protege le cas biaise : un gestionnaire qui
-  // ecrit 0 en base ne peut pas rendre la piscine gratuite quand elle est
-  // la plus desiquilibree. C'est ce que bunni-v2 faisait avec
-  // max(amAmmSwapFee, surgeFee), voir build-auction.md 4.3 (1).
   /// @notice Returns the fee numerator that should be applied to a
   ///         swap from `_indexIn` to `_indexOut`, accounting for the
   ///         directional surcharge when the pool is imbalanced.
@@ -558,15 +466,6 @@ contract Pool is ERC20, Ownable, Pausable {
     return _computeEffective(feeInForce(), _indexIn, _indexOut, _loadReserves());
   }
 
-  // I.2+R2 — variante `view` du calcul de frais effectif, parametree
-  // par la base de frais et par les reserves. `view` (et non `pure`)
-  // parce que `NOMINAL_FEE_NUM` est un `immutable` : Solidity le
-  // considere comme une lecture d'environnement. Permet a `swap` de
-  // partager la lecture de `feeInForce()` (2 SLOADs) et celle de
-  // `reserves` (1 SLOAD apres packing) avec le calcul du frais, sans
-  // repasser par la vue publique (qui re-ferait 2 + 1 SLOADs en
-  // interne). Pas de SLOAD supplementaire ici : `NOMINAL_FEE_NUM` est
-  // un PUSH sur l'immutable, comme dans l'original.
   function _computeEffective(
     uint256 _base,
     uint256 _indexIn,
@@ -581,15 +480,10 @@ contract Pool is ERC20, Ownable, Pausable {
     return _base;
   }
 
-  // I.2 — helper de prix, pur sur les reserves qu'on lui passe. Prend la
-  // forme d'un quotient de produit constant, sans frais : la function
-  // appelante (swap ou get_dy) a deja nette les frais de l'entree.
   function _getAmountOut(uint72[3] memory _cachedReserves, uint256 _indexIn, uint256 _indexOut, uint256 _dxAfterFee) internal pure returns (uint256) {
     return _dxAfterFee * _cachedReserves[_indexOut] / (_dxAfterFee + _cachedReserves[_indexIn]);
   }
 
-  // I.2 — interface Curve. C'est la seule raison pour laquelle un
-  // agregateur peut coter ce pool.
   /// @notice Routing quote following the Curve `get_dy` convention:
   ///         returns the swap output for a given input on the
   ///         pre-swap state.
@@ -603,25 +497,11 @@ contract Pool is ERC20, Ownable, Pausable {
   /// @param _dx The input amount.
   /// @return The expected output amount, before any slippage check.
   function get_dy(uint256 _indexIn, uint256 _indexOut, uint256 _dx) external view returns (uint256) {
-    // R2 — 1 SLOAD au lieu de 3 (meme packing que dans le swap).
     uint72[3] memory cachedReserves = _loadReserves();
     uint256 effective = effectiveFeeNum(_indexIn, _indexOut);
     uint256 feeAmount = Math.ceilDiv(_dx * effective, FEE_DEN);
     return _getAmountOut(cachedReserves, _indexIn, _indexOut, _dx - feeAmount);
   }
-
-  // Le seul levier du gestionnaire du mandat courant : il fixe la base de
-  // frais pour son epoch, une fois, au début de son mandat.
-  //
-  // La fenêtre de priorité borne setFee et SEULEMENT setFee. Elle n'accorde
-  // aucune exclusivité de swap : le design a retiré cette exclusivité, et le
-  // champ priorityBlock qui la servait, le 2026-08-25. La fenêtre n'est pas un
-  // droit d'échanger en premier, c'est le créneau pendant lequel le tarif de
-  // l'epoch se décide ; passé ce créneau, le tarif est figé pour tout le monde,
-  // gestionnaire compris.
-  //
-  // Pas de whenNotPaused, délibérément : la pause arrête ce qui déplace de la
-  // valeur entre les jambes du pool, et setFee n'en déplace pas.
 
   /// @notice Lets the current epoch's manager set the base fee
   ///         numerator once, inside the priority window.
@@ -634,25 +514,10 @@ contract Pool is ERC20, Ownable, Pausable {
   ///      `whenNotPaused`: setting a fee does not move value.
   /// @param _feeNum The new base-fee numerator, in `FEE_DEN` units.
   function setFee(uint256 _feeNum) external {
-    // R2 — `currentEpoch()` est calcule une seule fois et reutilise
-    // pour la garde d'epoch, l'event et la mise a jour de
-    // `lastSetFeeEpoch`. La division `(block.timestamp - GENESIS) /
-    // EPOCH_DURATION` devient gratuite cote deuxieme et troisieme
-    // appel.
     uint256 epoch = currentEpoch();
     require(msg.sender == managerOf[epoch], NotManager());
     require((block.timestamp - GENESIS) % EPOCH_DURATION < PRIORITY_WINDOW, OutsidePriorityWindow());
-    // L'accès gestionnaire passe EN PREMIER, et c'est ce qui rend cette garde
-    // correcte. Au mandat 0, lastSetFeeEpoch vaut 0 et currentEpoch() vaut 0 :
-    // la garde serait fausse d'emblée et laisserait passer une écriture. Mais
-    // le mandat 0 ne peut JAMAIS avoir de gestionnaire, setManager exigeant
-    // _epoch > currentEpoch() ; managerOf[0] y rend donc address(0) et la garde
-    // d'accès referme avant. L'amorçage est fermé par du code, pas par une
-    // coïncidence de valeurs.
     require(lastSetFeeEpoch != epoch, FeeAlreadySetThisEpoch());
-    // Le plafond du gestionnaire est dérivé à la volée, jamais MAX_FEE_NUM et
-    // jamais une seconde constante stockée : personne ne paie jamais plus de
-    // 0,50 %, et le gestionnaire écrit une base entre 0,01 % et 0,25 %.
     uint256 maxManagerFeeNum = MAX_FEE_NUM / UNBALANCE_FACTOR;
     require(
       _feeNum >= MIN_FEE_NUM && _feeNum <= maxManagerFeeNum,
@@ -696,7 +561,6 @@ contract Pool is ERC20, Ownable, Pausable {
   /// @param _minShares Minimum LP shares the caller accepts.
   /// @return mintedShares The LP shares minted to the caller.
   function addLiquidity(uint256 _anchorIndex, uint256 _amount, uint256 _minShares) external whenNotPaused returns (uint256 mintedShares) {
-    // WBTC, LBTC and cbBTC all return true or revert on transferFrom, and none of them is a fee-on-transfer token: no need to check balanceOf
     uint256[3] memory amounts;
     uint256 supply = totalSupply();
 
@@ -705,11 +569,6 @@ contract Pool is ERC20, Ownable, Pausable {
       require(mintedShares >= _minShares, BadSlippage());
       amounts[0] = amounts[1] = amounts[2] = _amount;
 
-      // R2 — pool vide, une seule SSTORE suffit pour les trois reserves
-      // (le slot passe de 0 a la valeur packee, cout de cold SSTORE
-      // absorbe en une fois au lieu de trois). Le path bootstrap est
-      // le seul qui passait par un helper 3-args ; inliné en memory
-      // array pour converger sur la convention `_storeReserves`.
       uint72[3] memory r = [
         uint72(amounts[0]),
         uint72(amounts[1]),
@@ -719,22 +578,12 @@ contract Pool is ERC20, Ownable, Pausable {
       _mint(0x000000000000000000000000000000000000dEaD, MINIMUM_LIQUIDITY);
 
     } else {
-      // R2 — pool amorce : 1 SLOAD au lieu de 3 pour la lecture des
-      // reserves, et la verification de ReserveOverflow utilise le
-      // cache memoire (l'absence d'autre ecrivain sur `reserves`
-      // dans cette fonction rend l'egalite exacte avec la lecture
-      // stockage d'origine).
       uint72[3] memory cachedReserves = _loadReserves();
 
       mintedShares = supply * _amount / cachedReserves[_anchorIndex];
       require(mintedShares > 0, ZeroOutput());
       require(mintedShares >= _minShares, BadSlippage());
 
-      // R2-ter — boucle deroulee en 3 lignes : 3 multiplications et
-      // 3 divisions sont inlinées, plus de compteur `i`, plus de
-      // test `i < 3`, plus de JUMP pour la fin de boucle. Le pattern
-      // est fixe (3 jambes, c.f. `token0/1/2` immuables), donc le
-      // deroulement est sans risque de drift.
       amounts[0] = Math.ceilDiv(_amount * cachedReserves[0], cachedReserves[_anchorIndex]);
       amounts[1] = Math.ceilDiv(_amount * cachedReserves[1], cachedReserves[_anchorIndex]);
       amounts[2] = Math.ceilDiv(_amount * cachedReserves[2], cachedReserves[_anchorIndex]);
@@ -746,7 +595,6 @@ contract Pool is ERC20, Ownable, Pausable {
         cachedReserves[1] = uint72(cachedReserves[1] + amounts[1]);
         cachedReserves[2] = uint72(cachedReserves[2] + amounts[2]);
       }
-      // R2 — une seule SSTORE au lieu de 3 dans la version uint72[3].
       _storeReserves(cachedReserves);
     }
     _mint(msg.sender, mintedShares);
@@ -801,31 +649,11 @@ contract Pool is ERC20, Ownable, Pausable {
   /// @param _minOut Minimum output the caller accepts.
   /// @return amountOut The output amount transferred to the caller.
   function swap(uint256 _indexIn, uint256 _amount, uint256 _indexOut, uint256 _minOut) external whenNotPaused returns (uint256 amountOut) {
-    // R2 — 1 SLOAD au lieu de 3 pour la lecture des reserves.
     uint72[3] memory cachedReserves = _loadReserves();
 
-    // R2 — `feeInForce` est lu une seule fois et passe a
-    // `_computeEffective`, qui prend egalement le cache memoire. Avant
-    // le refactor, `effectiveFeeNum` re-lisait `feeInForce` (2 SLOADs)
-    // et `reserves` (3 SLOADs, puis 1 apres packing), et la baseAmount
-    // re-lisait `feeInForce` (2 SLOADs supplementaires). On tombe a 0
-    // re-lecture cote `swap`.
-    //
-    // R2-bis — `currentEpoch()` est calculee une seule fois et sert
-    // a la fois a `feeInForce` (inline) et a `manager()` (inline).
-    // Avant, les deux fonctions recalculaient `currentEpoch()`
-    // separement (2 DIV et 2 lectures de `lastSetFeeEpoch` /
-    // `managerOf` disjointes). Le `epoch` cache economise 1 DIV et 1
-    // appel de fonction ; la base fee lit `lastSetFeeEpoch` puis
-    // conditionnellement `feeNum`, et `currentManager` lit
-    // `managerOf[epoch]` directement sans repasser par `manager()`.
     uint256 epoch = currentEpoch();
     uint256 baseFee = lastSetFeeEpoch == epoch ? feeNum : NOMINAL_FEE_NUM;
     uint256 effective = _computeEffective(baseFee, _indexIn, _indexOut, cachedReserves);
-    // I.2 — le frais n'est plus une constante de pool, c'est une lecture
-    // d'etat partagee entre la base (feeInForce) et la surcharge
-    // directionnelle (effectiveFeeNum). ceilDiv : E7 — la division ronde
-    // en faveur du pool, jamais en faveur de l'appelant.
     uint256 feeAmount = Math.ceilDiv(_amount * effective, FEE_DEN);
     amountOut = _getAmountOut(cachedReserves, _indexIn, _indexOut, _amount - feeAmount);
 
@@ -833,51 +661,20 @@ contract Pool is ERC20, Ownable, Pausable {
     require(cachedReserves[_indexOut] > amountOut, InsufficientReserve());
     require(_amount + cachedReserves[_indexIn] <= type(uint72).max, ReserveOverflow());
 
-    // I.2 — partage (base, baseCut, protocolCut, managerCut) deplace AVANT
-    // la mise a jour memoire des reserves : les bandes (floor/ceiling)
-    // verifient le meme etat que l'ecriture, soit le flux net qui entre
-    // dans les reserves (cuts du manager et du protocole defalques). Sans
-    // cet ordre, les bandes s'appliqueraient a un etat sur evalue de
-    // `baseAmount`, le swap passerait la garde avec un pot que
-    // l'ecriture ne materialise pas.
     uint256 baseAmount = _amount * baseFee / FEE_DEN;
-    // I.7 #6 : plancher `protocolCut` = `baseAmount * PROTOCOL_FEE_BPS /
-    // SPLIT_DEN`, soit 10 % de la base (PROTOCOL_FEE_BPS = 1000 sur
-    // SPLIT_DEN = 10000). Le partage reste INTERNE : `protocolCut` +
-    // `managerCut` = `baseAmount` (90 % au manager) quand un
-    // gestionnaire est nomme, sinon `protocolCut` seul = `baseAmount/10`
-    // et le 9/10 restant tombe dans les reserves par defaut de
-    // gestionnaire (cf. commentaire des ecritures ci-dessous). Aucune
-    // fuite vers l'appelant : le swap recoit `amountOut` en jeton de
-    // sortie, le frais ne sort pas du pool avant `claimManagerFees` /
-    // `claimProtocolFees` (pull-only). Arbitrage tranche le 27-08 : le
-    // plancher reste, pas de liberte a la baisse.
     uint256 protocolCut = baseAmount * PROTOCOL_FEE_BPS / SPLIT_DEN;
     address currentManager = managerOf[epoch];
     uint256 managerCut = currentManager == address(0) ? 0 : baseAmount - protocolCut;
     uint256 amountInToReserves = _amount - protocolCut - managerCut;
 
-    // R2 — au lieu d'allouer un second `uint256[3] memory
-    // afterSwapReserves`, on modifie `cachedReserves` en place. La
-    // ReserveOverflow verifiee ci-dessus garantit que l'addition
-    // tient dans uint72 ; InsufficientReserve garantit que la
-    // soustraction ne underflow pas. D'ou le `unchecked` (gain : pas
-    // de check arithmetique sur les deux operations).
     unchecked {
       cachedReserves[_indexIn] = uint72(cachedReserves[_indexIn] + amountInToReserves);
       cachedReserves[_indexOut] -= uint72(amountOut);
     }
     uint256 sum = uint256(cachedReserves[0]) + cachedReserves[1] + cachedReserves[2];
-    // R2 — `ceiling * sum` et `floor * sum` sont invariants dans la
-    // boucle des bandes, on les calcule une fois au lieu de trois.
     uint256 ceilingTimesSum = uint256(ceiling) * sum;
     uint256 floorTimesSum = uint256(floor) * sum;
 
-    // R2-ter — boucle deroulee en 6 `require` (3 jambes × 2 sens),
-    // cf. `addLiquidity` ci-dessus pour la justification. Le pattern
-    // est fixe (3 jambes) et chaque garde se distingue uniquement par
-    // l'index passe en argument de l'erreur, donc le deroulement ne
-    // fait pas perdre de lisibilite.
     require(uint256(cachedReserves[0]) * 100 < ceilingTimesSum, CeilingTouched(0));
     require(uint256(cachedReserves[0]) * 100 > floorTimesSum, FloorTouched(0));
     require(uint256(cachedReserves[1]) * 100 < ceilingTimesSum, CeilingTouched(1));
@@ -887,17 +684,6 @@ contract Pool is ERC20, Ownable, Pausable {
 
     require(amountOut >= _minOut, BadSlippage());
 
-    // R2 — une seule SSTORE pour les trois reserves (le slot packe
-    // est ecrit entierement, contre 2 SSTOREs avant le packing).
-    // I.2 — ligne de credit des reserves (4.3, regle R5) et ecriture des
-    // deux registres. Le partage est asymetrique par construction :
-    // protocolCut + managerCut = baseAmount quand un gestionnaire est
-    // nomme (90 % / 10 %), mais seulement protocolCut = baseAmount/10
-    // sinon, le reste de la base (9/10) tombant dans les reserves par
-    // defaut de gestionnaire. La surcharge (feeAmount - baseAmount) reste
-    // dans les reserves dans les deux cas. Le manager ne touche JAMAIS
-    // la surcharge, sinon il profiterait du desequilibre qu'il tarifie
-    // (4.3 (4)). CEI tient : effets avant les transferts.
     _storeReserves(cachedReserves);
     if (managerCut > 0) {
       feesOwed[currentManager][_indexIn] += managerCut;
@@ -912,8 +698,6 @@ contract Pool is ERC20, Ownable, Pausable {
     emit Swapped(msg.sender, _indexIn, _amount, _indexOut, amountOut);
   }
 
-  // I.2 — tirage des frais du gestionnaire, pull-only. CEI tient : la
-  // remise a zero du registre precede le transfert, sans exception (5.6 (4)).
   /// @notice Withdraws the caller's accrued base-fee credit for one
   ///         basket token.
   /// @dev Pull-only, CEI strict: the registry is zeroed before the
@@ -926,12 +710,6 @@ contract Pool is ERC20, Ownable, Pausable {
     IERC20(indexToAddress(_tokenIndex)).safeTransfer(msg.sender, owed);
   }
 
-  // I.2 — tirage de la part protocole, pull-only, payable a la tresorerie
-  // immuable. L'argent ne suit jamais la propriete (build-auction.md 4.2) :
-  // meme si owner() etait detourne, le flux de tresorerie ne le suivrait
-  // pas. Permissionless : n'importe qui peut declencher le virement vers
-  // la tresorerie, ce qui supprime la dependance a la bonne volonte d'un
-  // bot de gouvernance.
   /// @notice Sends the protocol's accrued base-fee credit for one
   ///         basket token to the immutable `treasury`.
   /// @dev Permissionless: anyone may trigger the payout, and it always
@@ -945,40 +723,8 @@ contract Pool is ERC20, Ownable, Pausable {
     IERC20(indexToAddress(_tokenIndex)).safeTransfer(treasury, owed);
   }
 
-  // I.4 — projection sans ecriture de l'accumulateur paresseux. C'est le
-  // seul calcul que `_updateRent` et `claimable` doivent partager, sans
-  // quoi la vue et le transfert derivent au premier changement de l'un
-  // des deux. `_updateRent` prend la valeur et l'ecrit, `claimable` la
-  // retourne telle quelle : l'invariant Foundry differentiel
-  // (la vue rend exactement ce que `claimRent` transfere) tient par
-  // construction, pas par coincidence.
-  //
-  // ECHELLE : `rentRate` porte deja le facteur 1e18 (pose par `notifyRent`,
-  // consomme par `/ 1e18` dans le repli de traine et dans `claimRent`).
-  // L'increment est donc `dt * rentRate / supply`, PAS `* 1e18` de plus :
-  // `accPerShare` = loyer par part x 1e18, et `claimRent` retire ce seul
-  // 1e18 par `balanceOf(x) * accPerShare / 1e18`.
-  //
-  // Sous-cas `supply == 0` (aucune part, ni vivante ni morte) : la
-  // tranche n'est pas accumulee ; `accPerShare` reste a sa valeur
-  // courante et `rentLastUpdate` n'est pas avance ici (c'est le role de
-  // `_updateRent`, voir ci-dessous). La tranche sautee n'est jamais
-  // reanimee par `_accProjected` : la rent correspondante reste en
-  // solde MRN du Pool, non reclamable. `claimable` rapporte donc la
-  // valeur figee a `rentLastUpdate`, identique a ce que `claimRent`
-  // transfererait apres le flush interne qu'il appelle.
-  //
-  // Sous-cas `supply == MINIMUM_LIQUIDITY` (I.7 #4) : seules les 1000
-  // parts mortes 0x...dEaD subsistent. La branche early-return de
-  // `notifyRent` empile alors le rent dans `rentLeftOver` et ne touche
-  // NI `accPerShare` NI `rentRate` NI `rentEnd`, donc cette garde
-  // n'atteint jamais l'increment : `supply > 0` mais `rentRate == 0`,
-  // et la formule `dt * rentRate / supply` rend 0 sans division. Le
-  // `claimable` de 0x...dEaD reste nul, conforme au E4 documente (la
-  // poussiere est differee, jamais perdue, distribuee au premier LP
-  // vivant via le repli de `rentLeftOver`).
   function _accProjected() internal view returns (uint256) {
-    if (rentLastUpdate >= rentEnd) return accPerShare; // stream fini ou jamais demarre
+    if (rentLastUpdate >= rentEnd) return accPerShare;
     uint256 end = block.timestamp < rentEnd ? block.timestamp : rentEnd;
     uint256 dt = end - rentLastUpdate;
     uint256 supply = totalSupply();
@@ -986,31 +732,12 @@ contract Pool is ERC20, Ownable, Pausable {
     return accPerShare + dt * rentRate / supply;
   }
 
-  // I.4 — helper interne : flush l'accumulateur jusqu'a min(now, rentEnd).
-  // Aucune boucle sur les LP, c'est une multiplication et une division.
-  // L'early-return coupe court avant le premier `notifyRent` (rentEnd == 0
-  // et rentLastUpdate == 0) puis une fois le stream epuise (rentLastUpdate
-  // a rattrape rentEnd) : plus de SSTORE gaspille a chaque transfert.
-  // Chaque appel accumule sur `min(now, rentEnd) - rentLastUpdate`, donc
-  // toute la rent d'une epoch entre dans `accPerShare` meme si aucun
-  // `_update` n'a lieu entre `notifyRent` et la fin du stream.
-  //
-  // Le facteur 1e18 et le sous-cas supply nul sont documentes sur
-  // `_accProjected` ci-dessus, dont cette fonction prend la valeur.
   function _updateRent() internal {
-    if (rentLastUpdate >= rentEnd) return; // stream fini ou jamais demarre
+    if (rentLastUpdate >= rentEnd) return;
     accPerShare = _accProjected();
     rentLastUpdate = block.timestamp < rentEnd ? block.timestamp : rentEnd;
   }
 
-  // I.4 — vue du loyer reclamable par une adresse, fondation de
-  // l'invariant Foundry differentiel. Reproduit le calcul que `claimRent`
-  // realise cote transfert (accru - rentDebt + rentPending) sans appeler
-  // `_updateRent` (une `view` ne peut pas ecrire) et sans muter l'etat :
-  // c'est la projection pure, partagee via `_accProjected` avec le
-  // chemin d'ecriture, qui garantit l'alignement. Cote front, cette vue
-  // remplace le miroir `lib/rentClaimable.ts` et les huit lectures
-  // accumulees dans `useRentPosition` (hors de ce diff).
   /// @notice Returns the MRN rent `_who` could claim right now.
   /// @dev Pure projection: shares `_accProjected` with the writing
   ///      path, so this view returns exactly what `claimRent` would
@@ -1025,23 +752,10 @@ contract Pool is ERC20, Ownable, Pausable {
     return owed;
   }
 
-  // I.4 — override du choke point d'OZ v5 (5.6.1) : mint, burn et transfer
-  // passent tous par `_update`. L'ordre (1) → (5) est obligatoire :
-  // l'accru en attente des DEUX parties se capture sur leur solde
-  // PRE-transfert (etapes 2 et 4), puis leurs dettes se recalent sur le
-  // solde POST-transfert (etape 5). Chacun ne touche que le loyer couru
-  // pendant qu'il detenait ses parts : « a reward belongs to whoever held
-  // the shares WHILE it accrued, not to whoever holds them at claim time ».
   function _update(address from, address to, uint256 value) internal virtual override {
-    // (1) Flush l'accumulateur jusqu'a maintenant. Cote sender et
-    // receiver voient la meme valeur d'`accPerShare`.
     _updateRent();
-    // `_updateRent` est le seul point qui bouge `accPerShare` sur ce
-    // chemin (`super._update` ne le touche pas) : une seule lecture,
-    // reutilisee en (2), (4) et (5).
     uint256 acc = accPerShare;
 
-    // (2) Capturer le loyer en attente du sender (solde pre-transfert).
     if (from != address(0)) {
       uint256 fromBalance = balanceOf(from);
       uint256 pending = fromBalance * acc / 1e18;
@@ -1050,15 +764,8 @@ contract Pool is ERC20, Ownable, Pausable {
       }
     }
 
-    // (3) Mise a jour des soldes (OZ v5).
     super._update(from, to, value);
 
-    // (4) Capturer le loyer en attente du receiver sur son solde
-    // PRE-transfert : `balanceOf(to)` est deja post-`super._update`, le
-    // solde d'avant vaut `toBalance - value` (le receiver gagne exactement
-    // `value`, mint comme transfert). Le crediter sur le solde post
-    // compterait deux fois l'accru des `value` parts, deja porte au sender
-    // en (2). Symetrique de l'etape (2). Pas de capture si `to == from`.
     uint256 toBalance;
     if (to != address(0) && to != from) {
       toBalance = balanceOf(to);
@@ -1068,12 +775,6 @@ contract Pool is ERC20, Ownable, Pausable {
       }
     }
 
-    // (5) Reinitialisation des dettes sur les soldes post-transfert. Le
-    // sender a maintenant `pre - value` parts, le receiver `pre + value`.
-    // Leur futur loyer cumulera a partir de `balance * accPerShare /
-    // 1e18` qui vaut leur nouveau solde * l'accumulateur courant.
-    // `toBalance` est deja le solde post-transfert du receiver, capture
-    // en (4) sous la meme condition : pas de second SLOAD cote receiver.
     if (from != address(0)) {
       rentDebt[from] = balanceOf(from) * acc / 1e18;
     }
@@ -1082,32 +783,6 @@ contract Pool is ERC20, Ownable, Pausable {
     }
   }
 
-  // I.4 — point d'entree du loyer. Reserve a l'auction (setAuction
-  // est one-shot, donc personne d'autre ne peut l'appeler). Flush le
-  // stream courant, puis pose le nouveau rate et le nouvel end.
-  //
-  // Cas E4 (premier mandat, totalSupply == MINIMUM_LIQUIDITY, soit
-  // seules les parts mortes existent) : on accumule le rent dans
-  // `rentLeftOver` et on ne modifie pas l'accumulateur. Le residu
-  // sera distribuable a un futur LP, mais la part acquise aux parts
-  // mortes de 0x...dEaD reste non reclamable — c'est la reponse
-  // honnete a « ou va la poussiere ? » documentee dans
-  // build-auction.md 4.4 (1).
-  //
-  // M2 (I.7) : le MRN est tire en PULL, pas pousse par l'Auction. Le
-  // decouplage entre les deux contrats est l'argument load-bearing :
-  // `notifyRent` EST deja garde `onlyAuction` (NotAuction, teste) ; le
-  // pull ne rajoute aucune parade, il garantit que la garde de cablage
-  // (approbation Auction -> Pool, posee au constructeur de l'Auction,
-  // cf. `Auction.sol` constructeur) est l'unique condition manquante.
-  // Sans approbation, `safeTransferFrom` reverte `ERC20InsufficientAllowance`
-  // et la totalite de la transaction est annulee, y compris les effets
-  // d'etat poses plus haut (re-base, rentLeftOver, rentRate, rentEnd,
-  // rentLastUpdate) : c'est l'echec bruyant documente en I.7 #10,
-  // preferable a une sur-declaration silencieuse. Le retrait du
-  // `safeTransfer` de `_settle` rend l'argument vrai PAR CONSTRUCTION :
-  // les deux contrats n'ont plus besoin de transferer l'un vers l'autre,
-  // chacun n'a qu'a connaitre l'adresse de l'autre et l'approbation.
   /// @notice Opens a new MRN rent stream of `amount` over one epoch
   ///         and pulls the MRN from the auction.
   /// @dev Auction-only (`NotAuction`). While supply is at or below
@@ -1123,23 +798,8 @@ contract Pool is ERC20, Ownable, Pausable {
     _updateRent();
     uint256 supply = totalSupply();
     if (supply <= MINIMUM_LIQUIDITY) {
-      // Seules les parts mortes 0x...dEaD subsistent (ou aucune part) :
-      // dEaD ne reclame jamais, la rent ne peut aller a personne. Elle
-      // s'empile dans `rentLeftOver`, repliee integralement par le prochain
-      // `notifyRent` fait avec `totalSupply() > MINIMUM_LIQUIDITY` et
-      // distribuee aux LP alors presents, jamais rendue recouvrable par un
-      // admin (build-auction.md E4). Valeur differee, pas perdue : la voie
-      // de retour est le fonctionnement nominal du protocole.
       rentLeftOver += amount;
     } else {
-      // Re-base du stream : la traine non encore distribuee du stream courant
-      // (`rentRate * temps restant`, echelle 1e18) est reversee dans
-      // `rentLeftOver` avant l'ecrasement de `rentRate`, sinon elle
-      // disparaitrait en silence. `_updateRent()` a deja fige l'accru jusqu'a
-      // maintenant, donc la periode ecoulee n'est pas comptee deux fois. Si
-      // le stream courant est deja expire la traine vaut zero et seul le
-      // `rentLeftOver` deja present (cycle supply bas anterieur) compte, ce
-      // que la formule ci-dessous gere sans branche supplementaire.
       if (rentEnd > block.timestamp) {
         rentLeftOver += rentRate * (rentEnd - block.timestamp) / 1e18;
       }
@@ -1149,23 +809,9 @@ contract Pool is ERC20, Ownable, Pausable {
       rentLastUpdate = block.timestamp;
       emit RentNotified(amount, rentRate, rentEnd);
     }
-    // CEI strict : effets d'etat poses AVANT l'interaction externe. Une
-    // rejection ici (allowance ou balance de l'Auction) revert
-    // integralement la transaction, donc rien de ce qui precede n'est
-    // engage. Un appel ulterieur rejoue alors le meme scenario sur le
-    // meme `rentLeftOver` / `rentRate` / `rentEnd`.
     IERC20(mrn).safeTransferFrom(msg.sender, address(this), amount);
   }
 
-  // I.4 — tirage du loyer LP, pull-only. Flush l'accumulateur, puis ajoute
-  // l'accru vivant du claimant sur son solde courant : un LP passif qui ne
-  // bouge jamais ses parts n'a rien dans `rentPending` (alimente seulement
-  // par `_update`), il faut donc lire `balanceOf * accPerShare / 1e18 -
-  // rentDebt` ici aussi. On y ajoute le `rentPending` deja capture par les
-  // transferts passes, puis on refixe la dette sur l'accru courant. CEI
-  // strict : toutes les ecritures d'etat (`rentDebt`, `rentPending`)
-  // precedent le transfert, un transfert qui revert ne donne pas de
-  // double claim.
   /// @notice Transfers the caller's accrued MRN rent.
   /// @dev Flushes the accumulator, then pays `rentPending` plus the
   ///      live accrual on the current balance. `rentDebt` is
@@ -1179,16 +825,6 @@ contract Pool is ERC20, Ownable, Pausable {
     if (accrued > rentDebt[msg.sender]) {
       owed += accrued - rentDebt[msg.sender];
     }
-    // I.7 #7 : `rentDebt = accrued` est INCONDITIONNEL, contrairement
-    // au `if` ci-dessus qui ne paye la diff que si `accrued > rentDebt`.
-    // C'est intentionnel : `rentDebt` est une dette checkpoint, pas un
-    // solde cumule. Le rebaser sur l'accru courant a chaque claim (meme
-    // quand l'accru n'a pas bouge, par troncature entiere) garantit
-    // que le prochain claim diff depuis le bon point de depart, sans
-    // piéger un `rentDebt` desynchronise du `accPerShare` courant.
-    // Mettre l'ecriture dans le `if` la rendrait dependante du paiement
-    // de la diff, et une succession de claims a `accrued == rentDebt`
-    // (troncature au wei pres) figerait `rentDebt` au point precedent.
     rentDebt[msg.sender] = accrued;
     rentPending[msg.sender] = 0;
     require(owed > 0, ZeroRentOwed());

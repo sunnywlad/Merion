@@ -5,24 +5,6 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
-// V.0 — Faucet MRN pour la démo de soutenance et les consultants. Un seul
-// trésor pré-alloué, pas de mint, pas d'inflation : la supply reste celle
-// créditée au déployeur à la construction du MRN (« MRN has NO mint
-// function » dans `merion.md`). Le motif vient des faucets BTC du début de
-// la blockchain — un réservoir pré-financé, pas une création de monnaie.
-//
-// Fonctionnement :
-//   1. Au déploiement, le déployeur (owner du pool) transfère 10 M MRN
-//      depuis son solde vers ce contrat, via un script de seed.
-//   2. N'importe qui appelle `drip()` et reçoit `dripAmount` MRN, sous
-//      réserve du rate-limit `dripInterval` par adresse.
-//   3. L'owner peut retirer le résiduel via `withdraw()` à la fin de la
-//      soutenance ou pour re-financer ailleurs.
-//
-// Pas de `dripTo()` : il n'y a pas de liste blanche de jurés. Le rate-limit
-// empêche un acteur unique de vider le faucet ; tous les autres y ont accès
-// dans la même fenêtre. La pré-alimentation est calibrée pour la démo et
-// les consultants, pas pour un usage production.
 /// @title MrnFaucet
 /// @notice Demo and consultant-facing MRN faucet. Holds a pre-funded
 ///         MRN reserve and drips a fixed amount to any caller, rate-
@@ -90,12 +72,6 @@ contract MrnFaucet is Ownable {
   ///      `FaucetEmpty` if the faucet has been drained. Updates
   ///      `lastDripAt[msg.sender]` before the transfer (CEI).
   function drip() external {
-    // R2 — la lecture de `lastDripAt[msg.sender]` est mise en cache
-    // dans une locale, ce qui elimine une deuxieme SLOAD (la 1re
-    // est obligatoire, la 2e suivait immediatement pour le calcul
-    // de `nextAllowedAt`). Le `TooEarly` emporte la valeur
-    // recalculee (`lastDrip + dripInterval`), pas la locale, pour
-    // preserver l'ABI d'erreur exacte.
     uint256 lastDrip = lastDripAt[msg.sender];
     require(block.timestamp >= lastDrip + dripInterval, TooEarly(lastDrip + dripInterval));
     require(mrn.balanceOf(address(this)) >= dripAmount, FaucetEmpty());
