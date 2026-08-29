@@ -16,6 +16,10 @@ import "@openzeppelin/contracts/utils/math/Math.sol";
 ///         8-decimal WBTC-like tokens, mints LP shares, charges a
 ///         manager-controlled fee, pays MRN rent to LPs, and routes
 ///         fees to the manager and to the protocol treasury.
+/// @dev Reserves are packed into a single 256-bit slot and read through
+///      the `reserves(uint256)` ABI-compatible getter. The fee is reset
+///      lazily each epoch rather than written on rollover. `pause` gates
+///      `addLiquidity` and `swap` only: exits and claims stay open.
 contract Pool is ERC20, Ownable, Pausable {
 
   /// @notice First token of the pool's basket (e.g. WBTC).
@@ -31,14 +35,14 @@ contract Pool is ERC20, Ownable, Pausable {
   // `reserves(uint256)` qui preserve la signature ABI d'origine (les tests
   // Pool.depeg, Pool.forgedState, Pool.removeLiquidity, Pool.swap, Pool.feeSplit
   // et `Auction._settle` lisent `pool.reserves(i)`). L'ecriture passe par
-  // `_loadReserves` / `_storeReserves` / `_setReserves`, internes. Une seule
+  // `_loadReserves` / `_storeReserves`, internes. Une seule
   // SLOAD au lieu de 3, une seule SSTORE au lieu de 3 sur les chemins
   // ecrivants (addLiquidity, removeLiquidity, swap) : economies d'environ
   // 2 * 2100 + 2 * 5000 = ~14 200 gas sur le chemin nominal de swap.
-  /// @notice Current reserves of the three basket tokens, packed in a
-  ///         single 256-bit storage slot. Indexed 0/1/2 to match
-  ///         `token0/token1/token2`. Read via the `reserves(uint256)`
-  ///         public getter.
+  /// @dev Current reserves of the three basket tokens, packed in a
+  ///      single 256-bit storage slot. Indexed 0/1/2 to match
+  ///      `token0/token1/token2`. Read via the `reserves(uint256)`
+  ///      public getter.
   uint256 private _reservesPacked;
   /// @notice Lower band coefficient: any reserve must stay above
   ///         `floor * sum / 100` after a swap.
@@ -65,9 +69,9 @@ contract Pool is ERC20, Ownable, Pausable {
   ///         manager. Compared against `currentEpoch` to decide
   ///         whether the manager's override still applies.
   uint32 public lastSetFeeEpoch;
-  /// @notice Absolute maximum fee numerator (in `FEE_DEN` units)
-  ///         that any surcharge may reach: half of it caps the
-  ///         manager's per-epoch override.
+  /// @notice Absolute maximum fee numerator (in `FEE_DEN` units) that
+  ///         any surcharge may reach. `MAX_FEE_NUM / UNBALANCE_FACTOR`
+  ///         caps the manager's per-epoch override.
   uint256 constant public MAX_FEE_NUM = 50;
   /// @notice Fee denominator, i.e. basis points for fee math.
   uint256 constant public FEE_DEN = 10000;
@@ -124,8 +128,8 @@ contract Pool is ERC20, Ownable, Pausable {
   ///         auction via `setManager`. Indexed by epoch number.
   mapping(uint256 epoch => address) public managerOf;
   /// @notice Address of the auction contract allowed to call
-  ///         `setManager`, `setFee`, and `notifyRent`. Set once by
-  ///         the owner via `setAuction` and never changed.
+  ///         `setManager` and `notifyRent`. Set once by the owner
+  ///         via `setAuction` and never changed.
   address public auction;
 
   // I.2 — sortie des reserves : deux registres, l'un par gestionnaire
@@ -197,11 +201,11 @@ contract Pool is ERC20, Ownable, Pausable {
   ///         current operation. Defensive guard on swaps and
   ///         add-liquidity.
   error ReserveOverflow();
-  /// @notice `swap` asked to remove more of the output token than
-  ///         the pool currently holds.
+  /// @notice `swap` would leave the output token's reserve at zero or
+  ///         below.
   error InsufficientReserve();
-  /// @notice A swap, add-liquidity, or quote produced a zero
-  ///         output, which is never acceptable.
+  /// @notice A swap or add-liquidity produced a zero output, which is
+  ///         never acceptable.
   error ZeroOutput();
   /// @notice `removeLiquidity` was called while the pool has no
   ///         live supply.
@@ -464,15 +468,6 @@ contract Pool is ERC20, Ownable, Pausable {
     }
   }
 
-  function _setReserves(uint72 r0, uint72 r1, uint72 r2) internal {
-    unchecked {
-      _reservesPacked =
-        (uint256(r0)) |
-        (uint256(r1) << 72) |
-        (uint256(r2) << 144);
-    }
-  }
-
   /// @notice Returns the current epoch derived from `GENESIS` and
   ///         `EPOCH_DURATION`.
   /// @return The current epoch number, zero-based.
@@ -499,7 +494,9 @@ contract Pool is ERC20, Ownable, Pausable {
   /// @notice Designates `_who` as the manager of a future epoch.
   ///         Callable by the auction (normal path) or, before the
   ///         auction is wired, by the owner.
-  /// @dev Reverts with `EpochAlreadyStarted` if the target epoch is
+  /// @dev Reverts with `NotAuctionOrOwner` if the caller is neither
+  ///      the auction nor the owner (the owner only while the auction
+  ///      is unset), with `EpochAlreadyStarted` if the target epoch is
   ///      not strictly in the future, with `ZeroManager` for the
   ///      zero address, and with `ManagerAlreadySet` on duplicate
   ///      nominations.
@@ -591,18 +588,6 @@ contract Pool is ERC20, Ownable, Pausable {
     return _dxAfterFee * _cachedReserves[_indexOut] / (_dxAfterFee + _cachedReserves[_indexIn]);
   }
 
-  /// @notice Devis de routage : rend la sortie de swap pour une entree
-  ///         donnee, sur l'etat pre-swap.
-  /// @dev Convention `get_dy` de Curve : un devis de routage, PAS une
-  ///      promesse d'execution. Aucune garde d'execution n'est appliquee
-  ///      ici (bandes, pause, ZeroOutput, InsufficientReserve) — la vue
-  ///      n'ecrit rien et ne revert pas sur un etat qui ferait echouer
-  ///      `swap`. C'est ce qui rend la formule quotable par les
-  ///      agregateurs : un `get_dy` rend toujours un nombre, et l'integrateur
-  ///      decide ce qu'il fait de l'eventuelle impossibilite. Reproduit
-  ///      EXACTEMENT la formule de swap (effective fee puis
-  ///      `_getAmountOut`), ce que la simplicite de `effectiveFeeNum`
-  ///      garantit : un appel, une multiplication, une division.
   // I.2 — interface Curve. C'est la seule raison pour laquelle un
   // agregateur peut coter ce pool.
   /// @notice Routing quote following the Curve `get_dy` convention:
@@ -643,7 +628,7 @@ contract Pool is ERC20, Ownable, Pausable {
   /// @dev Reverts with `NotManager` if the caller is not the
   ///      current manager, with `OutsidePriorityWindow` if called
   ///      outside the window, with `FeeAlreadySetThisEpoch` on a
-  ///      second call in the same epoch, and with `FeeOutBand` if
+  ///      second call in the same epoch, and with `FeeOutOfBand` if
   ///      the value falls outside `[MIN_FEE_NUM, MAX_FEE_NUM /
   ///      UNBALANCE_FACTOR]`. Intentionally not gated by
   ///      `whenNotPaused`: setting a fee does not move value.
@@ -722,8 +707,15 @@ contract Pool is ERC20, Ownable, Pausable {
 
       // R2 — pool vide, une seule SSTORE suffit pour les trois reserves
       // (le slot passe de 0 a la valeur packee, cout de cold SSTORE
-      // absorbe en une fois au lieu de trois).
-      _setReserves(uint72(amounts[0]), uint72(amounts[1]), uint72(amounts[2]));
+      // absorbe en une fois au lieu de trois). Le path bootstrap est
+      // le seul qui passait par un helper 3-args ; inliné en memory
+      // array pour converger sur la convention `_storeReserves`.
+      uint72[3] memory r = [
+        uint72(amounts[0]),
+        uint72(amounts[1]),
+        uint72(amounts[2])
+      ];
+      _storeReserves(r);
       _mint(0x000000000000000000000000000000000000dEaD, MINIMUM_LIQUIDITY);
 
     } else {
@@ -764,6 +756,16 @@ contract Pool is ERC20, Ownable, Pausable {
     emit AddedLiquidity(msg.sender, amounts, mintedShares);
   }
 
+  /// @notice Burns `_burnedShares` LP shares and returns the caller a
+  ///         pro-rata slice of all three basket reserves.
+  /// @dev Not gated by `whenNotPaused` on purpose: a paused pool must
+  ///      still let LPs exit. Reverts with `NotBootstrapped` when the
+  ///      pool has no supply, and with `BadSlippage` if any leg falls
+  ///      below its `_minOut`. Burns before transferring (CEI).
+  /// @param _burnedShares The amount of LP shares to burn.
+  /// @param _minOut Per-token minimum the caller accepts, index-aligned
+  ///        with `token0`/`token1`/`token2`.
+  /// @return amountsOut The three token amounts sent to the caller.
   function removeLiquidity(uint256 _burnedShares, uint256[3] calldata _minOut) external returns (uint256[3] memory amountsOut) {
     uint256 supply = totalSupply();
     require(supply != 0, NotBootstrapped());
@@ -782,6 +784,22 @@ contract Pool is ERC20, Ownable, Pausable {
     emit RemovedLiquidity(msg.sender, amountsOut, _burnedShares);
   }
 
+  /// @notice Swaps `_amount` of the token at `_indexIn` for the token
+  ///         at `_indexOut`, at the fee in force for the current epoch
+  ///         plus any directional surcharge.
+  /// @dev The base fee is split 10 % to the protocol and 90 % to the
+  ///      current manager; with no manager elected, only the protocol
+  ///      cut is taken and the remainder falls into the reserves. The
+  ///      surcharge always stays in the reserves, never reaching the
+  ///      manager. Both cuts are credited to pull-only registries, not
+  ///      transferred. Reverts with `ZeroOutput`, `InsufficientReserve`,
+  ///      `ReserveOverflow`, `FloorTouched` or `CeilingTouched` when a
+  ///      post-swap reserve leaves the band, and `BadSlippage`.
+  /// @param _indexIn The token index of the input side.
+  /// @param _amount The input amount, in token units.
+  /// @param _indexOut The token index of the output side.
+  /// @param _minOut Minimum output the caller accepts.
+  /// @return amountOut The output amount transferred to the caller.
   function swap(uint256 _indexIn, uint256 _amount, uint256 _indexOut, uint256 _minOut) external whenNotPaused returns (uint256 amountOut) {
     // R2 — 1 SLOAD au lieu de 3 pour la lecture des reserves.
     uint72[3] memory cachedReserves = _loadReserves();
@@ -896,6 +914,11 @@ contract Pool is ERC20, Ownable, Pausable {
 
   // I.2 — tirage des frais du gestionnaire, pull-only. CEI tient : la
   // remise a zero du registre precede le transfert, sans exception (5.6 (4)).
+  /// @notice Withdraws the caller's accrued base-fee credit for one
+  ///         basket token.
+  /// @dev Pull-only, CEI strict: the registry is zeroed before the
+  ///      transfer. Reverts with `ZeroFeesOwed` when nothing is owed.
+  /// @param _tokenIndex The token index (0, 1 or 2) to claim.
   function claimManagerFees(uint256 _tokenIndex) external {
     uint256 owed = feesOwed[msg.sender][_tokenIndex];
     require(owed > 0, ZeroFeesOwed());
@@ -909,6 +932,12 @@ contract Pool is ERC20, Ownable, Pausable {
   // pas. Permissionless : n'importe qui peut declencher le virement vers
   // la tresorerie, ce qui supprime la dependance a la bonne volonte d'un
   // bot de gouvernance.
+  /// @notice Sends the protocol's accrued base-fee credit for one
+  ///         basket token to the immutable `treasury`.
+  /// @dev Permissionless: anyone may trigger the payout, and it always
+  ///      lands on `treasury`, never on `owner()`, so the cash flow
+  ///      does not follow ownership. Reverts with `ZeroFeesOwed`.
+  /// @param _tokenIndex The token index (0, 1 or 2) to claim.
   function claimProtocolFees(uint256 _tokenIndex) external {
     uint256 owed = protocolFeesOwed[_tokenIndex];
     require(owed > 0, ZeroFeesOwed());
@@ -982,6 +1011,12 @@ contract Pool is ERC20, Ownable, Pausable {
   // chemin d'ecriture, qui garantit l'alignement. Cote front, cette vue
   // remplace le miroir `lib/rentClaimable.ts` et les huit lectures
   // accumulees dans `useRentPosition` (hors de ce diff).
+  /// @notice Returns the MRN rent `_who` could claim right now.
+  /// @dev Pure projection: shares `_accProjected` with the writing
+  ///      path, so this view returns exactly what `claimRent` would
+  ///      transfer. Never reverts.
+  /// @param _who The address to quote.
+  /// @return The claimable MRN amount, in 18 decimals.
   function claimable(address _who) external view returns (uint256) {
     uint256 acc = _accProjected();
     uint256 accrued = balanceOf(_who) * acc / 1e18;
@@ -1073,6 +1108,16 @@ contract Pool is ERC20, Ownable, Pausable {
   // `safeTransfer` de `_settle` rend l'argument vrai PAR CONSTRUCTION :
   // les deux contrats n'ont plus besoin de transferer l'un vers l'autre,
   // chacun n'a qu'a connaitre l'adresse de l'autre et l'approbation.
+  /// @notice Opens a new MRN rent stream of `amount` over one epoch
+  ///         and pulls the MRN from the auction.
+  /// @dev Auction-only (`NotAuction`). While supply is at or below
+  ///      `MINIMUM_LIQUIDITY` the rent is parked in `rentLeftOver` and
+  ///      no stream starts; otherwise the untailed remainder of the
+  ///      running stream is rolled back in before the rate is
+  ///      rewritten. CEI strict: state first, then `safeTransferFrom`
+  ///      on the allowance the auction sets in its constructor, so a
+  ///      missing allowance reverts the whole settlement.
+  /// @param amount The MRN amount of the new stream, in 18 decimals.
   function notifyRent(uint256 amount) external {
     require(msg.sender == auction, NotAuction());
     _updateRent();
@@ -1121,6 +1166,11 @@ contract Pool is ERC20, Ownable, Pausable {
   // strict : toutes les ecritures d'etat (`rentDebt`, `rentPending`)
   // precedent le transfert, un transfert qui revert ne donne pas de
   // double claim.
+  /// @notice Transfers the caller's accrued MRN rent.
+  /// @dev Flushes the accumulator, then pays `rentPending` plus the
+  ///      live accrual on the current balance. `rentDebt` is
+  ///      re-checkpointed unconditionally, so integer truncation
+  ///      cannot freeze it. CEI strict. Reverts with `ZeroRentOwed`.
   function claimRent() external {
     _updateRent();
     uint256 bal = balanceOf(msg.sender);
