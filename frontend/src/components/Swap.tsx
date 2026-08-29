@@ -10,6 +10,7 @@ import { useState, useRef } from "react";
 import { useAddresses } from "@/hooks/useAddresses";
 import {mockWrappedBTCAbi, poolAbi} from '@/constants/abi';
 import {useWriteContract, useConnection, usePublicClient} from 'wagmi';
+import { simulateContract } from 'viem/actions';
 import { getQuote } from "@/lib/quoteSwap";
 import { shareBps } from "@/lib/quote";
 import { describeTxError } from "@/lib/txError";
@@ -23,6 +24,12 @@ import { SwapDecompositionBar } from "@/components/SwapDecompositionBar";
 import { isSupportedChain } from '@/constants/addresses';
 import { formatAmount } from '@/components/ui/formatAmount';
 import { INPUT_CLASS_MONO, SELECT_CLASS } from '@/components/ui/formClasses';
+
+// V.5 — même plafond par transaction que `AddLiquidity` (cf. le commentaire
+// dans `txError.ts`). Garde-fou explicite pour éviter le fallback gas du
+// wallet qui dépasse le cap Base, et `simulateContract` avant le swap
+// pour exposer le vrai revert au lieu de "exceeds max gas".
+const TX_GAS_LIMIT = 5_000_000n;
 
 // II.2d — chaîne id du pool, miroir de constants/addresses.
 // Re-stylage des inputs natifs (cf. brand book §7) ; les classes
@@ -190,15 +197,32 @@ function SwapForm(props: SwapFormProps) {
         address: tokensInfo[indexIn].address,
         abi: mockWrappedBTCAbi,
         functionName: "approve",
-        args: [deployedPool, quote.tokenIn.amount]
+        args: [deployedPool, quote.tokenIn.amount],
+        gas: TX_GAS_LIMIT,
       })
       await publicClient.waitForTransactionReceipt({hash: hashApprove});
+
+      // V.5/bug-base-gas-cap — pre-flight `simulateContract` catches the
+      // *real* revert (allowance, balance, slippage, band breach, etc.)
+      // BEFORE we hand off to the wallet. Cf. le même pattern dans
+      // `AddLiquidity.tsx` — sans ce garde, le fallback gas du wallet
+      // peut dépasser le cap Base (2^24), et l'utilisateur voit
+      // "exceeds max transaction gas limit" au lieu du vrai revert.
+      await simulateContract(publicClient, {
+        address: deployedPool,
+        abi: poolAbi,
+        functionName: "swap",
+        args: [BigInt(quote.tokenIn.index), quote.tokenIn.amount, BigInt(quote.tokenOut.index), quote.tokenOut.minAmount],
+        account: userAddress,
+        gas: TX_GAS_LIMIT,
+      });
 
       const hashSwap = await mutateAsync({
         address: deployedPool,
         abi: poolAbi,
         functionName: "swap",
-        args: [BigInt(quote.tokenIn.index), quote.tokenIn.amount, BigInt(quote.tokenOut.index), quote.tokenOut.minAmount]
+        args: [BigInt(quote.tokenIn.index), quote.tokenIn.amount, BigInt(quote.tokenOut.index), quote.tokenOut.minAmount],
+        gas: TX_GAS_LIMIT,
       })
       await publicClient.waitForTransactionReceipt({hash: hashSwap});
       // V.4/bug-race — `invalidateQueries` marque stale sans refetch ;

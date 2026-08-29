@@ -80,6 +80,12 @@ const SHAPES: ReadonlyArray<readonly [RegExp, string]> = [
   [/nonce/i, 'A pending transaction is conflicting. Wait for it, then retry.'],
   [/chain.*mismatch|unsupported chain|chain not/i, 'Wrong network. Switch to the expected chain.'],
   [/replacement.*underpriced|underpriced/i, 'A pending transaction is blocking this one. Wait, then retry.'],
+  // V.5 — Base / Base Sepolia enforce a per-transaction gas cap of 2^24 = 16 777 216.
+  // The wallet's fallback gas on a simulation failure can blow past this, and the RPC
+  // returns the raw cap message instead of the actual revert reason. We translate it:
+  // the user almost always has a true revert (allowance, balance, slippage) hidden upstream.
+  [/exceeds\s+(?:maximum\s+)?per-transaction\s+gas\s+limit|exceeds\s+max\s+transaction\s+gas\s+limit/i,
+   'The transaction simulation reverted upstream and the wallet fell back to a gas limit above Base\'s per-transaction cap (2^24 = 16,777,216). The likely real cause is missing approval, insufficient balance, or slippage — check those and retry.'],
 ];
 
 /**

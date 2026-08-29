@@ -7,7 +7,8 @@ import { usePoolPaused } from "@/hooks/usePoolPaused";
 import { useState } from "react";
 import { useAddresses } from "@/hooks/useAddresses";
 import {mockWrappedBTCAbi, poolAbi} from '@/constants/abi';
-import {useWriteContract, useConnection, usePublicClient} from 'wagmi';
+import { useWriteContract, useConnection, usePublicClient} from 'wagmi';
+import { simulateContract } from 'viem/actions';
 import { getQuote } from "@/lib/quoteAddLiquidity";
 import { describeTxError } from "@/lib/txError";
 import Panel from "@/components/Panel";
@@ -19,6 +20,14 @@ import { ReadErrorBoundary } from "@/components/ui/ReadErrorBoundary";
 import { isSupportedChain } from '@/constants/addresses';
 import { formatAmount } from '@/components/ui/formatAmount';
 import { INPUT_CLASS_MONO } from '@/components/ui/formClasses';
+
+// V.5 — plafond par transaction de Base / Base Sepolia (2^24 = 16 777 216).
+// On laisse les calls `addLiquidity` / `swap` / `approve` respirer (largement
+// sous le plafond), mais le wallet ne sort plus en fallback gas par défaut
+// quand l'estimation reverte — le contrat reverte, on l'attrape et on le
+// montre via `describeTxError`, donc l'erreur qui remonte à l'utilisateur
+// est la vraie (allowance / balance / slippage), pas "exceeds max gas".
+const TX_GAS_LIMIT = 5_000_000n;
 
 // II.2d — chaîne id du pool, miroir de constants/addresses.
 // `INPUT_CLASS_MONO` vit dans `ui/formClasses.ts` depuis R3/C.1.
@@ -90,16 +99,33 @@ const AddLiquidity = () => {
           address: token.address,
           abi: mockWrappedBTCAbi,
           functionName: "approve",
-          args: [deployedPool, quote.computed[i]]
+          args: [deployedPool, quote.computed[i]],
+          gas: TX_GAS_LIMIT,
         })
         await publicClient.waitForTransactionReceipt({hash})
       }
       setStep(3);
+      // V.5/bug-base-gas-cap — pre-flight `simulateContract` catches the
+      // *real* revert (allowance, balance, slippage) BEFORE we hand off to
+      // the wallet. Without this, a reverting call falls into the wallet's
+      // fallback gas path, which lands above Base's per-tx cap (2^24), and
+      // the user sees the alarming "exceeds max transaction gas limit"
+      // instead of the actual reason. Surface the revert here so it ends
+      // up in `setError` exactly the same way as a tx-level revert.
+      await simulateContract(publicClient, {
+        address: deployedPool,
+        abi: poolAbi,
+        functionName: "addLiquidity",
+        args: [BigInt(anchor), quote.computed[anchor], quote.minExpected],
+        account: userAddress,
+        gas: TX_GAS_LIMIT,
+      });
       const hash = await mutateAsync({
         address: deployedPool,
         abi: poolAbi,
         functionName: "addLiquidity",
-        args: [BigInt(anchor), quote.computed[anchor], quote.minExpected]
+        args: [BigInt(anchor), quote.computed[anchor], quote.minExpected],
+        gas: TX_GAS_LIMIT,
       })
       await publicClient.waitForTransactionReceipt({hash});
       // V.4/bug-race — refetch ciblé des réserves APRÈS settle pour

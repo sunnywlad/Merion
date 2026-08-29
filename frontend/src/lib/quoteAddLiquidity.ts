@@ -1,6 +1,6 @@
 import { formatUnits } from "viem";
 import { parseAmount } from "@/lib/parseAmount";
-import { parseTolerance, type QuoteResult } from "@/lib/quote";
+import { ceilDiv, parseTolerance, type QuoteResult } from "@/lib/quote";
 
 export type Quote = {
   computed: [bigint, bigint, bigint];
@@ -45,11 +45,21 @@ export const getQuote = ({
   }
 
   const anchorReserve = reserves[anchor];
+  // V.5/bug-addliquidity-rounding — match the contract's `Math.ceilDiv` on the
+  // three amounts the pool pulls. Floor division here produced, for any
+  // non-anchor token, an amount 1 unit short whenever `amount * reserves[i]`
+  // was not divisible by `anchorReserve`; the consequent `safeTransferFrom`
+  // reverted with `ERC20InsufficientAllowance` and the wallet choked on a
+  // gas fallback above Base's per-tx cap (2^24) — surfacing as the misleading
+  // "exceeds max transaction gas limit" in the front. Bootstrap is exact (3
+  // equal deposits) and is handled separately above.
   const computed: [bigint, bigint, bigint] = [
-    amount * reserves[0] / anchorReserve,
-    amount * reserves[1] / anchorReserve,
-    amount * reserves[2] / anchorReserve
+    ceilDiv(amount * reserves[0], anchorReserve),
+    ceilDiv(amount * reserves[1], anchorReserve),
+    ceilDiv(amount * reserves[2], anchorReserve)
   ];
+  // `expected` is the LP shares the pool will mint. The contract computes it
+  // with floor division (the user's minimum), so the quote does too.
   const expected = supply * amount / anchorReserve;
   const minExpected = expected * (10000n - tolerance) / 10000n;
   return {quote: {computed, expected, minExpected}, reason: null};
