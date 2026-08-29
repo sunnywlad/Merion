@@ -5,10 +5,9 @@
 // R3). `num-tabular` est dans la base côté Swap/AddLiquidity et au
 // site d'appel côté RemoveLiquidity — divergence purement
 // typographique, sans impact visuel. On fixe la convention ici :
-// `INPUT_CLASS` inclut `num-tabular`, `INPUT_CLASS_MONO` y ajoute
-// `font-mono`. Les 3 sites d'appel deviennent `INPUT_CLASS_MONO`
-// (les call sites de RemoveLiquidity perdent leur `num-tabular`
-// redondant, c'est la dérive qu'on résorbe).
+// `INPUT_CLASS_MONO` combine `num-tabular` + `font-mono`, et les 3
+// sites d'appel l'utilisent tel quel (la dérive `num-tabular`
+// redondant de RemoveLiquidity est résorbée).
 //
 // py-1.5 (6 px) plutôt que py-2 (8 px) : compaction uniforme des
 // formulaires pour gagner la marge 1440×900 sur /pool. La note §2
@@ -23,8 +22,7 @@ const BASE_INPUT =
   'focus:outline-none focus:border-merion-blue focus:border-2 ' +
   'disabled:opacity-50 disabled:cursor-not-allowed';
 
-export const INPUT_CLASS = BASE_INPUT + 'num-tabular ';
-export const INPUT_CLASS_MONO = INPUT_CLASS + 'font-mono';
+export const INPUT_CLASS_MONO = BASE_INPUT + 'num-tabular font-mono';
 
 export const SELECT_CLASS =
   'shrink-0 rounded border border-cloud/10 bg-slate px-3 py-2 ' +
