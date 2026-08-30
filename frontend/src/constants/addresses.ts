@@ -30,22 +30,21 @@ const addresses = {
     faucet: "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9" as `0x${string}` | null,
     mrn: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512" as `0x${string}`
   },
-  // V.3 / Tache 16 (voie deploiement) — Entree Base Sepolia (chainId 84532)
-  // deployee le 2026-08-28 par `npx hardhat ignition deploy MerionModule
-  // --network baseSepolia --reset`. Sept adresses, une par contrat, plus
-  // le bloc final 46080606 et la transaction `Pool.setAuction`
-  // (0x3558488ff4b0043a15b490bc487da1866cb40a01deeabda1017de07376f127c7)
-  // consignes dans `01-suivi/nuit-2026-08-29/journal-nuit.md`.
+  // Entree Base Sepolia (chainId 84532), redeployee le 2026-08-30 par
+  // `npx hardhat ignition deploy ignition/modules/merion.ts --network
+  // baseSepolia --reset` apres passage de `PRIORITY_WINDOW` a 240 s.
+  // Sept adresses neuves, une par contrat, plus la transaction
+  // `Pool.setAuction` du batch final.
   84532: {
     tokens: [
-      { name: "wBTC", address: "0x6b25b25659f234e1B97FF6e47C8580F744C479D2", index: 0n },
-      { name: "cbBTC", address: "0x4B2c1216c9D24d52f195e8ef6C52Fc4F4cF66D2b", index: 1n },
-      { name: "LBTC", address: "0x0FF87DdEc780221eAcd34C673E87671ce34D799C", index: 2n }
+      { name: "wBTC", address: "0x7A03f5560d04743194bBfD303D8345f8dAad4c72", index: 0n },
+      { name: "cbBTC", address: "0xA913a98e22b05d335b3DAa441CCDbb582F5af265", index: 1n },
+      { name: "LBTC", address: "0xdb87ACd86d4b06D637a206E1924818b1154420A3", index: 2n }
     ],
-    pool: "0xc8698B0CD6E965F57942325EF93d071AA1fdf197" as `0x${string}`,
-    auction: "0xD5C54339Adc19e22Ef5724bbdcd478A4e9C2ACb2" as `0x${string}`,
-    faucet: "0x2ac4A71582f13e68D06aCe653A41FBeDDa558825" as `0x${string}`,
-    mrn: "0x23d6a62F59ACfdf735DF678F8826f3DF92DFFb3B" as `0x${string}`
+    pool: "0xd281B06b09589C12b70F9a52fcFa1aC71B2E953B" as `0x${string}`,
+    auction: "0xa8BaF80093AA00EBB5416E10c908450124F8109f" as `0x${string}`,
+    faucet: "0xd8C7aa392d43C045dCfd9E561111969495EACf31" as `0x${string}`,
+    mrn: "0x28670e3EEb7801B053f4E9Ea808D45567698Ef03" as `0x${string}`
   }
 } as const;
 
