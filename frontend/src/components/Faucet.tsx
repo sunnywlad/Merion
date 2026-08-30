@@ -5,6 +5,7 @@ import MintAllButton from './MintAllButton';
 import Panel from '@/components/Panel';
 import { useDeployedChainId } from '@/hooks/useDeployedChainId';
 
+// Panneau Faucet : un bouton de mint par mock BTC, plus un bouton « tout minter ».
 const Faucet = () => {
   const { tokens } = useDeployedChainId();
   return(

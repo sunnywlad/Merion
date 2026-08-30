@@ -11,7 +11,7 @@ const NAV_LINKS = [
 ] as const;
 
 /**
- * Feuille client du Navbar — dynamic bits only.
+ * Feuille client du Navbar — parties dynamiques uniquement.
  *
  * Détachée de la coque server (`Navbar.tsx`) pour qu'aucun JS client
  * ne soit bundlé sur la landing marketing (`app/(marketing)/`), où ce

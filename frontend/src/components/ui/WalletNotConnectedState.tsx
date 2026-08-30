@@ -1,12 +1,10 @@
 import Panel from '@/components/Panel';
 
 /**
- * Merion wallet-not-connected state — gates an action that needs a signer.
+ * Etat « wallet non connecte » — garde une action qui exige un signataire.
  *
- * The CTA reuses the project's existing `appkit-button` web component, the
- * same one the Navbar mounts at the top right. Clicking it opens the
- * AppKit/Reown connection modal; this component does not invent a new
- * connection flow.
+ * Le CTA reutilise le web component `appkit-button` du projet, celui que la Navbar monte en
+ * haut a droite. Il ouvre la modale de connexion AppKit/Reown ; pas de nouveau flux ici.
  */
 export function WalletNotConnectedState() {
   return (

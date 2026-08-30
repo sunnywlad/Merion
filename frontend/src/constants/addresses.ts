@@ -52,28 +52,27 @@ const addresses = {
 export type SupportedChainId = keyof typeof addresses;
 export type ChainAddresses = (typeof addresses)[SupportedChainId];
 
-/** Every chain this front-end has deployed addresses for. */
+/** Toutes les chaines pour lesquelles ce front a des adresses deployees. */
 export const SUPPORTED_CHAIN_IDS = Object.keys(addresses).map(Number) as SupportedChainId[];
 
-/** Human-facing names, keyed by chain, so the UI never re-hardcodes an ID. */
+/** Noms lisibles, indexes par chaine, pour que l'UI ne recode jamais un ID en dur. */
 export const CHAIN_NAMES: Record<SupportedChainId, string> = {
   31337: 'Hardhat (local)',
   84532: 'Base Sepolia',
 };
 
 /**
- * Whether the wallet is on a chain the pool actually exists on.
+ * Le wallet est-il sur une chaine ou le pool existe reellement.
  *
- * The single test every write path gates on. It replaced a hard-coded
- * `chainId !== 84532`, which contradicted the table above: the addresses were
- * already resolved per chain, so a Hardhat wallet resolved correct addresses
- * and was still refused at every button.
+ * Le test unique qui garde chaque ecriture. Il a remplace un `chainId !== 84532` code en dur
+ * qui contredisait la table ci-dessus : les adresses etaient deja resolues par chaine, donc
+ * un wallet Hardhat resolvait les bonnes adresses et etait quand meme refuse a chaque bouton.
  */
 export function isSupportedChain(chainId: number | undefined): chainId is SupportedChainId {
   return chainId !== undefined && chainId in addresses;
 }
 
-/** Static helper : chainId → addresses, default to Base Sepolia. */
+/** Helper statique : chainId -> adresses, repli sur Base Sepolia. */
 export function getAddressesForChain(chainId: number | undefined): ChainAddresses {
   if (chainId !== undefined && chainId in addresses) {
     return addresses[chainId as SupportedChainId];

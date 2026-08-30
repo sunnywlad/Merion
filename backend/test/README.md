@@ -73,10 +73,12 @@ le front et le bot d'enchere liront le frais en vigueur par `eth_call` — mais
 la couche TypeScript ne peut pas, a elle seule, prouver que la fonction fait
 quoi que ce soit. En l'etat du contrat, `feeInForce()` est INDISTINGUABLE d'un
 `return NOMINAL_FEE_NUM` a travers l'ABI, DANS CE FICHIER, qui n'appelle jamais
-`setFee` : `lastSetFeeEpoch` (`Pool.sol:33`) vaut `0` au deploiement et seul
-`setFee` l'ecrit, et pendant l'epoch `0`, la seule ou la comparaison du ternaire
-puisse alors etre vraie, `feeNum` vaut exactement `NOMINAL_FEE_NUM`, pose par le
-constructeur. La branche "mandat courant" du ternaire n'y est donc jamais prise
+`setFee` : seul `setFee` ecrit `lastSetFeeEpoch`, et depuis l'AUDIT F7 le
+constructeur l'initialise a la sentinelle `type(uint32).max`, une epoch que
+l'horloge n'atteindra jamais, de sorte que la comparaison du ternaire est
+FAUSSE des le deploiement, epoch `0` comprise (avant F7 elle valait `0` et
+etait donc vraie a l'epoch `0`, ce qui rendait `setFee` inaccessible pendant
+la premiere epoch). La branche "mandat courant" du ternaire n'y est donc jamais prise
 avec une valeur qui la distingue de l'autre branche. Depuis que `setFee` est
 passe au gestionnaire du mandat courant, une route ABI legitime existe
 (`setManager`, puis `setFee` dans la fenetre de priorite) ; elle appartient a la
@@ -121,9 +123,32 @@ route ABI legitime mene a la branche "mandat courant" du ternaire. La suite de
 dise ce que le protocole facture — sans la re-tester : elle a son propre
 fichier, et sa propre preuve par `vm.store`.
 
+Sur la reentrance en add-liquidity (AUDIT F4), la reponse est franchement
+TypeScript, et pour la raison meme qui loge deja `addLiquidity` ici. La faille
+ne se formule ni en temps ni en etat interne, mais en ORCHESTRATION
+MULTI-CONTRATS : `addLiquidity` frappe les parts et ecrit les trois reserves
+avant la boucle des trois `safeTransferFrom`, de sorte qu'entre les deux le
+pool a credite trois reserves et n'a encaisse au plus qu'un jeton. Pour
+l'exhiber il faut un panier de trois ERC-20 distincts dont UN SEUL est piege
+(`contracts/MockReentrantBTC.sol`, deploye pour l'occasion), un compte qui
+approuve les trois puis envoie la transaction, et une re-entree qui franchit
+la frontiere jeton -> pool a l'interieur d'un `transferFrom`. Un test Solidity
+ne peut pas poser cette question : le contrat de test y serait a la fois
+l'appelant, le porteur de parts et le declencheur, et la re-entree n'aurait
+plus aucune frontiere a franchir. `test/Pool.reentrancy.test.ts` deploie donc
+le vrai mock, lui confie de vraies parts LP pour que la sortie qu'il tente
+soit une sortie QUI AURAIT REUSSI, et regarde le hook partir depuis l'ABI. Le
+fichier verifie d'abord que le hook se declenche reellement sur un appel
+inoffensif, sans quoi les deux `it` suivants seraient verts pour la mauvaise
+raison, puis epingle le revert par son selecteur d'erreur custom
+(`ReentrancyGuardReentrantCall`, expose par l'ABI du Pool qui herite du
+`ReentrancyGuard` d'OpenZeppelin), jamais par une correspondance de chaine. Le
+dernier `it` tient la contrepartie : hors re-entree, une sortie ordinaire
+reste possible, la garde ferme un chemin et pas une fonction.
+
 La couche Solidity (fuzz, invariants, forge d'etat par `vm.store`, tenue des
-bandes face a une decote) est une question distincte, traitee dans sa propre
-section plus bas.
+bandes face a une decote, non-regression des sept autres failles d'audit) est
+une question distincte, traitee dans sa propre section plus bas.
 
 ## Perimetre couvert
 
@@ -132,20 +157,29 @@ Cette suite couvre `Pool.sol` seul. Les dependances OpenZeppelin (`ERC20`,
 leur comportement correct, on ne teste que ce que `Pool.sol` fait avec elles
 (les montants qu'il transfere, les montants qu'il mint, les erreurs qu'il
 declenche). La seule exception assumee est `SafeERC20`, dont la promesse
-elle-meme est verifiee sur les quatre sites d'appel du pool : voir la section
+elle-meme est verifiee sur les quatre sites d'appel qui portent les jetons du
+panier : voir la section
 qui lui est consacree plus bas, et la raison qui l'y met.
 
 Le panier est fige a trois wrappers de BTC a cibles EGALES, un tiers chacun :
 WBTC en indice 0, cbBTC en indice 1, LBTC en indice 2. Il n'y a plus ni
 quatrieme jeton ni poids cibles differencies.
 
-La suite compte, hors I.4, 371 tests verts : 263 en TypeScript (11 fichiers
-`test/*.test.ts`) et 108 en Solidity (10 fichiers `test/*.t.sol`, 5 fichiers
-`contracts/*.t.sol`), plus 3 tests marques "skipped" (la migration FEE_DEN
+La suite compte aujourd'hui 492 tests verts : 303 en TypeScript et 189 en
+Solidity, l'audit de securite ayant ajoute `test/Pool.reentrancy.test.ts` a la
+premiere couche et `test/Auction.security.t.sol` plus `test/Pool.security.t.sol`
+a la seconde. Quatre scripts d'attaque (`scripts/attack/attack_auction_brick.ts`,
+`attack_auction_snipe.ts`, `attack_rent_burn.ts`, `attack_owner_squat.ts`, 14
+assertions au total) rejouent les memes failles contre un noeud local, sur des
+contrats deployes par Ignition et non par une fixture de test ; ils ne comptent
+dans aucun des deux totaux ci-dessus, et c'est voulu : ils interrogent un
+DEPLOIEMENT, pas une specification. S'y ajoutent 3 tests marques "skipped" (la migration FEE_DEN
 documentee en IV de `Pool.feeSplit.t.sol` : la constante `FEE_DEN` ne peut pas
 etre modifiee sans toucher `Pool.sol`, hors perimetre de cette tache ; le test
-BID_SILENCE de `Auction.test.ts` : `BID_SILENCE == 0` est la valeur livree a
-I.3, le gate A4 est roadmap).
+BID_SILENCE de `Auction.test.ts` : `bidSilence` n'est pas une garde on-chain —
+l'AUDIT F3 l'a explicite, c'est une consigne d'ordonnancement pour le bot — et
+`BID_SILENCE == 0` est de surcroit la valeur livree a I.3, le gate A4 restant
+roadmap).
 
 L'etape I.4 ajoute deux fichiers, `test/Pool.rent.test.ts` (25 tests) et
 `test/Pool.rent.t.sol` (7 tests). Les attendus sont derives de la formule
@@ -355,6 +389,23 @@ Pool.setFee
   VI] La pause ne bloque pas setFee
 ```
 
+`Pool.reentrancy.test.ts` (AUDIT F4) :
+
+```
+Pool — F4 reentrance en add-liquidity
+  I] Le hook du jeton piege part reellement
+    A) Un hook arme sur un appel inoffensif se declenche, addLiquidity passe
+    B) Le jeton piege detient les parts LP qui rendraient sa sortie legitime
+  II] La re-entree sur removeLiquidity depuis addLiquidity
+    A) La re-entree reverte avec ReentrancyGuardReentrantCall
+    B) Le depot entier est annule, le jeton piege ne garde aucune part
+    C) Une sortie ordinaire, hors re-entree, reste possible
+```
+
+La section `I` n'est pas un preambule decoratif. Sans elle, les trois `it` de
+`II` passeraient aussi si le hook ne partait jamais, et la suite prouverait
+l'inertie du mock au lieu de la garde du pool.
+
 `Auction.test.ts` (I.3, etape 8b du plan) :
 
 ```
@@ -363,7 +414,7 @@ Auction
     A) Premiere mise sous MIN_OPENING_BID revert BidTooLow (test 18)
     B) Hausse sous +10 % revert, exactement +10 % passe (test 19)
     C) Mise en dehors de la fenetre revert WindowClosed (test 20)
-    D) Mise pendant BID_SILENCE revert (test 21, skip : BID_SILENCE == 0 a I.3)
+    D) Mise pendant BID_SILENCE (test 21, skip : bidSilence n'est pas une garde on-chain, et vaut 0 a I.3)
   II] refunds — credit et tirage
     A) L'encherisseur depasse est credite, pas transfere (test 22)
     B) Un contrat qui revert a la reception peut etre depasse (test 23)
@@ -384,7 +435,7 @@ Auction
 
 ```
 AuctionEpochResetTest            reinit par comparaison, refunds preserves
-AuctionManagerCouplingTest       couplage Auction ↔ Pool, ManagerAlreadySet
+AuctionManagerCouplingTest       couplage Auction ↔ Pool, mandat deja pourvu
 AuctionSettleInvariantTest       partage 70/30, idempotence, evenement Settled
 AuctionWithdrawRefundCEITest     CEI de withdrawRefund
 ```
@@ -405,7 +456,10 @@ Trois points d'I.3, documente la ou il faut les chercher.
    enchérisseur de l'enchere au moment ou elle bascule. La garde
    `managerOf[epoch] != address(0)` de Pool.setManager (I.1) tient : un
    second appel reverterait `ManagerAlreadySet`, et l'Auction ne le
-   tente jamais. `placeBid` ne touche pas a `pool.setManager` : pendant
+   tente jamais. AUDIT F1 — elle ne peut meme plus le tenter par
+   accident : `_settle` teste lui-meme `pool.managerOf(pendingEpoch)` et
+   rembourse le gagnant capture au lieu d'appeler `setManager`, ce qui
+   rend `ManagerAlreadySet` inatteignable depuis le chemin de l'enchere. `placeBid` ne touche pas a `pool.setManager` : pendant
    toute la duree de l'enchere, `pool.managerOf(epoch) == address(0)`,
    et le front lit `auction.highBidder()` pour afficher le meneur
    courant. Le design anterieur nommait le PREMIER enchérisseur (un
@@ -433,7 +487,7 @@ La couche Solidity, elle, se lit par fichier plutot que par arborescence :
 test/Pool.addLiquidity.t.sol     fuzz des deux branches (pool vide, pool amorce)
 test/Pool.removeLiquidity.t.sol  fuzz du pool vierge et du pool amorce
 test/Pool.swap.t.sol             fuzz, domaine partage par MAX_IN_BAND_AMOUNT
-test/Pool.safeERC20.t.sol        les quatre sites d'appel de SafeERC20
+test/Pool.safeERC20.t.sol        les quatre sites SafeERC20 qui portent le panier
 test/Pool.forgedState.t.sol      proprietes atteintes par forge d'etat (vm.store)
 test/Pool.feeInForce.t.sol       packing du slot + lecture paresseuse, par vm.store
 test/Pool.setFee.t.sol           fuzz des cinq axes de setFee (bande, appelant, instant, epoch)
@@ -441,6 +495,8 @@ test/Pool.depeg.t.sol            les bandes face a une decote reelle d'un wrappe
 test/Pool.invariant.t.sol        handler (dont chemin gestionnaire) + sept invariants + garde de vacuite afterInvariant + deux tests cibles
 test/Pool.feeSplit.t.sol         bornes croisees + invariant I1 de conservation des frais (I.2)
 test/Pool.rent.t.sol             formule de l'accumulateur + ordre de _update sur mint/burn/transfert (I.4)
+test/Pool.security.t.sol         non-regression d'audit F5/F6/F7/F8 (vm.warp, vm.store, pool hors panier)
+test/Auction.security.t.sol      non-regression d'audit F1/F2/F3 (vm.warp a la seconde et sur deux epochs)
 test/Auction.invariant.t.sol     handler placeBid/settle/withdrawRefund/warp + invariant I4 (egalite : le MRN de l'Auction == refunds + pending + highBid + deadMrn) + six tests cibles
 contracts/Pool.gas.t.sol         mesures de gaz (rapport dans GAS.md)
 contracts/Pool.t.sol             decimals()
@@ -1025,8 +1081,9 @@ message, est ce qui rend le test fiable.
   deux branches du ternaire coincident a cet instant, donc l'accord ne dit PAS
   quelle branche a ete prise ; ce qu'il fige, c'est qu'un front lisant l'un ou
   l'autre getter pendant la premiere epoch affiche le meme chiffre
-- `lastSetFeeEpoch()` est bien expose en public et vaut `0` au deploiement, le
-  constructeur ne l'ecrivant pas
+- `lastSetFeeEpoch()` est bien expose en public et vaut la sentinelle
+  `type(uint32).max` au deploiement (AUDIT F7 ; le constructeur l'ecrit
+  desormais, la ou il laissait le zero par defaut)
 - a l'epoch `1` puis au milieu de l'epoch `42`, la vue rend toujours
   `NOMINAL_FEE_NUM`, et le seul bloc mine entre le deploiement et la lecture
   est VIDE : personne n'a paye de `SSTORE` de remise a zero
@@ -1080,14 +1137,16 @@ message, est ce qui rend le test fiable.
 - depot minimal : `3 * _amount < MINIMUM_LIQUIDITY` sous-flow en panic
   arithmetique (`0x11`), pas une erreur nommee. Le seuil est donc `334` :
   `3 * 333 = 999 < 1000`
-- `_amount > type(uint72).max` sur pool vide : AUCUNE garde `ReserveOverflow`.
-  La branche d'amorcage (`Pool.sol:90-99`) n'en porte pas, contrairement a la
-  branche `supply != 0` (`Pool.sol:109`) et a `swap` (`Pool.sol:144`) ; le
-  cast `uint72(amounts[i])` (`Pool.sol:96`) tronquerait silencieusement. Le
-  cas n'est pas exploitable, les mocks etant plafonnes a `21 000 000e8` par
-  `ERC20Capped`, tres sous `uint72.max` (~`4,7e21`) : sans mint ni approve, le
-  premier echec reel est l'allowance manquante au `safeTransferFrom`
-  (`Pool.sol:115`), documente comme tel
+- `_amount > type(uint72).max` sur pool vide : `ReserveOverflow`. AUDIT F8 —
+  la branche d'amorcage n'en portait AUCUNE, contrairement a la branche
+  `supply != 0` et a `swap`, et le cast `uint72(amounts[i])` tronquait
+  silencieusement ; le premier echec observable etait alors l'allowance
+  manquante au `safeTransferFrom`, et cette suite le documentait comme tel.
+  Le `require` est desormais pose EN TETE de branche, avant le `3 * _amount`
+  et avant tout transfert : il tire donc le premier, sans mint ni approve.
+  Le cas restait inexploitable avec le panier actuel (mocks plafonnes a
+  `21 000 000e8` par `ERC20Capped`, tres sous `uint72.max` ~`4,7e21`), mais
+  c'etait une dependance au JETON et non une invariante du POOL
 - `_minShares` strictement superieur aux parts mintees : `BadSlippage`
 - `_minShares` exactement egal aux parts mintees : accepte, pas de revert
 - ordre des gardes : sur la branche d'amorcage, `BadSlippage` (`Pool.sol:92`)
@@ -1352,8 +1411,14 @@ message, est ce qui rend le test fiable.
 - `_epoch == 1` au deploiement : succes, frontiere inclusive cote futur
 - `setManager(1, X)` puis `setManager(1, Y)` : la seconde reverte
   `ManagerAlreadySet`, la premiere nomination tient
-- `setManager(1, X)` puis `setManager(2, Y)` : les deux reussissent, epoques
-  distinctes
+- `setManager(1, X)` puis, APRES un warp d'une epoch entiere,
+  `setManager(2, Y)` : les deux reussissent, epoques distinctes. Le warp n'est
+  pas cosmetique. AUDIT F6 — la voie owner est desormais bornee a
+  `currentEpoch() + 1` (`OwnerEpochTooFar`), donc l'owner ne peut plus poser
+  un calendrier de gestionnaires a l'avance ; chaque nomination
+  supplementaire lui coute une epoch de temps reel. La borne elle-meme est le
+  sujet de `test/Pool.security.t.sol`, ce test-ci n'en porte que la
+  consequence sur l'enonce d'origine
 
 **Evenement `ManagerSet`**
 
@@ -1417,10 +1482,11 @@ message, est ce qui rend le test fiable.
 **L'ordre des gardes est celui qui est ecrit**
 
 - l'owner appelle HORS fenetre : `NotManager`, et non `OutsidePriorityWindow`.
-  Le cas de soutenance : c'est parce que la garde d'acces est evaluee en
-  PREMIER que la garde d'unicite est correcte au mandat `0`, ou
-  `lastSetFeeEpoch` et `currentEpoch()` valent tous deux `0` et ou la
-  comparaison serait donc fausse d'emblee
+  Le cas de soutenance : c'est la garde d'acces, evaluee en PREMIER, qui
+  ferme l'amorcage. AUDIT F7 — le mandat `0` n'est plus le piege qu'il
+  etait : `lastSetFeeEpoch` vaut la sentinelle `type(uint32).max` au
+  deploiement, non plus `0`, donc la garde d'unicite ne se declenche plus
+  a tort contre le gestionnaire de la premiere epoch
 - le gestionnaire rappelle `setFee` hors fenetre apres avoir deja tarife :
   `OutsidePriorityWindow`, et non `FeeAlreadySetThisEpoch`
 - le gestionnaire rappelle `setFee` DANS la fenetre avec une valeur hors
@@ -1668,10 +1734,14 @@ par `CeilingTouched(0)`, `MAX_IN_BAND_AMOUNT` doit passer.
 
 ### `Pool.safeERC20.t.sol` : la promesse de `SafeERC20`, sur quatre sites
 
-`Pool.sol` declare `using SafeERC20 for IERC20` (`Pool.sol:7`) et l'exerce sur
-quatre sites d'appel : un `safeTransferFrom` dans la boucle d'`addLiquidity`
-(`Pool.sol:115`), un `safeTransfer` dans celle de `removeLiquidity`
-(`Pool.sol:131`), puis un de chaque dans `swap` (`Pool.sol:161-162`).
+`Pool.sol` declare `using SafeERC20 for IERC20` (`Pool.sol:8`) et l'exerce sur
+huit sites d'appel. Quatre portent les jetons du panier et sont ceux que ce
+fichier interroge : un `safeTransferFrom` dans la boucle d'`addLiquidity`, un
+`safeTransfer` dans celle de `removeLiquidity`, puis un de chaque dans `swap`.
+Les quatre autres sont hors sujet ici : `claimManagerFees` et
+`claimProtocolFees` sortent des jetons du panier deja encaisses, `notifyRent`
+et `claimRent` portent du MRN, jeton du protocole dont l'implementation n'est
+pas une inconnue.
 
 Ce que `SafeERC20` promet n'est pas "tout jeton bizarre revert", c'est une
 DISTINCTION : un jeton dont l'appel reussit mais renvoie explicitement `false`
@@ -1900,7 +1970,7 @@ depuis le contrat de test plutot que minte, `MockWrappedBTC` etant plafonne a
 `21 000 000e8` par `ERC20Capped`, cap deja entierement frappe par
 `PoolTestBase`.
 
-### `Pool.invariant.t.sol` : le handler et ses quatre invariants
+### `Pool.invariant.t.sol` : le handler et ses sept invariants
 
 Un `PoolHandler` expose quatre entrees au fuzzer (`addLiquidityWrapper`,
 `swapWrapper`, `removeLiquidityWrapper`, `addThenRemoveRoundTrip`), chacune
@@ -1932,10 +2002,19 @@ deux seuls reverts attendus de cette garde ; tout autre revert est re-emis tel
 quel, en assembleur et sans reencodage, pour ne jamais transformer ce wrapper
 en test vide qui masquerait un vrai bug.
 
-Quatre invariants sont exposes au runner :
+Sept invariants sont exposes au runner : cinq portent une propriete du
+protocole, deux gardent la campagne elle-meme contre la vacuite.
 
 - **`invariant_reservesNeverExceedBalances`** — le solde ERC-20 du pool couvre
   toujours sa reserve, sur les trois jambes.
+- **`invariant_reservesTrackBalancesExactly`** — forme FORTE de la precedente :
+  `reserves(i) + protocolFeesOwed(i) + feesOwed(MANAGER, i)` egale exactement
+  `balanceOf(pool)` sur chaque jambe. Le `<=` dit que le pool n'est jamais a
+  decouvert ; l'egalite dit ou est passe chaque satoshi. `swap` deplace les
+  deux coupes de `reserves` vers les registres de frais sans rien sortir du
+  pool, et c'est cette redistribution interne que l'egalite epingle. Le
+  `MINIMUM_LIQUIDITY` brule l'est en PARTS, pas en jeton du panier, et le
+  loyer est verse en MRN : ni l'un ni l'autre n'entre dans l'egalite.
 - **`invariant_shareValueNeverDecreases`** — la valeur unitaire des parts ne
   baisse jamais. Plus fort que l'invariant `k` pour un pool a produit
   constant : frais et skew cumulatif font toujours monter la valeur unitaire,
@@ -1951,8 +2030,23 @@ Quatre invariants sont exposes au runner :
 - **`invariant_bandsAlwaysRespected`** — pour chaque indice, la reserve reste
   strictement entre `floor %` et `ceiling %` de la somme des trois, en ratios
   et non en valeurs absolues, exactement comme `Pool.sol:151-154`.
+- **`invariant_campaignDidSomething`** — garde de vacuite, versant PAR APPEL :
+  passe cent appels de wrapper comptes, le pool est amorce. Le seuil est
+  necessaire, le runner evaluant chaque `invariant_` apres CHAQUE appel : un
+  compteur affirme sans seuil mordrait au premier appel, sur un etat que la
+  campagne n'a pas encore eu le temps de produire.
+- **`invariant_managerPathWasExercised`** — garde de vacuite, versant CHEMIN :
+  tout swap execute pendant le run l'a ete sous un manager actif. Le harnais
+  d'I.6 a ete elargi au chemin gestionnaire, et sans cette assertion une
+  regression de fixture qui le reviderait laisserait les autres invariants
+  verts sur un pool sans manager, donc verts pour la mauvaise raison.
 
-Ce dernier demande un mot, parce qu'il n'est PAS affirme partout. Il l'est
+Ces deux dernieres n'affirment rien du contrat, elles affirment que la
+campagne a bien exerce ce qu'elle pretend exercer. Les distinguer des cinq
+autres est le point a tenir : un invariant de couverture qui passe sur une
+campagne vide est un faux vert, et le seul remede est de le nommer comme tel.
+
+`invariant_bandsAlwaysRespected` demande un mot, parce qu'il n'est PAS affirme partout. Il l'est
 au-dessus de `MIN_ECONOMIC_RESERVE = 1e8`, une unite de BTC par jambe, seuil
 qui borne `addLiquidityWrapper`, `removeLiquidityWrapper` et
 `addThenRemoveRoundTrip`. La raison n'est pas une faiblesse du contrat : sur
@@ -2008,16 +2102,94 @@ deplacement de layout en OZ sans laisser la regression silencieuse. C'est la
 contrepartie promise plus haut a la garde de `Pool.sol:143`, que l'ABI ne sait
 plus atteindre.
 
+### `Auction.security.t.sol` : F1, F2, F3, ou le temps est l'attaque
+
+Les trois failles d'audit portees par `Auction.sol` se formulent en TEMPS et
+en ETAT INTERNE, jamais en parcours utilisateur, et c'est le seul argument qui
+decide du niveau. F1 exige de faire tourner deux epochs entieres, huit heures
+de temps de chaine, entre deux mises, pour perimer un `pendingEpoch`. F3 exige
+de se poser a la SECONDE, de part et d'autre de `startOfEpoch(sellingEpoch - 1)
++ auctionWindow`, la frontiere partagee par `placeBid` et `settle`. F2 ne
+s'observe que sur un etat ou `pendingBidder` et `highBidder` DIFFERENT, etat
+qu'aucun parcours nominal ne produit. `vm.warp` est le bon outil pour les
+trois, et `forge-std` donne en prime l'assertion par selecteur avec arguments
+encodes (`WindowStillOpen(uint256)`), qu'une correspondance de chaine ne
+remplacerait pas. Le parcours reseau des encheres, l'`approve` du MRN, le
+`transferFrom`, la lecture des evenements, reste ou il etait, dans
+`test/Auction.test.ts` : la regle habituelle du dossier ne bouge pas.
+
+Quatre contrats, quatre etats distincts. `AuctionEarlySettleTest` epingle F3 :
+un `placeBid(minOpeningBid)` suivi d'un `settle()` dans la meme transaction, a
+la premiere seconde de la fenetre, revert desormais `WindowStillOpen(closesAt)`
+au lieu d'adjuger le mandat au prix plancher. `AuctionExpiredSettlementTest`
+epingle F1 et F2 sur un slot rempli par la reinitialisation de `placeBid` : le
+mandat perime est abandonne, `pendingBidder` est rembourse integralement,
+`SettlementExpired` est emis, rien n'est brule ni verse en rente.
+`AuctionExpiredSettlementIsOneShotTest` porte le durcissement qui va avec :
+quand c'est `settle()` lui-meme qui capture une enchere restee vive apres la
+rotation d'epoch, la capture DOIT vider `highBid` et `highBidder`, sinon un
+second `settle()` recapturerait le meme montant et crediterait `refunds` une
+fois par appel, jusqu'a vider le MRN du contrat. Le test le formule comme
+l'unicite du remboursement, ce qui est la propriete, et non comme la presence
+d'une ligne de code. `AuctionAlreadyNominatedMandateTest` ferme le dernier
+declencheur : un mandat deja pourvu, ecrit ici par la voie de l'enchere
+elle-meme, rembourse au lieu de reverter, et le gestionnaire en place n'est
+jamais ecrase. C'est cette derniere assertion qui rend
+`Pool.ManagerAlreadySet` inatteignable depuis le chemin de l'enchere, ce sur
+quoi repose `test/Auction.invariant.t.sol`.
+
+Chaque contrat suit la meme forme en deux temps : un premier test qui rend le
+PREALABLE explicite (le slot pending est bien vide, le mandat est bien deja
+pourvu), puis les tests de verite. Sans ce premier test, les suivants
+resteraient verts en passant par le chemin nominal, donc pour la mauvaise
+raison. La fixture est dupliquee depuis `contracts/Auction.t.sol` plutot
+qu'heritee, conformement a la section « Duplication des fixtures » plus haut :
+ce fichier doit pouvoir bouger sans faire bouger la suite fonctionnelle.
+
+### `Pool.security.t.sol` : F5, F6, F7, F8, et l'etat que l'ABI n'atteint pas
+
+Meme partage, meme raison. F5 exige de vider le pool AU MILIEU d'un flux de
+rente et de tenir l'horloge a la seconde pour comparer un report au wei pres :
+`PoolRentLeftOverOnEmptyPoolTest` verifie que sous `MINIMUM_LIQUIDITY`
+l'accumulateur ne bouge plus, que la tranche part dans `rentLeftOver`, et que
+`_accProjected` applique la MEME condition que `_updateRent`, sans quoi
+`claimable()` promettrait une rente que le chemin ecrivain ne credite pas.
+
+F7 exige un etat que le contrat rend structurellement inatteignable par ses
+propres entrees : `managerOf[0]` ne peut PAS etre ecrit par `setManager`, dont
+la garde `_epoch > currentEpoch()` est stricte. Seul `vm.store` y donne acces,
+et `PoolFirstEpochFeeTest` le fait comme `Pool.feeInForce.t.sol` le fait deja,
+en SONDANT les trente premiers slots a la recherche du mapping plutot qu'en
+codant un numero en dur, chaque slot visite etant restaure avant le suivant.
+Un deplacement de layout fait echouer la sonde au lieu de laisser la
+regression silencieuse. La propriete epinglee est double : la sentinelle
+`type(uint32).max` est bien posee par le constructeur, et le gestionnaire de
+l'epoch `0` peut effectivement ecrire son tarif, la ou il recevait
+`FeeAlreadySetThisEpoch` sans avoir rien fait.
+
+F8 exige un depot au-dela de `2^72 - 1`, hors de portee du plafond de 21
+millions de `MockWrappedBTC` : `PoolBootstrapOverflowTest` sort donc du panier
+et deploie un pool sur trois jetons SANS plafond, ce qui est exactement la
+situation contre laquelle la garde protege. La branche d'amorcage rend
+desormais `ReserveOverflow`, la meme erreur que la branche normale, la ou elle
+tronquait en silence : un appelant n'a pas a savoir par quelle branche il est
+passe.
+
+F6 est le seul des quatre qui aurait pu vivre en TypeScript, et le fichier le
+dit. `PoolOwnerEpochBoundTest` verifie que la voie d'amorcage de l'owner est
+bornee a `currentEpoch() + 1` (`OwnerEpochTooFar`) sans etre fermee, et que la
+voie de l'enchere reste intacte. Il reste ici pour tenir les quatre gardes
+d'audit du pool dans un seul fichier lisible d'affilee, ce qui est une raison
+de lisibilite et non de capacite : autant l'ecrire.
+
 ## Differe (couche Solidity)
 
-Un invariant reste en attente, avec son blocker ecrit :
-
-- **Le pot MRN de l'encheresse couvre refunds + pending + high bid.**
-  L'enchere elle-meme n'existe pas (`Auction.sol` non ecrit, item 8a-c du
-  plan non livre). La forme finale depend de la regle de confiscation du
-  cautionnement et du flot de streaming sous 8c, donc l'invariant ne peut
-  pas etre ecrit avant l'enchere, et l'ecrire en anticipation le ferait
-  ecrire deux fois.
+Rien n'est plus differe sur cette couche. L'invariant du pot MRN de l'enchere,
+longtemps en attente avec son blocker ecrit (`Auction.sol` n'existait pas, et
+sa forme dependait de la regle de confiscation et du streaming), est livre a
+I.6 dans `test/Auction.invariant.t.sol` sous le nom `mrnCoversObligations`. Le
+paragraphe est conserve plutot qu'efface : il dit ce que le blocker etait, et
+ce qui l'a leve.
 
 ## Hors perimetre (atomcite EVM)
 

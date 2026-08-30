@@ -3,16 +3,15 @@ import { poolAbi } from '@/constants/abi';
 import { MANDATE_POLL_MS } from '@/hooks/_constants';
 import { useReadContract } from 'wagmi';
 
-// The pool's `paused` flag. The owner pauses swaps and deposits and nothing
-// else (C4: he cannot move the fee, the reserves or a band), so a paused pool
-// rejects every swap, addLiquidity and removeLiquidity the front can build.
+// Le flag `paused` du pool. L'owner met en pause les swaps et les depots, rien d'autre
+// (C4 : il ne peut toucher ni la fee, ni les reserves, ni une bande). Un pool en pause rejette
+// donc tout swap, addLiquidity et removeLiquidity que le front peut construire.
 //
-// Polled rather than read once: pausing is an operational act that happens
-// while the page is open, and a user who loaded the form before the pause
-// would otherwise sign into a revert. Short interval, single boolean.
+// Polle plutot que lu une fois : la mise en pause est un acte operationnel qui arrive page
+// ouverte ; sans polling, un utilisateur ayant charge le formulaire avant signerait vers un revert.
 //
-// The read does not depend on a connected wallet — it is a plain public
-// read — so the forms can show the paused state while disconnected too.
+// La lecture ne depend pas d'un wallet connecte (lecture publique) : les formulaires affichent
+// l'etat pause meme deconnectes.
 export function usePoolPaused() {
   const { pool } = useDeployedChainId();
   return useReadContract({

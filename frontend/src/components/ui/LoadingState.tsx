@@ -8,14 +8,13 @@ type LoadingStateProps = {
 };
 
 /**
- * Merion loading state — uniform placeholder while a read is in flight.
+ * Etat de chargement Merion — placeholder uniforme pendant qu'une lecture est en vol.
  *
- * Same surface as every other state in this set (Panel Slate, H4 title, body
- * description). An optional contour icon sits on the left; geometry stays
- * simple per brand book §8.
+ * Meme surface que les autres etats du lot (Panel Slate, titre H4, description body). Icone de
+ * contour optionnelle a gauche ; geometrie simple (brand book §8).
  *
- * The brief calls `LoadingState` a generic placeholder for reads in flight,
- * not for empty data — an empty reserves array is not a loading state.
+ * `LoadingState` est un placeholder pour les lectures en vol, pas pour des donnees vides :
+ * un tableau de reserves vide n'est pas un etat de chargement.
  */
 export function LoadingState({
   title = 'Loading…',

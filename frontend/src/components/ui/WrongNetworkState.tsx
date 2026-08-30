@@ -2,14 +2,12 @@ import Panel from '@/components/Panel';
 import { SUPPORTED_CHAINS_LABEL } from './deployment';
 
 /**
- * Merion wrong-network state — wallet connected but on a chain other than the
- * one the pool is deployed on.
+ * Etat « mauvais reseau » — wallet connecte mais sur une chaine autre que celle du pool.
  *
- * The expected chain lives in `./deployment` (single source of truth). The CTA
- * reuses the project's `appkit-button` web component; the network switch itself
- * is not yet wired on the app side — see the OUVERT note in the task report.
+ * La chaine attendue vit dans `./deployment` (source de verite unique). Le CTA reutilise le
+ * web component `appkit-button` ; la bascule de reseau n'est pas encore cablee cote app (note OUVERT).
  *
- * Tone: warning (brand book §2), signalled here with a left warning border.
+ * Ton : warning (brand book §2), bordure gauche warning.
  */
 export function WrongNetworkState() {
   return (

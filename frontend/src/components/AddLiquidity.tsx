@@ -73,10 +73,9 @@ const AddLiquidity = () => {
     : { quote: null, reason: null };
   const {quote, reason} = quoteResult;
 
-  // A guard without its data stays silent: `useUserBalances` is disabled when
-  // no wallet is connected, so `btcBalances[i].result` is undefined and no
-  // shortfall is ever reported. The form therefore stays fully usable while
-  // disconnected, and the check only bites once balances are actually known.
+  // Un garde sans donnee se tait : `useUserBalances` est desactive sans wallet connecte, donc
+  // `btcBalances[i].result` est undefined et aucun manque n'est signale. Le formulaire reste
+  // pleinement utilisable deconnecte, et la verif ne mord qu'une fois les soldes connus.
   const shortfalls = quote
     ? quote.computed.flatMap((amount, i) => {
         const balance = btcBalances[i]?.result;
@@ -105,13 +104,11 @@ const AddLiquidity = () => {
         await publicClient.waitForTransactionReceipt({hash})
       }
       setStep(3);
-      // V.5/bug-base-gas-cap — pre-flight `simulateContract` catches the
-      // *real* revert (allowance, balance, slippage) BEFORE we hand off to
-      // the wallet. Without this, a reverting call falls into the wallet's
-      // fallback gas path, which lands above Base's per-tx cap (2^24), and
-      // the user sees the alarming "exceeds max transaction gas limit"
-      // instead of the actual reason. Surface the revert here so it ends
-      // up in `setError` exactly the same way as a tx-level revert.
+      // V.5/bug-base-gas-cap — `simulateContract` en pre-vol attrape le vrai revert (allowance,
+      // solde, slippage) AVANT de passer la main au wallet. Sans ça, un appel qui reverte tombe
+      // dans le gas de repli du wallet, au-dessus du cap Base (2^24), et l'utilisateur voit
+      // « exceeds max transaction gas limit » au lieu de la vraie raison. On expose le revert
+      // ici pour qu'il atterrisse dans `setError` comme un revert au niveau tx.
       await simulateContract(publicClient, {
         address: deployedPool,
         abi: poolAbi,

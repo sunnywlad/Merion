@@ -4,26 +4,23 @@ import type { MandateTimelineStatus } from '@/components/_mandateStatus';
 export type { MandateTimelineStatus };
 
 type MandateTimelineProps = {
-  /** Mandate start, in seconds since epoch. */
+  /** Debut du mandat, en secondes depuis l'epoque. */
   start: number;
-  /** Mandate end, in seconds since epoch. */
+  /** Fin du mandat, en secondes depuis l'epoque. */
   end: number;
-  /** Present moment, in seconds since epoch. */
+  /** Instant present, en secondes depuis l'epoque. */
   now: number;
   /**
-   * Duration of the late bid window before `end`, in seconds. Defaults to
-   * two hours, the brief's example value. The contract does not expose a
-   * dedicated `lateWindow`; callers typically pass `15 %` of the mandate
-   * duration as a proxy.
+   * Duree de la fenetre tardive avant `end`, en secondes. Defaut deux heures. Le contrat
+   * n'expose pas de `lateWindow` dedie ; les appelants passent typiquement 15 % de la duree du mandat.
    */
   lateWindow?: number;
   /**
-   * Duration of the post-close silence, in seconds. Defaults to 30 minutes.
-   * Callers can pass `bidSilence` from the auction constants when available;
-   * the fallback matches the brief's example proportion.
+   * Duree du silence post-cloture, en secondes. Defaut 30 minutes. Les appelants peuvent passer
+   * `bidSilence` des constantes d'enchere quand il est disponible.
    */
   silence?: number;
-  /** Caller-computed status from start/end/now. */
+  /** Statut calcule par l'appelant a partir de start/end/now. */
   status: MandateTimelineStatus;
   className?: string;
 };
@@ -31,11 +28,9 @@ type MandateTimelineProps = {
 const DEFAULT_LATE_WINDOW = 2 * 60 * 60;
 const DEFAULT_SILENCE = 30 * 60;
 
-// Badge primitive variants. The brief assigns Info (#2563EB) to `new`, but
-// the Badge primitive's `new` variant uses Merion Blue (#1E4BFF); the brand
-// book treats the two as distinct, and the primitive does not expose an
-// `info` variant. We keep the primitive and accept the substitution as a
-// documented constraint.
+// Variantes du composant Badge. Le brief attribue Info (#2563EB) a `new`, mais la variante
+// `new` du Badge utilise Merion Blue (#1E4BFF) ; le brand book les distingue, et le composant
+// n'expose pas de variante `info`. On garde le composant et on accepte la substitution.
 const STATUS_VARIANT: Record<
   MandateTimelineStatus,
   'new' | 'active' | 'beta' | 'deprecated'

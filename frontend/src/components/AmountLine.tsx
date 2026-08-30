@@ -5,14 +5,14 @@ type AmountLineProps = {
   isLoading: boolean;
   error: Error | null | undefined;
   value: bigint | undefined;
-  /** On-chain decimals (how `value` is encoded). Defaults to 8. */
+  /** Decimales on-chain (encodage de `value`). Defaut 8. */
   tokenDecimals?: number;
-  /** Display precision (fraction digits shown). Truncated, not rounded. Defaults to 4. */
+  /** Precision d'affichage (decimales montrees). Tronquee, pas arrondie. Defaut 4. */
   displayDecimals?: number;
-  /** Grouping style. Default 'none'. Use 'fr' for MRN amounts. */
+  /** Style de groupement. Defaut 'none'. 'fr' pour les montants MRN. */
   grouping?: Grouping;
   /**
-   * Unit shown after the value. Note d'inspiration §4 :
+   * Unite affichee apres la valeur. Note d'inspiration §4 :
    *   - `wBTC`, `MRN`, `h` : rendu en `<span>` séparé, Code Small Neutral,
    *     avec espace insécable (NARROW NO-BREAK SPACE) devant — l'unité NE
    *     fait PAS partie de la colonne de chiffres alignée.
@@ -24,17 +24,14 @@ type AmountLineProps = {
 };
 
 /**
- * Merion amount line — note d'inspiration §4.
+ * Ligne de montant Merion — note d'inspiration §4.
  *
- * `font-variant-numeric: tabular-nums` aligns the digit column (rail
- * balances, reserves, percentages). The unit lives outside that column
- * for everything except `%`, which the spec ties to the mono block.
+ * `font-variant-numeric: tabular-nums` aligne la colonne de chiffres (balances du rail,
+ * reserves, pourcentages). L'unite est hors de cette colonne, sauf `%`, que la spec colle au bloc mono.
  *
- * The four states are evaluated in order: while loading, `value` is
- * undefined too, and the third branch would steal the display from the
- * first. Per brand book §2, numeric values carry no semantic colour by
- * default; Success is reserved for healthy *statuses*, not for "a number
- * that exists".
+ * Les quatre etats sont evalues dans l'ordre : pendant le chargement, `value` est aussi
+ * undefined, et la troisieme branche volerait l'affichage a la premiere. Brand book §2 : une
+ * valeur numerique ne porte pas de couleur semantique par defaut.
  */
 export default function AmountLine({
   label,
@@ -52,9 +49,9 @@ export default function AmountLine({
     content = 'Loading…';
     contentClass = 'text-cloud/60';
   } else if (error) {
-    // Deliberately not the error message: this cell is a narrow tabular
-    // figure column, a sentence would wreck the alignment. The full wording
-    // is carried by `ReadErrorBoundary` where the space allows it.
+    // Volontairement pas le message d'erreur : cette cellule est une colonne de chiffres
+    // etroite, une phrase casserait l'alignement. Le libelle complet est porte par
+    // `ReadErrorBoundary`, ou la place le permet.
     content = 'Read failed';
     contentClass = 'text-danger';
   } else if (value === undefined) {
@@ -69,9 +66,8 @@ export default function AmountLine({
     contentClass = 'text-cloud';
   }
 
-  // Per §4, `%` stays glued inside the mono block; every other unit gets
-  // its own span preceded by a narrow no-break space so the digit column
-  // stays vertically aligned.
+  // §4 : `%` reste colle dans le bloc mono ; toute autre unite a son propre span precede
+  // d'une espace fine insecable, pour garder la colonne de chiffres alignee verticalement.
   const inlineUnit = unit === '%';
 
   return (

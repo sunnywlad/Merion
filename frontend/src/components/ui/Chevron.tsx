@@ -1,9 +1,9 @@
 import type { CSSProperties } from 'react';
 
 type ChevronProps = {
-  /** When true, the chevron is rotated 180° (expanded). */
+  /** Vrai : chevron pivote de 180° (deplie). */
   open?: boolean;
-  /** ARIA label override (defaults to "Toggle details"). */
+  /** Remplace le label ARIA (defaut « Toggle details »). */
   label?: string;
   className?: string;
 };
@@ -11,20 +11,16 @@ type ChevronProps = {
 /**
  * Merion chevron — note d'inspiration §8.
  *
- * 12 px Neutral glyph (`▾`), 200 ms rotation transition on `transform`
- * only (note §9: `transform` and `box-shadow` are exempt from transition
- * rules but the rotation itself stays under 200 ms ease-in-out for
- * consistency with `merion-retractable`). The `prefers-reduced-motion`
- * killswitch in `globals.css` zeroes the transition globally.
+ * Glyphe Neutral 12 px (`▾`), rotation de 200 ms sur `transform` seulement (note §9). Le
+ * killswitch `prefers-reduced-motion` de `globals.css` annule la transition globalement.
  */
 export function Chevron({
   open = false,
   label = 'Toggle details',
   className = '',
 }: ChevronProps) {
-  // Static style is fine: rotation is purely transform-driven, no
-  // layout shift, and the data-open attribute keeps the visual state
-  // accessible to screen readers via the surrounding aria-expanded.
+  // Style statique suffisant : la rotation passe par `transform`, sans decalage de layout, et
+  // l'attribut data-open garde l'etat visuel accessible via l'aria-expanded parent.
   const style: CSSProperties = {};
   return (
     <span

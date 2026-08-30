@@ -1,13 +1,11 @@
 type ReservesBarProps = {
-  // Token label shown on the left of the bar (e.g. "wBTC").
+  // Libelle du token, a gauche de la barre (ex. « wBTC »).
   tokenSymbol: string;
-  // Current share of the pool, 0..1 (e.g. 0.334 for 33.4%).
+  // Part actuelle du pool, 0..1 (ex. 0,334 pour 33,4 %).
   share: number;
-  // Acceptable corridor around the 33% target. Out of this band, the fill
-  // colour flips to Warning. Defaults to ±4 pp around 1/3, a corridor wide
-  // enough that small swap imbalances stay nominal but obvious drifts trip
-  // the signal — chosen against the brand book's `Dynamisme 5/10`, where
-  // we want quiet but unambiguous signalling.
+  // Corridor acceptable autour de la cible de 33 %. Hors bande, le remplissage passe en Warning.
+  // Defaut ±4 pp autour de 1/3 : assez large pour que les petits desequilibres restent nominaux,
+  // assez serre pour signaler une derive nette.
   bound?: { low: number; high: number };
   className?: string;
 };
@@ -16,16 +14,14 @@ const DEFAULT_BOUND = { low: 1 / 3 - 0.04, high: 1 / 3 + 0.04 };
 const TARGET_FRACTION = 1 / 3;
 
 /**
- * Merion reserves bar — single horizontal bar with the token share, the
- * 33% target mark, and a colour-coded fill.
+ * Barre de reserves Merion — une barre horizontale : part du token, marque de cible a 33 %,
+ * remplissage code couleur.
  *
- * Pure CSS rendering (no SVG, no canvas). Width transitions 300 ms, in the
- * lower half of the 300–500 ms window the brand book tolerance allows.
- * Colour transition piggybacks on the same duration.
+ * Rendu CSS pur (ni SVG ni canvas). Transition de largeur sur 300 ms ; la couleur suit la
+ * meme duree.
  *
- * Accessibility: `role="meter"` with `aria-valuenow / valuemin / valuemax`
- * so screen readers can announce the share; the target tick is decorative
- * (`aria-hidden`).
+ * Accessibilite : `role="meter"` avec `aria-valuenow / valuemin / valuemax` pour que les
+ * lecteurs d'ecran annoncent la part ; le tick de cible est decoratif (`aria-hidden`).
  */
 export function ReservesBar({
   tokenSymbol,
@@ -34,9 +30,8 @@ export function ReservesBar({
   className = '',
 }: ReservesBarProps) {
   const pct = Math.max(0, Math.min(1, share)) * 100;
-  // `share === 0` covers two cases: genuinely zero reserves (an empty pool)
-  // and `reserves` not yet loaded. Both render with a neutral fill so we
-  // never trip Warning on missing data.
+  // `share === 0` couvre deux cas : reserves vraiment nulles (pool vide) et `reserves` pas
+  // encore charge. Les deux rendent un remplissage neutre : jamais de Warning sur donnee absente.
   const noData = share === 0;
   const outOfBounds =
     !noData && (share < bound.low || share > bound.high);

@@ -8,23 +8,18 @@ import { ZERO_ADDRESS } from '@/hooks/_constants';
 import type { FeeRouting } from '@/lib/bands';
 
 /**
- * Everything needed to reproduce how `Pool.swap` funds the reserves.
+ * Tout ce qu'il faut pour reproduire comment `Pool.swap` finance les reserves.
  *
- * The split is deliberate. What never changes — `FEE_DEN`,
- * `NOMINAL_FEE_NUM` (immutable, constructor), `PROTOCOL_FEE_BPS` and
- * `SPLIT_DEN` (both `constant`) — comes from `useConstants` and is read once
- * for the session. What moves at mandate boundaries — `feeNum`,
- * `lastSetFeeEpoch` and the manager in office — is this hook's own
- * multicall, scoped to the current epoch and re-read only when it changes.
+ * Le partage est delibere. Ce qui ne change jamais (FEE_DEN, NOMINAL_FEE_NUM, PROTOCOL_FEE_BPS,
+ * SPLIT_DEN) vient de `useConstants`, lu une fois par session. Ce qui bouge aux frontieres de
+ * mandat (feeNum, lastSetFeeEpoch, le gestionnaire en poste) est le multicall propre a ce hook,
+ * porte sur l'epoque courante et relu seulement quand elle change.
  *
- * Three entries, one round-trip: `manager()` is `managerOf[currentEpoch()]`,
- * but the epoch itself is sourced from `useAuctionState()` (already polled
- * by `AuctionBar` at 15 s), so we don't read it twice. `scopeKey` keyed on
- * the epoch plus `staleTime: Infinity` gives one read per mandate instead of
- * one per minute (plan §4 RPC).
+ * Trois entrees, un aller-retour : l'epoque vient de `useAuctionState()` (deja pollee par
+ * AuctionBar toutes les 15 s), donc pas lue deux fois. scopeKey sur l'epoque + staleTime
+ * infini = une lecture par mandat au lieu d'une par minute.
  *
- * Returns `undefined` until every term has landed. A guard that has not got its
- * data says nothing rather than guessing.
+ * Rend `undefined` tant que tous les termes ne sont pas arrives : un garde sans donnee se tait.
  */
 export function useFeeRouting(): {
   routing: FeeRouting | undefined;
@@ -86,8 +81,8 @@ export function useFeeRouting(): {
             feeDen,
             nominalFeeNum,
             feeNum,
-            // Both branch conditions are resolved here so `lib/bands.ts` stays
-            // pure bigint arithmetic and never has to handle an address.
+            // Les deux conditions sont resolues ici pour que `lib/bands.ts` reste
+            // de l'arithmetique bigint pure, sans jamais manipuler d'adresse.
             feeSetThisEpoch: lastSetFeeEpoch === epoch,
             hasManager: manager !== ZERO_ADDRESS,
             protocolFeeBps,
