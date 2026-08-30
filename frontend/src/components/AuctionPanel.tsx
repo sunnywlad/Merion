@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useConnection, useWriteContract, usePublicClient, useReadContract } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
 import { formatUnits } from 'viem';
@@ -16,6 +16,7 @@ import { useRefund } from '@/hooks/useRefund';
 import { useChainNow } from '@/hooks/useChainNow';
 import { nextMinimumBid, secondsLeft, formatCountdown } from '@/lib/readMandateWindow';
 import { parseAmount } from '@/lib/parseAmount';
+import { formatAmount } from '@/components/ui/formatAmount';
 import { describeTxError } from '@/lib/txError';
 import { useIsWrongNetwork } from '@/hooks/useIsWrongNetwork';
 import { SUPPORTED_CHAINS_LABEL } from '@/components/ui/deployment';
@@ -28,6 +29,13 @@ import { ZERO_ADDRESS } from '@/hooks/_constants';
 // contrat à la volée. Le facteur vit dans le contrat (constant), donc la
 // borne supérieure est calculée ici sans nouvelle lecture.
 const UNBALANCE_FACTOR = 2n;
+
+// Colonne de chiffres : mêmes classes que la valeur d'`AmountLine`
+// (mono, `text-code`, tabular-nums), pour un corps de chiffre identique
+// à « Base fee » dans « Current epoch ».
+const Num = ({ children }: { children: ReactNode }) => (
+  <span className='font-mono text-code num-tabular'>{children}</span>
+);
 
 // I.6 — Panneau d'enchère : mêmes `Panel`/bordures/champs que le reste de la
 // page. Lecture sur les mêmes hooks que `MandatePanel` (I.5), écriture des
@@ -131,6 +139,25 @@ export default function AuctionPanel() {
     || (pendingEpoch !== undefined && pendingEpoch > 0n)
     || (pendingAmount !== undefined && pendingAmount > 0n);
 
+  // Ce que l'appelant de `settle()` empoche : `SETTLE_REWARD_BPS` (10 bps)
+  // sur la part LP, elle-même 70 % de la mise (les 30 % restants sont
+  // brûlés). Base = le slot pending s'il est rempli, sinon l'enchère vive
+  // qui sera capturée.
+  const settleBase = pendingAmount !== undefined && pendingAmount > 0n
+    ? pendingAmount
+    : (currentBid ?? 0n);
+  const settleReward = (settleBase * 7000n / 10000n) * 10n / 10000n;
+
+  // `minFeeNum` / `maxManagerFeeNum` sont des numérateurs à deux décimales
+  // de pourcent (5 → 0,05 %). La division bigint par 100 tronquait tout à
+  // 0 ; on repasse en nombre pour garder les décimales.
+  const fmtFeePct = (n: bigint) => `${(Number(n) / 100).toFixed(2).replace('.', ',')} %`;
+
+  // Montants MRN : même rendu que le rail (mono, groupement français, deux
+  // décimales tronquées). `formatAmount` rend '—' pour `undefined`.
+  const mrn = (v: bigint | undefined) =>
+    formatAmount(v, { displayDecimals: 2, tokenDecimals: MRN_DECIMALS, grouping: 'fr' });
+
   const timeLeft = now !== null && closesAt !== undefined ? secondsLeft(closesAt, now) : null;
 
   // `windowOpen()` du contrat rend `false` tant que `sellingEpoch != currentEpoch()+1`,
@@ -151,17 +178,11 @@ export default function AuctionPanel() {
       : false;
   const canPlaceBid = windowOpen === true || firstBidWindowOpen;
 
-  // Démarrage du mandat mis aux enchères : `genesis + sellingEpoch *
-  // epochDuration`. La ligne se tait plutôt que d'inventer si l'une des trois
-  // lectures manque. C'est le point de convergence entre l'enchère (qui le
-  // vend) et le mandat (qui en hérite au règlement) — d'où sa présence ici,
-  // pas dans `MandatePanel`.
-  const sellingStart = sellingEpoch !== undefined
-    && constants.genesis !== undefined
-    && constants.epochDuration !== undefined
-      ? constants.genesis + sellingEpoch * constants.epochDuration
-      : undefined;
-  const timeToStart = now !== null && sellingStart !== undefined ? secondsLeft(sellingStart, now) : null;
+  // Le mandat mis en vente est toujours `currentEpoch + 1`, qu'une mise ait
+  // déjà ouvert le créneau (`sellingEpoch == currentEpoch + 1`) ou non
+  // (`sellingEpoch` encore à zéro, une mise le rouvrira). Utiliser
+  // `sellingEpoch` brut affichait 0 et bloquait le décompte à l'état vierge.
+  const soldMandate = currentEpoch !== undefined ? currentEpoch + 1n : undefined;
   const managerInOffice = managerNow.data;
   const hasManagerNow = managerInOffice !== undefined && managerInOffice !== ZERO_ADDRESS;
   const refundOwed = refund.data;
@@ -305,6 +326,49 @@ export default function AuctionPanel() {
     } finally { setPending(null); }
   };
 
+  // Boutons « grisés mais cliquables » : plutôt qu'afficher en permanence
+  // la raison du blocage sous chaque bouton, on ne la montre qu'au clic.
+  // Le bouton n'est réellement `disabled` que pendant une transaction ;
+  // sinon il reste cliquable, l'aspect grisé vient de `aria-disabled` +
+  // opacité, et le handler ci-dessous pose l'explication dans `errors`.
+  const wrongNetMsg = `Wrong network — switch to ${SUPPORTED_CHAINS_LABEL}.`;
+
+  const bidSoftDisabled =
+    !user || wrongNetwork || bidInput === '' || bidBelowMinimum || !canPlaceBid;
+  const onBidClick = () => {
+    if (!user) return setActionError('bid', 'Connect your wallet to bid.');
+    if (wrongNetwork) return setActionError('bid', wrongNetMsg);
+    if (bidInput === '') return setActionError('bid', 'Enter a bid amount.');
+    if (!canPlaceBid)
+      return setActionError('bid', 'Auction inactive, window closed: wait for the next epoch to bid.');
+    if (bidBelowMinimum && minNextBid !== undefined)
+      return setActionError('bid', `Bid too low: minimum ${formatUnits(minNextBid, MRN_DECIMALS)} MRN.`);
+    void handlePlaceBid();
+  };
+
+  const settleSoftDisabled = !user || wrongNetwork || !hasBidToSettle;
+  const onSettleClick = () => {
+    if (!user) return setActionError('settle', 'Connect your wallet to settle.');
+    if (wrongNetwork) return setActionError('settle', wrongNetMsg);
+    if (!hasBidToSettle)
+      return setActionError('settle', 'Nothing to settle right now: no winning bid is awaiting nomination.');
+    void handleSettle();
+  };
+
+  const setFeeSoftDisabled =
+    !user || wrongNetwork || !isManagerOfCurrent || feeAlreadySet || !inPriorityWindow || feeInput === '';
+  const onSetFeeClick = () => {
+    if (!user) return setActionError('setFee', 'Connect your wallet to set the fee.');
+    if (wrongNetwork) return setActionError('setFee', wrongNetMsg);
+    if (!isManagerOfCurrent)
+      return setActionError('setFee', 'Inactive until you are the manager of the current epoch.');
+    if (feeAlreadySet) return setActionError('setFee', 'Fee already set for this epoch.');
+    if (!inPriorityWindow)
+      return setActionError('setFee', 'Priority window closed: act within the first seconds of the epoch.');
+    if (feeInput === '') return setActionError('setFee', 'Enter a fee percentage.');
+    void handleSetFee();
+  };
+
   return (
     <ReadErrorBoundary
       title="Could not read auction data"
@@ -317,7 +381,9 @@ export default function AuctionPanel() {
       ]}
     >
       <Panel>
-      <p className='font-semibold pb-2'>Auction for the next mandate</p>
+      <p className='font-semibold pb-2'>
+        Auction for epoch {soldMandate === undefined ? '#—' : `#${String(soldMandate)}`}
+      </p>
 
       {wrongNetwork && (
         <p className='text-small text-danger pb-3' role='alert'>
@@ -325,27 +391,21 @@ export default function AuctionPanel() {
         </p>
       )}
 
-      <div>Mandate for sale: {sellingEpoch === undefined ? '—' : String(sellingEpoch)}</div>
       <div>Window: {windowOpen === undefined ? '—' : (canPlaceBid ? 'open' : 'closed')}</div>
       {windowOpen && closesAt !== undefined && (
-        <div>Closes in {formatCountdown(timeLeft)}</div>
+        <div>Closes in <Num>{formatCountdown(timeLeft)}</Num></div>
       )}
-      <div>High bid: {currentBid === undefined ? '—' : `${formatUnits(currentBid, MRN_DECIMALS)} MRN`}</div>
-      <div>Top bidder: {highBidder && highBidder !== ZERO_ADDRESS ? highBidder : '(none)'}</div>
-      <div>Next minimum bid: {minNextBid === undefined ? '—' : `${formatUnits(minNextBid, MRN_DECIMALS)} MRN`}</div>
-      <div>
-        Mandate to settle: {pendingEpoch !== undefined && pendingEpoch > 0n
-          ? `#${pendingEpoch} (${formatUnits(pendingAmount ?? 0n, MRN_DECIMALS)} MRN)`
-          : '(none)'}
-      </div>
-      {timeToStart !== null && (
-        <div>Starts in {formatCountdown(timeToStart)}</div>
+      <div>High bid: {currentBid === undefined || currentBid === 0n ? '—' : <Num>{mrn(currentBid)} MRN</Num>}</div>
+      <div>Top bidder: {highBidder && highBidder !== ZERO_ADDRESS ? highBidder : '—'}</div>
+      <div>Next minimum bid: {minNextBid === undefined ? '—' : <Num>{mrn(minNextBid)} MRN</Num>}</div>
+      {/* Une epoch gagnée lors d'un cycle précédent mais pas encore réglée
+          (`settle` non appelé, gestionnaire pas encore nommé). Ligne
+          masquée quand il n'y a rien en attente. */}
+      {pendingEpoch !== undefined && pendingEpoch > 0n && (
+        <div>
+          Won, awaiting settlement: #{String(pendingEpoch)} (<Num>{mrn(pendingAmount ?? 0n)} MRN</Num>)
+        </div>
       )}
-      <div>
-        Refund to claim: {user
-          ? (refundOwed === undefined ? '—' : `${formatUnits(refundOwed, MRN_DECIMALS)} MRN`)
-          : 'connect to read'}
-      </div>
 
       <div className='flex flex-wrap gap-4 items-center pt-4'>
         <label htmlFor="auction-bid">Bid (MRN): </label>
@@ -359,65 +419,37 @@ export default function AuctionPanel() {
         />
         <Button
           level="primary"
-          onClick={handlePlaceBid}
+          onClick={onBidClick}
           aria-busy={pending === 'bid' || undefined}
-          disabled={!user || pending !== null || wrongNetwork || bidInput === '' || bidBelowMinimum || !canPlaceBid}>
+          aria-disabled={bidSoftDisabled || undefined}
+          disabled={pending !== null}
+          className={bidSoftDisabled ? 'opacity-50 cursor-not-allowed' : ''}>
           {pending === 'bid' ? 'Approve + bid in progress' : 'Approve and bid'}
         </Button>
       </div>
-      {bidBelowMinimum && minNextBid !== undefined && (
-        <p className='text-xs pt-1'>
-          Bid too low: minimum {formatUnits(minNextBid, MRN_DECIMALS)} MRN.
-        </p>
-      )}
       {firstBidWindowOpen && (
         <p className='text-xs pt-1'>
-          No bid on this cycle yet — yours opens the window.
-        </p>
-      )}
-      {windowOpen === false && !firstBidWindowOpen && (
-        <p className='text-xs pt-1'>
-          {currentBid !== undefined && currentBid > 0n
-            ? <>Window closed: manager {pendingEpoch !== undefined && pendingEpoch > 0n ? 'designated' : 'pending settlement'}</>
-            // Cas « aucune enchère en cours, fenêtre fermée ». La fermeture
-            // a deux causes temporelles distinctes sous la meme UI :
-            //   (1) AVANT l'ouverture : `now < startOfEpoch(sellingEpoch - 1)`
-            //       — le créneau n'a pas encore commencé ;
-            //   (2) APRES la fermeture : `now >= closesAt`
-            //       — le créneau est fini sans enchérisseur.
-            // Dans les deux cas, `placeBid` revert `WindowClosed` et le
-            // bouton est désactivé par `windowOpen !== true`. Inviter à
-            // attendre la prochaine epoch, pas à miser maintenant.
-            : <>Auction inactive, window closed: wait for the next epoch to bid</>}
+          Window open, no bid yet this cycle — place the first one.
         </p>
       )}
       {errors.bid && <p className='text-xs pt-1 text-danger'>{errors.bid}</p>}
 
-      <div className='pt-2'>
+      {hasBidToSettle && settleReward > 0n && (
+        <div className='pt-2 text-xs'>
+          Settle for <Num>{mrn(settleReward)} MRN</Num>
+        </div>
+      )}
+      <div className='pt-2 flex justify-end'>
         <Button
-          level="secondary"
-          onClick={handleWithdrawRefund}
-          aria-busy={pending === 'refund' || undefined}
-          disabled={!user || pending !== null || wrongNetwork || !hasRefund}>
-          {pending === 'refund' ? 'Withdrawal in progress' : 'Withdraw my refund'}
-        </Button>
-      </div>
-      {errors.refund && <p className='text-xs pt-1 text-danger'>{errors.refund}</p>}
-
-      <div className='pt-2'>
-        <Button
-          level="secondary"
-          onClick={handleSettle}
+          level="primary"
+          onClick={onSettleClick}
           aria-busy={pending === 'settle' || undefined}
-          disabled={!user || pending !== null || wrongNetwork || !hasBidToSettle}>
+          aria-disabled={settleSoftDisabled || undefined}
+          disabled={pending !== null}
+          className={settleSoftDisabled ? 'opacity-50 cursor-not-allowed' : ''}>
           {pending === 'settle' ? 'Settlement in progress' : 'Settle'}
         </Button>
       </div>
-      {!hasBidToSettle && (
-        <p className='text-xs pt-1'>
-          No bid to settle: the first bid opens the window.
-        </p>
-      )}
       {errors.settle && <p className='text-xs pt-1 text-danger'>{errors.settle}</p>}
 
       {/* Bloc setFee : toujours présent pour signaler la mécanique, grisé
@@ -437,30 +469,42 @@ export default function AuctionPanel() {
             onChange={(e) => { setFeeInput(e.target.value); setActionError('setFee', null); }}
           />
           <Button
-            level="secondary"
-            onClick={handleSetFee}
+            level="primary"
+            onClick={onSetFeeClick}
             aria-busy={pending === 'setFee' || undefined}
-            disabled={!canSetFee || pending !== null || wrongNetwork || feeInput === ''}>
+            aria-disabled={setFeeSoftDisabled || undefined}
+            disabled={pending !== null}
+            className={setFeeSoftDisabled ? 'opacity-50 cursor-not-allowed' : ''}>
             {pending === 'setFee' ? 'Applying fee' : 'Set fee'}
           </Button>
         </div>
         <p className='text-xs pt-1'>
           {minFeeNum !== undefined && maxManagerFeeNum !== undefined
-            ? <>Range: {String(minFeeNum / 100n)} % — {String(maxManagerFeeNum / 100n)} %</>
+            ? <>Range: <Num>{fmtFeePct(minFeeNum)}</Num> — <Num>{fmtFeePct(maxManagerFeeNum)}</Num></>
             : 'Reading bounds…'}
         </p>
-        <p className='text-xs'>
-          {!user
-            ? 'Connect to act.'
-            : !isManagerOfCurrent
-              ? 'Inactive until you are the manager of the current mandate.'
-              : feeAlreadySet
-                ? 'Fee already set for this mandate.'
-                : !inPriorityWindow
-                  ? 'Priority window closed: act within the first seconds of the epoch.'
-                  : 'Priority window open.'}
-        </p>
+        {isManagerOfCurrent && inPriorityWindow && !feeAlreadySet && (
+          <p className='text-xs'>Priority window open.</p>
+        )}
         {errors.setFee && <p className='text-xs pt-1 text-danger'>{errors.setFee}</p>}
+      </div>
+
+      <div className='pt-4 border-t mt-4'>
+        <div className='flex items-center justify-between gap-4'>
+          <div>
+            Refund to claim: {user
+              ? (refundOwed === undefined ? '—' : <Num>{mrn(refundOwed)} MRN</Num>)
+              : 'connect to read'}
+          </div>
+          <Button
+            level="primary"
+            onClick={handleWithdrawRefund}
+            aria-busy={pending === 'refund' || undefined}
+            disabled={!user || pending !== null || wrongNetwork || !hasRefund}>
+            {pending === 'refund' ? 'Withdrawal in progress' : 'Withdraw my refund'}
+          </Button>
+        </div>
+        {errors.refund && <p className='text-xs pt-1 text-danger'>{errors.refund}</p>}
       </div>
     </Panel>
     </ReadErrorBoundary>

@@ -79,7 +79,7 @@ export default function AuctionBar() {
 
   // — Index + libellé « Mandate #N » ou « — » si pas chargé.
   const indexLabel =
-    currentEpoch !== undefined ? `Mandate #${String(currentEpoch)}` : 'Mandate —';
+    currentEpoch !== undefined ? `Epoch #${String(currentEpoch)}` : 'Epoch —';
   const timeLabel =
     timeToEnd !== null ? formatCountdown(timeToEnd) : '—';
 
@@ -104,7 +104,7 @@ export default function AuctionBar() {
             }
           >
             <div className="flex items-center gap-4 min-w-0">
-              <span className="text-h4 font-medium text-cloud">Auction</span>
+              <span className="text-h4 font-medium text-cloud">Epoch</span>
               <span className="text-caption uppercase tracking-wide text-cloud/60 num-tabular">
                 {indexLabel}
               </span>
