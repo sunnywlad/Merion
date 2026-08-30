@@ -355,7 +355,12 @@ function SwapForm(props: SwapFormProps) {
               aria-label="From token"
               className={SELECT_CLASS}
               value={String(indexIn)}
-              onChange={(e) => {setIndexIn(Number(e.target.value) as 0 | 1 | 2); setError(null)}}>
+              onChange={(e) => {
+                const next = Number(e.target.value) as 0 | 1 | 2;
+                if (next === indexOut) setIndexOut(indexIn);
+                setIndexIn(next);
+                setError(null);
+              }}>
               {tokensInfo.map((token) => (
                 <option key={token.name} value={String(token.index)}>
                   {token.name}
@@ -397,7 +402,12 @@ function SwapForm(props: SwapFormProps) {
               aria-label="To token"
               className={SELECT_CLASS}
               value={String(indexOut)}
-              onChange={(e) => {setIndexOut(Number(e.target.value) as 0 | 1 | 2); setError(null)}}>
+              onChange={(e) => {
+                const next = Number(e.target.value) as 0 | 1 | 2;
+                if (next === indexIn) setIndexIn(indexOut);
+                setIndexOut(next);
+                setError(null);
+              }}>
               {tokensInfo.map((token) => (
                 <option key={token.name} value={String(token.index)}>
                   {token.name}
