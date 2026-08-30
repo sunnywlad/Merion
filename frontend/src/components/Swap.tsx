@@ -36,10 +36,15 @@ const TX_GAS_LIMIT = 5_000_000n;
 // `INPUT_CLASS_MONO` et `SELECT_CLASS` vivent dans `ui/formClasses.ts`
 // depuis R3/C.1.
 
-/** Formate un montant BTC wrappé (8 décimales on-chain) à 4 décimales
- *  affichées, sans grouping (note §4 « Montants en BTC wrappé »). */
+/** V.5/bug-form-precision — Formate un montant BTC wrappé (8 décimales
+ *  on-chain) à 8 décimales affichées, sans grouping. Tous les montants
+ *  des formulaires (Swap, AddLiquidity, RemoveLiquidity) sont à la
+ *  précision on-chain : le 4-décimales antérieur tronquait les fees sub-
+ *  display (22 satoshis -> `0.0000`) et permettait à un output de 7
+ *  satoshis de s'afficher `0.0000` dans le champ "To", indistinguable
+ *  d'un vrai zéro. */
 const btcAmount = (v: bigint) =>
-  formatAmount(v, { displayDecimals: 4, tokenDecimals: 8 });
+  formatAmount(v, { displayDecimals: 8, tokenDecimals: 8 });
 
 // Perf E — `Record<number,string>` au niveau module : `tokensInfo`
 // variant par chaîne (Hardhat 31337 / Base Sepolia 84532) mais les noms
@@ -272,7 +277,14 @@ function SwapForm(props: SwapFormProps) {
       await Promise.all([refetchBalances(), refetchReserves()]);
       setTypedAmount("");
       setSide(null);
-      setTolerance("");
+      // V.5/bug-tolerance-clear — La tolerance est une preference
+      // utilisateur (defaut 0,5 %), pas un input par-trade. Avant ce
+      // fix, `setTolerance("")` la remettait a vide apres chaque swap ;
+      // le placeholder « 0.5 » s'affichait mais l'etat etait `""`, donc
+      // la decomposition rendait `Potential 0%` au lieu de refléter
+      // la tolerance reelle. On laisse `tolerance` intacte : premier
+      // swap -> « 0.5 » (defaut useState), swap suivant -> derniere
+      // valeur choisie.
     } catch (e) {
         setError(describeTxError(e))
     } finally {
@@ -282,6 +294,11 @@ function SwapForm(props: SwapFormProps) {
   }
 
   const expected = quote ? {in: quote.tokenIn.amount, out: quote.tokenOut.amount} : null;
+  // V.5/bug-form-fake-zero — Quand l'user tape sur 'in', le champ 'To'
+  // affiche la valeur calculee via `btcAmount` (8 decimales maintenant,
+  // cf. commentaire de `btcAmount`). Avant : 4 decimales tronquees, un
+  // output de 7 satoshis rendait `0.0000` indistinguable d'un vrai zero.
+  // On garde `typedAmount` brut pour le cote tape par l'user.
   const displayAmount = (j: 'in' | 'out') => {
     if (side === j) return typedAmount;
     else if (expected) return btcAmount(expected[j]);
@@ -472,12 +489,19 @@ function SwapForm(props: SwapFormProps) {
         */}
         <Panel title="Decomposition" tone="muted" className={quote ? '' : 'hidden'}>
           {quote ? (
+            // V.5/bug-decomp-precision — La decomposition recoit maintenant
+            // les bigint bruts au lieu de `Number(btcAmount(...))` qui
+            // tronquait a 4 decimales. Le composant les formate lui-meme
+            // avec `displayDecimals: 8` (cf. `SwapDecompositionBar.tsx`).
+            // Un impact sub-display (0.00012345 BTC) reste lisible au 8e
+            // chiffre, et un montant nul affiche `0.00000000` au lieu
+            // d'un `0` isole.
             <SwapDecompositionBar
-              input={Number(btcAmount(quote.tokenIn.amount))}
-              fee={Number(btcAmount(quote.tokenIn.fee))}
-              priceImpact={Number(btcAmount(quote.tokenOut.priceImpact))}
+              input={quote.tokenIn.amount}
+              fee={quote.tokenIn.fee}
+              priceImpact={quote.tokenOut.priceImpact}
               slippage={tolerance === '' ? 0 : Number(tolerance) || 0}
-              amountOut={Number(btcAmount(quote.tokenOut.amount))}
+              amountOut={quote.tokenOut.amount}
               feeUnit={nameOf(indexIn) ?? ''}
             />
           ) : null}

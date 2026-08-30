@@ -3,7 +3,7 @@
 import { useReserves } from '@/hooks/useReserves';
 import { useDeployedChainId } from '@/hooks/useDeployedChainId';
 import AmountLine from '@/components/AmountLine';
-import { formatAmount } from '@/components/ui/formatAmount';
+import { smartBtcAmount } from '@/components/ui/formatAmount';
 import { AppStateBoundary } from '@/components/ui/AppStateBoundary';
 import ReservesBar from '@/components/ReservesBar';
 
@@ -106,7 +106,10 @@ function TokenAmountRow({ isLoading, error, value, unit }: TokenAmountRowProps) 
     content = '—';
     contentClass = 'text-cloud/60';
   } else {
-    content = formatAmount(value, { displayDecimals: 4, tokenDecimals: 8, grouping: 'none' });
+    // V.5/bug-balances-fake-zero — Formateur adaptatif : < 0.0001 BTC
+    // passe en 8 decimales (cf. `smartBtcAmount` dans `formatAmount.ts`),
+    // sinon 4-decimales pour la lisibilite.
+    content = smartBtcAmount(value);
     contentClass = 'text-cloud';
   }
   return (

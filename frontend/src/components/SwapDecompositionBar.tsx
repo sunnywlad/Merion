@@ -6,22 +6,28 @@
  * categories sans lire la legende : merion-blue plein pour le certain, turquoise raye pour le potentiel.
  *
  * Les valeurs viennent de `quoteSwap` :
- *   - `fee` (unites d'entree, bigint)
- *   - `priceImpact` (unites de sortie, bigint — converti via `amountOut`)
+ *   - `fee` (unites d'entree, bigint 8-decimales)
+ *   - `priceImpact` (unites de sortie, bigint 8-decimales — converti via `amountOut`)
  *   - `slippage` (tolerance en pourcent, ex. 0,5)
- *   - `input` (montant d'entree, bigint)
+ *   - `input` (montant d'entree, bigint 8-decimales)
  *
- * Sans devis (input === 0, ou un segment undefined / NaN), la barre rend un etat vide neutre
+ * Affichage des montants : `formatAmount` avec `displayDecimals: 8` (precision
+ * on-chain des BTC wrappes). On tranche au plus court : 0.5 reste « 0.50000000 »,
+ * un impact sub-display (0.00012345 BTC) reste lisible jusqu'au 8e chiffre.
+ * C'est le seul endroit de l'app qui montre la precision complete du trade.
+ *
+ * Sans devis (input == 0n, ou un segment undefined / NaN), la barre rend un etat vide neutre
  * avec le label « Awaiting quote ».
  */
+import { formatAmount } from '@/components/ui/formatAmount';
 
 type SwapDecompositionBarProps = {
-  /** Montant d'entree en unites absolues (decimales du token d'entree). */
-  input: number;
-  /** Fee prelevee sur l'entree, en unites d'entree. */
-  fee: number;
-  /** Impact de prix, en unites de SORTIE (voir amountOut pour la conversion). */
-  priceImpact: number;
+  /** Montant d'entree en unites on-chain (8 decimales). */
+  input: bigint;
+  /** Fee prelevee sur l'entree, en unites on-chain (8 decimales). */
+  fee: bigint;
+  /** Impact de prix, en unites de SORTIE (8 decimales — voir amountOut pour la conversion). */
+  priceImpact: bigint;
   /** Tolerance de slippage, en pourcent (0,5 = 0,5 %). */
   slippage: number;
   /**
@@ -29,7 +35,7 @@ type SwapDecompositionBarProps = {
    * en son equivalent d'entree pour comparer les deux zones sur une seule echelle. Absent, la
    * barre utilise un ratio direct (largeur approximative).
    */
-  amountOut?: number;
+  amountOut?: bigint;
   /**
    * Suffixe ajoute a la valeur de perte certaine (ex. 'wBTC'). Couvre la fee ET l'impact de
    * prix : la legende convertit l'impact en unites d'entree pour n'afficher qu'un chiffre.
@@ -40,12 +46,12 @@ type SwapDecompositionBarProps = {
   className?: string;
 };
 
-/** Retire les zeros de fin : 0.025000 devient 0.025, 1.000000 devient 1. */
-function trim(n: number, max = 6): string {
-  if (!Number.isFinite(n)) return '—';
-  const fixed = n.toFixed(max);
-  return fixed.replace(/\.?0+$/, '') || '0';
-}
+/** Convertit un bigint 8-decimales en nombre flottant pour les ratios de largeur. */
+const toFloat = (v: bigint): number => Number(v) / 1e8;
+
+/** Formate un bigint 8-decimales en chaine, precision complete (cf. bloc ci-dessus). */
+const fmt = (v: bigint): string =>
+  formatAmount(v, { displayDecimals: 8, tokenDecimals: 8 });
 
 export function SwapDecompositionBar({
   input,
@@ -57,10 +63,15 @@ export function SwapDecompositionBar({
   slippageUnit = '%',
   className = '',
 }: SwapDecompositionBarProps) {
+  const inputF = toFloat(input);
+  const feeF = toFloat(fee);
+  const impactF = toFloat(priceImpact);
+  const amountOutF = amountOut !== undefined ? toFloat(amountOut) : undefined;
+
   const valid =
-    Number.isFinite(input) && input > 0 &&
-    Number.isFinite(fee) && fee >= 0 &&
-    Number.isFinite(priceImpact) && priceImpact >= 0 &&
+    Number.isFinite(inputF) && inputF > 0 &&
+    Number.isFinite(feeF) && feeF >= 0 &&
+    Number.isFinite(impactF) && impactF >= 0 &&
     Number.isFinite(slippage) && slippage >= 0;
 
   if (!valid) {
@@ -75,10 +86,10 @@ export function SwapDecompositionBar({
   // Chaque perte comme fraction de l'entree. `priceImpact` est libelle dans le token de SORTIE
   // (voir `quoteSwap.ts`) ; on convertit via le taux spot `input / amountOut` pour ramener les
   // trois valeurs sur une seule echelle.
-  const feeW = fee / input;
-  const impactW = amountOut !== undefined && amountOut > 0
-    ? priceImpact / amountOut
-    : priceImpact / input;
+  const feeW = feeF / inputF;
+  const impactW = amountOutF !== undefined && amountOutF > 0
+    ? impactF / amountOutF
+    : impactF / inputF;
   const slippageW = slippage / 100;
 
   // Les deux zones. `certain` : ce que le swap coutera a coup sur. `potential` : la perte
@@ -93,10 +104,11 @@ export function SwapDecompositionBar({
   const overDeadBand = totalW > 1;
   const scale = overDeadBand && totalW > 0 ? 1 / totalW : 1;
 
-  // Pour la legende : somme de la perte certaine en unites d'ENTREE, pour n'afficher qu'un
-  // chiffre plutot que deux dans des tokens differents. `priceImpact` converti via le taux spot.
-  const impactInInput = amountOut !== undefined && amountOut > 0
-    ? priceImpact * (input / amountOut)
+  // Pour la legende : perte certaine en unites d'ENTREE, pour n'afficher qu'un chiffre plutot
+  // que deux dans des tokens differents. `priceImpact` converti via le taux spot
+  // `input / amountOut` en arithmetique bigint pure (pas de `Math.round` qui tronque un ULP).
+  const impactInInput = amountOut !== undefined && amountOut > 0n
+    ? (priceImpact * input) / amountOut
     : priceImpact;
   const certainInInput = fee + impactInInput;
 
@@ -108,7 +120,7 @@ export function SwapDecompositionBar({
         }`}
         role="img"
         aria-label={
-          `Swap decomposition: certain ${trim(certainInInput)}${feeUnit ? ' ' + feeUnit : ''}` +
+          `Swap decomposition: certain ${fmt(certainInInput)}${feeUnit ? ' ' + feeUnit : ''}` +
           `, potential ${trim(slippage)}${slippageUnit}`
         }
       >
@@ -116,7 +128,7 @@ export function SwapDecompositionBar({
         <div
           className="merion-decomp-segment bg-merion-blue"
           style={{ width: `${certainW * scale * 100}%` }}
-          title={`Certain: ${trim(certainInInput)}${feeUnit ? ' ' + feeUnit : ''} (fee + price impact)`}
+          title={`Certain: ${fmt(certainInInput)}${feeUnit ? ' ' + feeUnit : ''} (fee + price impact)`}
         />
         {/* POTENTIEL — tampon de slippage, turquoise raye */}
         <div
@@ -143,7 +155,7 @@ export function SwapDecompositionBar({
           <span aria-hidden="true" className="inline-block h-2 w-2 rounded-full bg-merion-blue" />
           <span className="text-cloud/70">Certain</span>
           <span className="font-mono text-code-sm text-cloud">
-            {trim(certainInInput)}{feeUnit ? ' ' + feeUnit : ''}
+            {fmt(certainInInput)}{feeUnit ? ' ' + feeUnit : ''}
           </span>
           <span className="text-cloud/50">(fee + impact)</span>
         </li>
@@ -153,7 +165,7 @@ export function SwapDecompositionBar({
             className="inline-block h-2 w-2 rounded-sm bg-turquoise/60"
             style={{
               backgroundImage:
-                'repeating-linear-gradient(45deg, transparent 0 2px, rgba(45,212,191,0.8) 2px 3px)',
+              'repeating-linear-gradient(45deg, transparent 0 2px, rgba(45,212,191,0.8) 2px 3px)',
             }}
           />
           <span className="text-cloud/70">Potential</span>
@@ -165,6 +177,13 @@ export function SwapDecompositionBar({
       </ul>
     </div>
   );
+}
+
+/** Tronque un nombre flottant en enlevant les zéros de fin : 0.025000 -> 0.025, 1.000000 -> 1. */
+function trim(n: number, max = 6): string {
+  if (!Number.isFinite(n)) return '—';
+  const fixed = n.toFixed(max);
+  return fixed.replace(/\.?0+$/, '') || '0';
 }
 
 export default SwapDecompositionBar;

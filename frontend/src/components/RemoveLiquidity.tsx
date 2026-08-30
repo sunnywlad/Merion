@@ -203,7 +203,10 @@ const RemoveLiquidity = () => {
               {minDisplay && (
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   {minDisplay.map((amount, i) => {
-                    const trimmed = Number(amount).toFixed(4).replace(/\.?0+$/, '') || '0';
+                    // V.5/bug-form-precision — 8 décimales (cf. Swap/AddLiquidity),
+                    // precision on-chain, pas de troncature a 4 qui masquait les
+                    // minime subtokens.
+                    const trimmed = Number(amount).toFixed(8).replace(/\.?0+$/, '') || '0';
                     return (
                       <KpiCard
                         key={tokensInfo[i].name}

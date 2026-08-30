@@ -71,3 +71,23 @@ export function formatAmount(
   if (grouping === 'fr') return formatFr(truncated, displayDecimals);
   return truncated.toFixed(displayDecimals);
 }
+
+/**
+ * V.5/bug-balances-fake-zero — Formateur BTC adaptatif pour Reserves /
+ * Balances. Sous le seuil de 0,0001 BTC (= 10 000 satoshis), le 4-décimales
+ * affiche `0.0000` indistinguishable d'un vrai zéro ; on bascule alors à
+ * 8 décimales pour exposer la poussière. Au-dessus, on garde le 4-décimales
+ * pour la lisibilité des soldes normaux.
+ *
+ * Le seuil est volontairement aligné sur l'unité d'affichage 4-décimales
+ * (0,0001 BTC) : tout ce qui aurait été tronqué à `0.0000` déclenche le
+ * repli en 8 décimales, tout ce qui aurait montré au moins un chiffre
+ * significatif reste en 4 décimales.
+ */
+export function smartBtcAmount(value: bigint | undefined): string {
+  if (value === undefined) return '—';
+  if (value < 10000n) {
+    return formatAmount(value, { displayDecimals: 8, tokenDecimals: 8 });
+  }
+  return formatAmount(value, { displayDecimals: 4, tokenDecimals: 8 });
+}

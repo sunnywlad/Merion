@@ -8,7 +8,7 @@ import { useLpBalance } from '@/hooks/useLpBalance';
 import { useClaimableRent } from '@/hooks/useClaimableRent';
 import { useDeployedChainId } from '@/hooks/useDeployedChainId';
 import { MRN_DECIMALS } from '@/constants/addresses';
-import { formatAmount } from '@/components/ui/formatAmount';
+import { formatAmount, smartBtcAmount } from '@/components/ui/formatAmount';
 import { ReadErrorBoundary } from '@/components/ui/ReadErrorBoundary';
 
 /**
@@ -87,8 +87,11 @@ export default function Balances() {
               value={
                 entry?.status === 'success' ? entry.result : undefined
               }
-              displayDecimals={4}
-              tokenDecimals={8}
+              // V.5/bug-balances-fake-zero — Pour les BTC wrappes on
+              // utilise `smartBtcAmount` (< 0.0001 BTC -> 8 decimales),
+              // au lieu du `formatAmount` 4-decimales qui masquait la
+              // poussiere (cf. Reserves, meme logique).
+              format={smartBtcAmount}
             />
           );
         })}
@@ -142,8 +145,10 @@ type PositionRowProps = {
   isLoading: boolean;
   error: Error | null | undefined;
   value: bigint | undefined;
-  displayDecimals: number;
-  tokenDecimals: number;
+  displayDecimals?: number;
+  tokenDecimals?: number;
+  /** Formateur optionnel surchargeant `formatAmount` (ex. `smartBtcAmount`). */
+  format?: (value: bigint | undefined) => string;
   unit?: string;
 };
 
@@ -162,6 +167,7 @@ function PositionRow({
   value,
   displayDecimals,
   tokenDecimals,
+  format,
   unit,
 }: PositionRowProps) {
   let content: string;
@@ -175,8 +181,11 @@ function PositionRow({
   } else if (value === undefined) {
     content = '—';
     contentClass = 'text-cloud/60';
+  } else if (format) {
+    content = format(value);
+    contentClass = 'text-cloud';
   } else {
-    content = formatAmount(value, { displayDecimals, tokenDecimals, grouping: 'none' });
+    content = formatAmount(value, { displayDecimals: displayDecimals ?? 4, tokenDecimals: tokenDecimals ?? 18, grouping: 'none' });
     contentClass = 'text-cloud';
   }
   return (

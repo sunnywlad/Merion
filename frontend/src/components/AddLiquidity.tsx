@@ -32,9 +32,11 @@ const TX_GAS_LIMIT = 5_000_000n;
 // II.2d — chaîne id du pool, miroir de constants/addresses.
 // `INPUT_CLASS_MONO` vit dans `ui/formClasses.ts` depuis R3/C.1.
 
-/** BTC wrappé (8 décimales on-chain) à 4 décimales affichées. */
+/** V.5/bug-form-precision — BTC wrappé à 8 décimales affichées (précision
+ *  on-chain). Tous les montants des formulaires à 8 décimales, cf. la
+ *  décision dans `Swap.tsx` : le 4-décimales masquait les fees sub-display. */
 const btcAmount = (v: bigint) =>
-  formatAmount(v, { displayDecimals: 4, tokenDecimals: 8 });
+  formatAmount(v, { displayDecimals: 8, tokenDecimals: 8 });
 
 const AddLiquidity = () => {
   const [typedAmount, setTypedAmount] = useState("");
