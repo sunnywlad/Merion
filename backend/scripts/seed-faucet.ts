@@ -1,4 +1,4 @@
-// V.0 — Approvisionne le faucet MRN avec 10 M de MRN depuis le déployeur.
+// V.0 — Approvisionne le faucet MRN avec 1 M de MRN depuis le déployeur.
 // À lancer APRÈS `npx hardhat ignition deploy ignition/modules/merion.ts --network <net>` :
 //
 //   npx hardhat run scripts/seed-faucet.ts --network localhost

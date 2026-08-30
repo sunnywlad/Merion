@@ -44,7 +44,7 @@ Solidity `0.8.36`, `viaIR`, OpenZeppelin `^5.6.1`. Sources dans `backend/contrac
 | `Auction.sol` | Enchère ascendante ouverte en MRN sur la nomination du gestionnaire du mandat suivant. Seul appelant de `setManager` et `notifyRent` une fois câblée. |
 | `MRN.sol` | ERC-20 natif, 100 M frappés au constructeur, `ERC20Burnable`. **Aucune fonction de mint** post-déploiement. |
 | `MockWrappedBTC.sol` | WBTC, cbBTC, LBTC pour le test et le testnet. 8 décimales, `ERC20Capped` à 21 M par instance. `mint` sans permission (mock seulement). |
-| `MrnFaucet.sol` | Réservoir pré-financé de 10 M MRN, `drip()` à cadence limitée par adresse. Démo et jury, pas production. |
+| `MrnFaucet.sol` | Réservoir pré-financé de 1 M MRN (`scripts/seed-faucet.ts`), `drip()` de 5 000 MRN, une fois toutes les 8 h par adresse. Démo et jury, pas production. |
 
 Couplage : l'Auction appelle le Pool (câblage `setAuction`, un seul coup) ; le
 Pool tire le MRN du loyer en PULL sur l'approbation posée au constructeur de
@@ -59,7 +59,7 @@ justifications dans `docs/Détermination des constantes.md`.
 | Constante | Valeur | Note |
 |---|---|---|
 | `EPOCH_DURATION` | 14 400 s (4 h) | Durée du mandat. |
-| `AUCTION_WINDOW` | 900 s (15 min) | Fenêtre d'enchère, au début de l'epoch. |
+| `AUCTION_WINDOW` | 900 s (15 min) | Fenêtre d'enchère, au début de l'epoch en cours, qui vend le mandat suivant. |
 | `PRIORITY_WINDOW` | 240 s (4 min) | Fenêtre exclusive du manager élu pour poser sa surcharge via `setFee`. |
 | `BID_SILENCE` | 60 s | Indice de cadencement pour le bot `settle`, pas une garde on-chain. |
 | `MAX_EXTENSION` | 0 | Soft-close (A1) non livré en v1. |
@@ -145,8 +145,8 @@ Deux couches, deux questions. Détail dans `docs/Tests.md` et `backend/test/READ
 |---|---|
 | Tests verts | 492 (303 TypeScript, 189 Solidity) |
 | Invariants Foundry | 8 (7 Pool, 1 Auction) |
-| Couverture | 98,44 % Pool, 98,63 % Auction |
-| Scripts d'attaque (`scripts/attack/`) | 16 fichiers, rejouent les failles d'audit F1-F8 contre un déploiement local |
+| Couverture | Pool 98,73 % lignes / 98,46 % instructions ; Auction 97,78 % / 97,85 % |
+| Scripts d'attaque (`scripts/attack/`) | 15 scripts plus `_harness.ts`, rejouent les failles d'audit F1-F8 contre un déploiement local |
 
 CI (`.github/workflows/ci.yml`), à chaque push sur `master` et chaque PR :
 `npm ci`, suite complète avec couverture et stats de gaz, contrôle strict de
@@ -167,8 +167,8 @@ frontend.
   `withdrawRefund`, gardes F1/F2/F3.
 - **`Tests.md`** — stratégie deux couches, huit invariants, compteurs.
 - **`Roadmap.md`** — travail post-soutenance, hors MVP. Chaque item porte sa
-  raison de différé : StableSwap Newton, fee asymptotique, paiement du loyer en
-  BTC, hook Uniswap v4, enchère Vickrey commit-reveal, corridor de bandes,
+  raison de différé : StableSwap Newton, fee asymptotique, produit de l'enchère
+  payé en BTC, hook Uniswap v4, enchère Vickrey commit-reveal, corridor de bandes,
   gouvernance en trois étapes.
 
 ---

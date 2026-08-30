@@ -177,9 +177,9 @@ DEPLOIEMENT, pas une specification. S'y ajoutent 3 tests marques "skipped" (la m
 documentee en IV de `Pool.feeSplit.t.sol` : la constante `FEE_DEN` ne peut pas
 etre modifiee sans toucher `Pool.sol`, hors perimetre de cette tache ; le test
 BID_SILENCE de `Auction.test.ts` : `bidSilence` n'est pas une garde on-chain —
-l'AUDIT F3 l'a explicite, c'est une consigne d'ordonnancement pour le bot — et
-`BID_SILENCE == 0` est de surcroit la valeur livree a I.3, le gate A4 restant
-roadmap).
+l'AUDIT F3 l'a explicite, c'est une consigne d'ordonnancement pour le bot — le
+gate A4 restant roadmap. La fixture deploie `BID_SILENCE = 60`, comme le module
+Ignition).
 
 L'etape I.4 ajoute deux fichiers, `test/Pool.rent.test.ts` (25 tests) et
 `test/Pool.rent.t.sol` (7 tests). Les attendus sont derives de la formule
@@ -414,7 +414,7 @@ Auction
     A) Premiere mise sous MIN_OPENING_BID revert BidTooLow (test 18)
     B) Hausse sous +10 % revert, exactement +10 % passe (test 19)
     C) Mise en dehors de la fenetre revert WindowClosed (test 20)
-    D) Mise pendant BID_SILENCE (test 21, skip : bidSilence n'est pas une garde on-chain, et vaut 0 a I.3)
+    D) Mise pendant BID_SILENCE (test 21, skip : bidSilence n'est pas une garde on-chain)
   II] refunds — credit et tirage
     A) L'encherisseur depasse est credite, pas transfere (test 22)
     B) Un contrat qui revert a la reception peut etre depasse (test 23)

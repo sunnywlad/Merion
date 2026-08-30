@@ -335,14 +335,15 @@ describe("Auction", async function () {
       //    Ce qui ferme reellement les mises est `auctionWindow`
       //    (`WindowClosed`, couvert en C ci-dessus), et ce qui interdit
       //    un reglement premature est `WindowStillOpen` (F3).
-      // 2) `BID_SILENCE == 0` sur cette fixture (gate A4, roadmap), donc
-      //    meme une future garde ne serait pas declenchee ici.
+      // 2) Aucune garde on-chain n'existe encore (gate A4, roadmap), donc
+      //    il n'y a rien a declencher ici, quelle que soit la valeur
+      //    deployee — 60 s sur cette fixture, comme en production.
       //
       // Le brief demande de documenter le cas sans le supprimer. Le test
       // reste skip avec son FIXME : il ne pourra devenir actif que le
       // jour ou A4 posera une vraie garde on-chain ET ou la fixture
       // deploiera une valeur non nulle.
-      it.skip("bidSilence n'est pas applique on-chain (et vaut 0 ici) : rien a declencher, FIXME activer avec le gate A4", function () {
+      it.skip("bidSilence n'est pas applique on-chain : rien a declencher, FIXME activer avec le gate A4", function () {
         // Pas de corps : skip explicite. Voir le commentaire ci-dessus
         // pour la raison.
       });

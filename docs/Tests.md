@@ -11,7 +11,7 @@ Un test Solidity peut appeler `addLiquidity` depuis le contrat de test (lui-mêm
 
 La règle : TypeScript pour le parcours, Solidity pour la formule et l'état forgeable. Un fichier TypeScript qui prétendrait prouver la formule ne prouverait rien (il réimplémenterait le code qu'il teste). Un fichier Solidity qui prétendrait prouver le parcours multi-comptes ne prouverait rien non plus (le contrat de test serait à la fois appelant, porteur et déclencheur).
 
-Fichier détaillé : backend/README.md
+Fichier détaillé : backend/test/README.md
 
 ## Compteurs
 
@@ -24,7 +24,7 @@ Fichier détaillé : backend/README.md
 | Tests skipped (volontaires) | 3 |
 | Scripts d'attaque (`scripts/attack/`) | 16 fichiers (15 scripts + `_harness.ts`) ; 9 fichiers armés, 24 appels `expectRevert(...)` hors `_harness.ts` : `attack_bands.ts` (4), `attack_owner_power.ts` (3), `attack_pause_asymmetric.ts` (3), `attack_safe_erc20.ts` (4), `attack_auction_snipe.ts` (2), `attack_bad_slippage_frontrun.ts` (2), `attack_ceil_div.ts` (2), `attack_owner_squat.ts` (2), `attack_zero_output.ts` (2). 6 scripts d'observation sans `expectRevert` : `attack_rent_burn.ts`, `attack_swap_same_token.ts`, `attack_first_depositor.ts`, `attack_donation.ts`, `attack_insufficient_reserve.ts`, `attack_auction_brick.ts`. |
 
-Les 3 skipped : `FEE_DEN` migration dans `Pool.feeSplit.t.sol` (constante non modifiable sans toucher `Pool.sol`, hors périmètre I.2) ; `BID_SILENCE` dans `Auction.test.ts` (`bidSilence` n'est pas une garde on-chain, l'AUDIT F3 l'a explicité comme consigne d'ordonnancement pour le bot, et `BID_SILENCE == 0` est la valeur livrée à I.3, gate A4 roadmap).
+Les 3 skipped : `FEE_DEN` migration dans `Pool.feeSplit.t.sol` (constante non modifiable sans toucher `Pool.sol`, hors périmètre I.2) ; `BID_SILENCE` dans `Auction.test.ts` (`bidSilence` n'est pas une garde on-chain, l'AUDIT F3 l'a explicité comme consigne d'ordonnancement pour le bot, gate A4 roadmap ; la fixture déploie `BID_SILENCE = 60`, comme le module Ignition).
 
 Les scripts d'attaque rejouent les failles d'audit contre un nœud local, sur des contrats déployés par Ignition. Ils interrogent un DEPLOIEMENT, pas une spécification : ils ne comptent dans aucun des deux totaux ci-dessus, et c'est voulu.
 
@@ -74,7 +74,7 @@ test/Pool.audit.test.ts           autres chemins d'audit résiduels
 test/Auction.test.ts              Auction côté parcours : placeBid, refunds, settle, withdrawRefund, vues
 ```
 
-Couverture actuelle : 98,44 % (Pool) / 98,63 % (Auction), vérifiée à chaque push par `npx hardhat test --coverage`.
+Couverture actuelle, mesurée le 2026-08-31 : Pool 98,73 % de lignes et 98,46 % d'instructions, Auction 97,78 % et 97,85 %. Vérifiée à chaque push par `npx hardhat test --coverage`.
 
 ## Catégories de tests
 
