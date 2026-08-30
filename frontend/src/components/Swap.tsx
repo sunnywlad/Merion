@@ -6,7 +6,7 @@ import { useConstants } from "@/hooks/useConstants";
 import { useUserBalances } from "@/hooks/useUserBalances";
 import { usePoolPaused } from "@/hooks/usePoolPaused";
 import { useFeeRouting } from "@/hooks/useFeeRouting";
-import { useState, useRef } from "react";
+import { useState, useRef, useMemo } from "react";
 import { useAddresses } from "@/hooks/useAddresses";
 import {mockWrappedBTCAbi, poolAbi} from '@/constants/abi';
 import {useWriteContract, useConnection, usePublicClient} from 'wagmi';
@@ -40,6 +40,18 @@ const TX_GAS_LIMIT = 5_000_000n;
  *  affichées, sans grouping (note §4 « Montants en BTC wrappé »). */
 const btcAmount = (v: bigint) =>
   formatAmount(v, { displayDecimals: 4, tokenDecimals: 8 });
+
+// Perf E — `Record<number,string>` au niveau module : `tokensInfo`
+// variant par chaîne (Hardhat 31337 / Base Sepolia 84532) mais les noms
+// affichés sont les mêmes (wBTC/cbBTC/LBTC) aux mêmes indices (cf.
+// `constants/addresses.ts`). Sortir ce Record du composant évite de
+// reconstruire le même objet à chaque rendu ; `nameOf` était une
+// fermeture qui parcourait `tokensInfo` par `find()` à chaque appel.
+const NAME_OF: Record<number, string> = {
+  0: 'wBTC',
+  1: 'cbBTC',
+  2: 'LBTC',
+};
 
 const Swap = () => {
   const [typedAmount, setTypedAmount] = useState("");
@@ -176,10 +188,20 @@ function SwapForm(props: SwapFormProps) {
   } = props;
   const { mutateAsync } = useWriteContract();
 
-  const {quote, reason} = getQuote({
-    userAsk: {side, typedAmount, indexIn, indexOut, toleranceInput: tolerance},
-    poolState: {reserves, effectiveFeeNum, feeDen}
-  });
+  // Perf E — `useMemo([...])` : sans ça, chaque rendu rappelle `getQuote`
+  // et le `quote` qu'il rend (objet neuf à chaque fois) invalide tous les
+  // `useMemo` dépendants en aval (`expected`, `infos`, `reservesAfter`,
+  // `bandBreach`, etc.). Le `useMemo` change la signature de `reason`
+  // (nouvelle référence à chaque render), donc on stocke le résultat brut
+  // puis on déstructure.
+  const quoteResult = useMemo(
+    () => getQuote({
+      userAsk: {side, typedAmount, indexIn, indexOut, toleranceInput: tolerance},
+      poolState: {reserves, effectiveFeeNum, feeDen}
+    }),
+    [side, typedAmount, indexIn, indexOut, tolerance, reserves, effectiveFeeNum, feeDen]
+  );
+  const {quote, reason} = quoteResult;
 
   // V.4/bug-race — `setIsPending(true)` est asynchrone, donc entre les
   // deux clicks d'un double-clic rapide, l'état React n'a pas encore
@@ -249,7 +271,7 @@ function SwapForm(props: SwapFormProps) {
     else if (expected) return btcAmount(expected[j]);
     else return "";
   }
-  const nameOf = (index: number) => tokensInfo.find((token) => token.index === BigInt(index))?.name;
+  const nameOf = (index: number) => NAME_OF[index];
 
   const infos = quote ? {
     minAmount : quote.tokenOut.minAmount,
@@ -266,16 +288,30 @@ function SwapForm(props: SwapFormProps) {
   // Band guard — the one revert the quote libraries cannot see. Stays null
   // until the constants have landed, so the form never blocks on data it
   // does not have (a guard without its data stays silent).
-  const reservesAfter = quote && routing
-    ? reservesAfterSwap(
-        reserves, indexIn, quote.tokenIn.amount, routing,
-        indexOut, quote.tokenOut.amount,
-      )
-    : null;
+  // Perf E — `useMemo([quote, routing, ...])` : sans ça, chaque rendu
+  // recompose le tuple `reservesAfter` (nouvelle référence) et invalide
+  // le `bandBreach` qui en dépend.
+  const reservesAfter = useMemo(
+    () =>
+      quote && routing
+        ? reservesAfterSwap(
+            reserves, indexIn, quote.tokenIn.amount, routing,
+            indexOut, quote.tokenOut.amount,
+          )
+        : null,
+    [quote, routing, reserves, indexIn, indexOut]
+  );
 
-  const bandBreach = reservesAfter && floorBps !== undefined && ceilingBps !== undefined
-    ? breachedBand(reservesAfter, floorBps, ceilingBps)
-    : null;
+  // Perf E — `useMemo([reservesAfter, floorBps, ceilingBps])` : sans ça,
+  // le résultat de `breachedBand` est recalculé (et éventuellement
+  // ré-invalide `bandSharePct`) à chaque rendu, même quand rien ne change.
+  const bandBreach = useMemo(
+    () =>
+      reservesAfter && floorBps !== undefined && ceilingBps !== undefined
+        ? breachedBand(reservesAfter, floorBps, ceilingBps)
+        : null,
+    [reservesAfter, floorBps, ceilingBps]
+  );
 
   // The band value is deliberately absent from the copy: the user is told the
   // trade is impossible and what to do about it, not handed a protocol

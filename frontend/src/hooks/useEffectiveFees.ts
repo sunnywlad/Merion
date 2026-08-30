@@ -1,3 +1,4 @@
+import { useCallback } from 'react';
 import { useReadContracts } from 'wagmi';
 import { useAddresses } from '@/hooks/useAddresses';
 import { poolAbi } from '@/constants/abi';
@@ -39,18 +40,29 @@ export function useEffectiveFees() {
   // Lecture par direction : ce que le formulaire de swap consomme. `undefined`
   // couvre l'entrée en échec aussi bien que le chargement, et l'appelant décide
   // quoi en faire, comme partout ailleurs dans ce front.
-  const feeFor = (indexIn: number, indexOut: number) => {
-    const entry = data?.[pairIndex(indexIn, indexOut)];
-    return entry?.status === 'success' ? entry.result : undefined;
-  };
+  // Perf E — `useCallback([data])` : sans ça, `feeFor` est une nouvelle
+  // fermeture à chaque rendu, et le `useMemo`/`useEffect` qui en dépend
+  // côté Swap (via `effectiveFeeNum = feeFor(indexIn, indexOut)`) reçoit
+  // une référence qui change sans que la donnée ne change.
+  const feeFor = useCallback(
+    (indexIn: number, indexOut: number) => {
+      const entry = data?.[pairIndex(indexIn, indexOut)];
+      return entry?.status === 'success' ? entry.result : undefined;
+    },
+    [data]
+  );
 
   // L'échec de CETTE direction, et non le premier échec du lot : le formulaire
   // de swap ne parle que du couple qu'il utilise, et un message nommant une
   // direction pour rapporter l'échec d'une autre serait faux.
-  const errorFor = (indexIn: number, indexOut: number) => {
-    const entry = data?.[pairIndex(indexIn, indexOut)];
-    return entry?.status === 'failure' ? entry.error : undefined;
-  };
+  // Perf E — `useCallback([data])` : cf. `feeFor` ci-dessus.
+  const errorFor = useCallback(
+    (indexIn: number, indexOut: number) => {
+      const entry = data?.[pairIndex(indexIn, indexOut)];
+      return entry?.status === 'failure' ? entry.error : undefined;
+    },
+    [data]
+  );
 
   const values = (data ?? [])
     .map((entry) => entry?.status === 'success' ? entry.result : undefined)

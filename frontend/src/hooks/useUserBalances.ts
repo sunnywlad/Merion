@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { useConnection, useReadContracts } from 'wagmi';
 import { useAddresses } from '@/hooks/useAddresses';
 import {auctionAbi, mrnAbi, mockWrappedBTCAbi} from '@/constants/abi';
@@ -57,7 +58,14 @@ export function useUserBalances() {
     query: { enabled: Boolean(userAddress), staleTime: 5_000 }
   });
 
-  const btcBalances = tokens.map((_, i) => data?.[i] as ReadEntry | undefined);
+  // Perf E — `useMemo([data])` : sans ça, `btcBalances` est un nouveau
+  // tableau à chaque rendu (même contenu, identité différente) et casse
+  // les dépendances en aval — Swap lit `btcBalances[indexIn]` puis
+  // compare la référence dans ses propres `useMemo`.
+  const btcBalances = useMemo(
+    () => tokens.map((_, i) => data?.[i] as ReadEntry | undefined),
+    [data, tokens]
+  );
   const mrnBalance = data?.[3] as ReadEntry | undefined;
   const refundBalance = data?.[4] as ReadEntry | undefined;
 

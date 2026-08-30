@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { useReadContracts } from 'wagmi';
 import { useAddresses } from '@/hooks/useAddresses';
 import { useConstants } from '@/hooks/useConstants';
@@ -71,23 +72,30 @@ export function useFeeRouting(): {
   const lastSetFeeEpoch = read<bigint>(1);
   const manager = read<`0x${string}`>(2);
 
-  const routing: FeeRouting | undefined =
-    feeDen !== undefined && nominalFeeNum !== undefined &&
-    protocolFeeBps !== undefined && splitDen !== undefined &&
-    feeNum !== undefined && lastSetFeeEpoch !== undefined &&
-    epoch !== undefined && manager !== undefined
-      ? {
-          feeDen,
-          nominalFeeNum,
-          feeNum,
-          // Both branch conditions are resolved here so `lib/bands.ts` stays
-          // pure bigint arithmetic and never has to handle an address.
-          feeSetThisEpoch: lastSetFeeEpoch === epoch,
-          hasManager: manager !== ZERO_ADDRESS,
-          protocolFeeBps,
-          splitDen
-        }
-      : undefined;
+  // Perf E — `useMemo([feeDen, nominalFeeNum, feeNum, lastSetFeeEpoch,
+  // epoch, manager, protocolFeeBps, splitDen])` : sans ça, `routing` est
+  // un nouvel objet à chaque rendu et casse la mémoïsation en aval
+  // (Swap: `reservesAfterSwap` est recalculé pour rien à chaque render).
+  const routing: FeeRouting | undefined = useMemo(
+    () =>
+      feeDen !== undefined && nominalFeeNum !== undefined &&
+      protocolFeeBps !== undefined && splitDen !== undefined &&
+      feeNum !== undefined && lastSetFeeEpoch !== undefined &&
+      epoch !== undefined && manager !== undefined
+        ? {
+            feeDen,
+            nominalFeeNum,
+            feeNum,
+            // Both branch conditions are resolved here so `lib/bands.ts` stays
+            // pure bigint arithmetic and never has to handle an address.
+            feeSetThisEpoch: lastSetFeeEpoch === epoch,
+            hasManager: manager !== ZERO_ADDRESS,
+            protocolFeeBps,
+            splitDen
+          }
+        : undefined,
+    [feeDen, nominalFeeNum, feeNum, lastSetFeeEpoch, epoch, manager, protocolFeeBps, splitDen]
+  );
 
   return { routing, isLoading, error: error ?? null };
 }

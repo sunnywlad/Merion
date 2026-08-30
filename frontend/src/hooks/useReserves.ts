@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { useReadContracts } from 'wagmi';
 import { useAddresses } from '@/hooks/useAddresses';
 import {poolAbi} from '@/constants/abi';
@@ -27,17 +28,19 @@ export function useReserves() {
   // directement, sans refaire le `map/filter` local. Le tuple force
   // l'assertion que les 3 entrées ont chargé, ce qui bloque la dérive
   // à la 4e jambe.
+  // Perf E — `useMemo([data])` : sans ça, `reserves` est un nouveau tuple
+  // à chaque rendu (même contenu, identité différente) et casse les
+  // dépendances d'effet qui le comparent en `===` côté Swap.
   const slice = data?.slice(0, 3);
-  const reserves: [bigint, bigint, bigint] | undefined =
-    slice?.[0]?.status === 'success' &&
-    slice?.[1]?.status === 'success' &&
-    slice?.[2]?.status === 'success'
-      ? [
-          slice[0].result,
-          slice[1].result,
-          slice[2].result,
-        ]
-      : undefined;
+  const reserves: [bigint, bigint, bigint] | undefined = useMemo(
+    () =>
+      slice?.[0]?.status === 'success' &&
+      slice?.[1]?.status === 'success' &&
+      slice?.[2]?.status === 'success'
+        ? [slice[0].result, slice[1].result, slice[2].result]
+        : undefined,
+    [slice]
+  );
   return {
     reserves,
     // `entries` reste exposé pour les consommateurs qui ont besoin du
