@@ -32,7 +32,7 @@ const owner = deployer.account.address;
 // mesure fausse sans le dire : voir ignition/modules/pool.ts, auction.ts et
 // mrnFaucet.ts.
 const EPOCH_DURATION = 14400;
-const PRIORITY_WINDOW = 12;
+const PRIORITY_WINDOW = 240;
 const MIN_FEE_NUM = 1;
 const NOMINAL_FEE_NUM = 5;
 const TREASURY = "0xE280AD145C1ab859A05D7a4b1Ba2E6AC208A1a85";
