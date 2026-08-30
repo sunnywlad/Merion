@@ -1,9 +1,9 @@
 import { useReadContracts } from 'wagmi';
-import { useAddresses } from '@/hooks/useAddresses';
+import { useDeployedChainId } from '@/hooks/useDeployedChainId';
 import {poolAbi} from '@/constants/abi';
 
 export function useConstants() {
-  const { pool } = useAddresses();
+  const { pool } = useDeployedChainId();
   const { data, isLoading, error } = useReadContracts({
     contracts: [{
         address: pool,

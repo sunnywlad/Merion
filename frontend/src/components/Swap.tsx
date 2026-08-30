@@ -7,7 +7,7 @@ import { useUserBalances } from "@/hooks/useUserBalances";
 import { usePoolPaused } from "@/hooks/usePoolPaused";
 import { useFeeRouting } from "@/hooks/useFeeRouting";
 import { useState, useRef, useMemo } from "react";
-import { useAddresses } from "@/hooks/useAddresses";
+import { useDeployedChainId } from "@/hooks/useDeployedChainId";
 import {mockWrappedBTCAbi, poolAbi} from '@/constants/abi';
 import {useWriteContract, useConnection, usePublicClient} from 'wagmi';
 import { simulateContract } from 'viem/actions';
@@ -63,7 +63,7 @@ const Swap = () => {
   const [isPending, setIsPending] = useState(false);
 
   const publicClient = usePublicClient();
-  const { pool: deployedPool, tokens: tokensInfo } = useAddresses();
+  const { pool: deployedPool, tokens: tokensInfo } = useDeployedChainId();
 
   const { btcBalances, refetch: refetchBalances } = useUserBalances();
   const balanceInData = btcBalances[indexIn];
@@ -166,7 +166,7 @@ type SwapFormProps = {
   publicClient: ReturnType<typeof usePublicClient>;
   refetchBalances: () => Promise<unknown>;
   refetchReserves: () => Promise<unknown>;
-  tokensInfo: ReturnType<typeof useAddresses>['tokens'];
+  tokensInfo: ReturnType<typeof useDeployedChainId>['tokens'];
   reserves: [bigint, bigint, bigint];
   effectiveFeeNum: bigint;
   feeDen: bigint;
@@ -525,7 +525,7 @@ function SwapForm(props: SwapFormProps) {
           </p>
         )}
         {infos && (
-          <div className="rounded border border-cloud/10 bg-slate p-3 text-small flex flex-col gap-1">
+          <div className="rounded border-[3px] border-merion-blue/40 bg-slate p-3 text-small flex flex-col gap-1">
             <p className="flex items-baseline justify-between gap-4 py-1">
               <span className="text-cloud/80">Minimum {nameOf(indexOut)} received</span>
               <span className="flex items-baseline gap-1.5 min-w-0">
@@ -585,7 +585,7 @@ function SwapForm(props: SwapFormProps) {
             </p>
 
             {bandSharePct !== null && bandSharePct !== undefined ? (
-              <div className="flex items-baseline justify-between gap-4 py-1 border-t border-cloud/10 mt-1 pt-2">
+              <div className="flex items-baseline justify-between gap-4 py-1 border-t border-merion-blue/40 mt-1 pt-2">
                 <span className="text-cloud/80">
                   {bandBreach?.kind === 'ceiling' ? 'Ceiling after swap' : 'Floor after swap'}
                 </span>

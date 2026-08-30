@@ -10,7 +10,7 @@ import { useConstants } from '@/hooks/useConstants';
 import { useChainNow } from '@/hooks/useChainNow';
 import { useMandateTimeline } from '@/hooks/useMandateTimeline';
 import { MRN_DECIMALS } from '@/constants/addresses';
-import { useAddresses } from '@/hooks/useAddresses';
+import { useDeployedChainId } from '@/hooks/useDeployedChainId';
 import { ZERO_ADDRESS } from '@/hooks/_constants';
 import { secondsLeft, formatCountdown } from '@/lib/readMandateWindow';
 import { short } from '@/lib/formatAddress';
@@ -26,7 +26,7 @@ export default function MandatePanel() {
   // deux blocs, donc la précision seconde-par-seconde est préservée.
   const now = useChainNow();
   const user = useConnection().address;
-  const { auction: deployedAuction, tokens: tokensInfo } = useAddresses();
+  const { auction: deployedAuction, tokens: tokensInfo } = useDeployedChainId();
 
   const auction = useAuctionState();
   const constants = useAuctionConstants();

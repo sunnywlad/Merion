@@ -5,7 +5,7 @@ import { useConnection, useWriteContract, usePublicClient, useReadContract } fro
 import { useQueryClient } from '@tanstack/react-query';
 import { formatUnits } from 'viem';
 import { MRN_DECIMALS } from '@/constants/addresses';
-import { useAddresses } from '@/hooks/useAddresses';
+import { useDeployedChainId } from '@/hooks/useDeployedChainId';
 import { auctionAbi, mrnAbi, poolAbi } from '@/constants/abi';
 import { useAuctionState } from '@/hooks/useAuctionState';
 import { useAuctionConstants } from '@/hooks/useAuctionConstants';
@@ -41,7 +41,7 @@ export default function AuctionPanel() {
   const publicClient = usePublicClient();
   const queryClient = useQueryClient();
   const { mutateAsync } = useWriteContract();
-  const { auction: deployedAuction, mrn: deployedMrn, pool: deployedPool } = useAddresses();
+  const { auction: deployedAuction, mrn: deployedMrn, pool: deployedPool } = useDeployedChainId();
 
   const [bidInput, setBidInput] = useState('');
   const [feeInput, setFeeInput] = useState('');

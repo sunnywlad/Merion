@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useWriteContract, useConnection, useWaitForTransactionReceipt, useReadContract, useWatchAsset } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
-import { useAddresses } from '@/hooks/useAddresses';
+import { useDeployedChainId } from '@/hooks/useDeployedChainId';
 import { MRN_DECIMALS } from '@/constants/addresses';
 import { mrnFaucetAbi } from '@/constants/abi';
 import { describeTxError } from '@/lib/txError';
@@ -25,7 +25,7 @@ const MrnGrant = () => {
   const { isLoading, isSuccess } = useWaitForTransactionReceipt({ hash });
   const waiting = isPending || isLoading;
   const queryClient = useQueryClient();
-  const { faucet, mrn } = useAddresses();
+  const { faucet, mrn } = useDeployedChainId();
 
   // `dripInterval` et `dripAmount` sont des `immutable` cote contrat : une
   // lecture par session suffit (staleTime Infinity). Lire depuis le contrat

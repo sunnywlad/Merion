@@ -4,7 +4,7 @@ import { useEffectiveFees } from '@/hooks/useEffectiveFees';
 import { useConstants } from '@/hooks/useConstants';
 import { useChainNow } from '@/hooks/useChainNow';
 import { useMandateTimeline } from '@/hooks/useMandateTimeline';
-import { useAddresses } from '@/hooks/useAddresses';
+import { useDeployedChainId } from '@/hooks/useDeployedChainId';
 import { secondsLeft, formatCountdown } from '@/lib/readMandateWindow';
 import AuctionPanel from '@/components/AuctionPanel';
 import MandatePanel from '@/components/MandatePanel';
@@ -83,7 +83,7 @@ export default function AuctionBar() {
   const timeLabel =
     timeToEnd !== null ? formatCountdown(timeToEnd) : '—';
 
-  const auctionDeployed = useAddresses().auction !== null;
+  const auctionDeployed = useDeployedChainId().auction !== null;
 
   return (
     <div className="bg-slate border border-cloud/10 rounded-lg overflow-hidden">

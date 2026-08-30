@@ -3,11 +3,11 @@
 import MintButton from './MintButton';
 import MintAllButton from './MintAllButton';
 import Panel from '@/components/Panel';
-import { useAddresses } from '@/hooks/useAddresses';
+import { useDeployedChainId } from '@/hooks/useDeployedChainId';
 import { Badge } from '@/components/ui/Badge';
 
 const Faucet = () => {
-  const { tokens } = useAddresses();
+  const { tokens } = useDeployedChainId();
   return(
     <Panel title="Faucet">
       <p className="text-small text-cloud/70 pb-3">

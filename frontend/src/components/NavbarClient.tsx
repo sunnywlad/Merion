@@ -17,16 +17,17 @@ const NAV_LINKS = [
  * composant n'est jamais monté. Cf. plan perf-frontend §3, Étape C.
  *
  * Deux responsabilités client :
- *  1. `usePathname()` pour souligner l'onglet actif (Merion Blue).
- *  2. `<appkit-button>` — composant web3 ; déclenche le chargement
- *     d'AppKit (déjà présent via les `Providers` de `(app)/layout.tsx`).
+ *  1. `usePathname()` pour souligner l'onglet actif (Merion Blue),
+ *     les liens étant centrés dans la navbar (cf. demande).
+ *  2. `<appkit-button>` — bouton de connexion AppKit, replacé dans la
+ *     navbar (à droite) pour simplifier la mise en page.
  */
 export default function NavbarClient() {
   const pathname = usePathname();
 
   return (
     <>
-      <nav className="flex items-center gap-6">
+      <nav className="flex-1 flex items-center justify-center gap-6">
         {NAV_LINKS.map(({ href, label }) => {
           const active = pathname === href || pathname?.startsWith(`${href}/`);
           return (
@@ -34,7 +35,7 @@ export default function NavbarClient() {
               key={href}
               href={href}
               className={
-                `text-body transition-colors ` +
+                `text-h5 transition-colors ` +
                 (active
                   ? 'text-cloud underline underline-offset-8 decoration-2 decoration-merion-blue'
                   : 'text-neutral hover:text-cloud')

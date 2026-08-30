@@ -18,12 +18,19 @@ import NavbarClient from './NavbarClient';
 export default function Navbar() {
   return (
     <header className="sticky top-0 z-50 h-16 bg-midnight border-b border-cloud/5">
-      <div className="h-full flex items-center justify-between px-6 gap-8">
+      <div className="h-full flex items-center px-6 gap-8">
         <Link
           href="/"
-          className="text-h5 font-semibold text-cloud hover:text-white transition-colors"
+          className="flex items-center gap-2 mt-2 hover:text-white transition-colors"
         >
-          Merion
+          <img
+            src="/merion-logo.svg"
+            alt="Merion"
+            className="h-9 w-9 [filter:brightness(0)_invert(1)]"
+          />
+          <p className="text-h3 font-semibold uppercase tracking-[0.2em] text-cloud">
+            Merion
+          </p>
         </Link>
 
         <NavbarClient />

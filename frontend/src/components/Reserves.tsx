@@ -1,7 +1,7 @@
 'use client';
 
 import { useReserves } from '@/hooks/useReserves';
-import { useAddresses } from '@/hooks/useAddresses';
+import { useDeployedChainId } from '@/hooks/useDeployedChainId';
 import AmountLine from '@/components/AmountLine';
 import { AppStateBoundary } from '@/components/ui/AppStateBoundary';
 import ReservesBar from '@/components/ReservesBar';
@@ -20,7 +20,7 @@ import ReservesBar from '@/components/ReservesBar';
  */
 export default function Reserves() {
   const { reserves, entries, supply, isLoading, error } = useReserves();
-  const { tokens } = useAddresses();
+  const { tokens } = useDeployedChainId();
 
   if (error) {
     return (
@@ -58,7 +58,7 @@ export default function Reserves() {
         ))}
       </div>
 
-      <ul className="border-t border-cloud/10 pt-2">
+      <ul className="border-t border-merion-blue/40 pt-2">
         {tokens.map((token, i) => {
           const entry = entries?.[i];
           return (

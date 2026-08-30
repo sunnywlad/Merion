@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useReadContracts } from 'wagmi';
-import { useAddresses } from '@/hooks/useAddresses';
+import { useDeployedChainId } from '@/hooks/useDeployedChainId';
 import { useConstants } from '@/hooks/useConstants';
 import { useAuctionState } from '@/hooks/useAuctionState';
 import { poolAbi } from '@/constants/abi';
@@ -31,7 +31,7 @@ export function useFeeRouting(): {
   isLoading: boolean;
   error: Error | null;
 } {
-  const { pool } = useAddresses();
+  const { pool } = useDeployedChainId();
   const {
     feeDen: feeDenEntry,
     nominalFeeNum: nominalEntry,

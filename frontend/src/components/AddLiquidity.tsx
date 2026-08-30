@@ -5,7 +5,7 @@ import { useMinimumLiquidity } from "@/hooks/useMinimumLiquidity";
 import { useUserBalances } from "@/hooks/useUserBalances";
 import { usePoolPaused } from "@/hooks/usePoolPaused";
 import { useState } from "react";
-import { useAddresses } from "@/hooks/useAddresses";
+import { useDeployedChainId } from "@/hooks/useDeployedChainId";
 import {mockWrappedBTCAbi, poolAbi} from '@/constants/abi';
 import { useWriteContract, useConnection, usePublicClient} from 'wagmi';
 import { simulateContract } from 'viem/actions';
@@ -45,7 +45,7 @@ const AddLiquidity = () => {
 
   const { mutateAsync } = useWriteContract();
   const publicClient = usePublicClient();
-  const { pool: deployedPool, tokens: tokensInfo } = useAddresses();
+  const { pool: deployedPool, tokens: tokensInfo } = useDeployedChainId();
 
   const { reserves, entries, supply: supplyEntry, error: errorReserves, refetch: refetchReserves } = useReserves();
   const supply = supplyEntry?.status === 'success' ? supplyEntry.result : undefined;

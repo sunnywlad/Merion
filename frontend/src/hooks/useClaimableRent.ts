@@ -1,6 +1,6 @@
 import { useReadContract } from 'wagmi';
 import type { Address } from 'viem';
-import { useAddresses } from '@/hooks/useAddresses';
+import { useDeployedChainId } from '@/hooks/useDeployedChainId';
 import { MANDATE_POLL_MS } from '@/hooks/_constants';
 
 // I.4 — Vue on-chain `claimable(address)` du Pool (Pool.sol:985). Le
@@ -25,7 +25,7 @@ const claimableAbi = [
 ] as const;
 
 export function useClaimableRent(user: Address | undefined) {
-  const { pool } = useAddresses();
+  const { pool } = useDeployedChainId();
   return useReadContract({
     address: pool,
     abi: claimableAbi,

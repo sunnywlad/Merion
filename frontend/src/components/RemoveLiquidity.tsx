@@ -5,7 +5,7 @@ import { useLpBalance } from "@/hooks/useLpBalance";
 import { usePoolPaused } from "@/hooks/usePoolPaused";
 import { useState } from "react";
 import { formatUnits } from "viem";
-import { useAddresses } from "@/hooks/useAddresses";
+import { useDeployedChainId } from "@/hooks/useDeployedChainId";
 import {poolAbi} from '@/constants/abi';
 import {useWriteContract, useConnection, usePublicClient} from 'wagmi';
 import { getQuote } from "@/lib/quoteRemoveLiquidity";
@@ -45,7 +45,7 @@ const RemoveLiquidity = () => {
 
   const { mutateAsync } = useWriteContract();
   const publicClient = usePublicClient();
-  const { pool: deployedPool, tokens: tokensInfo } = useAddresses();
+  const { pool: deployedPool, tokens: tokensInfo } = useDeployedChainId();
 
   const { reserves, entries, supply: supplyEntry, error: errorReserves, refetch: refetchReserves } = useReserves();
   const supply = supplyEntry?.status === 'success' ? supplyEntry.result : undefined;
