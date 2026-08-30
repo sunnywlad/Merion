@@ -222,7 +222,18 @@ function SwapForm(props: SwapFormProps) {
         args: [deployedPool, quote.tokenIn.amount],
         gas: TX_GAS_LIMIT,
       })
-      await publicClient.waitForTransactionReceipt({hash: hashApprove});
+      // V.5/bug-approve-silent-revert — `waitForTransactionReceipt` rend le
+      // receipt avec `status: 'reverted'` SANS throw quand la tx reverte on-chain
+      // (gas cap Base, allowance pre-existante mal calibree, etc.). Avant ce check,
+      // le code enchainait la `simulateContract(swap)` qui tapait allowance == 0 et
+      // surfacait « Allowance too low — approve the token first », message qui
+      // designait le swap comme coupable alors que l'approve avait deja foire en
+      // amont. Throw explicite ici : le `catch` catche et passe par
+      // `describeTxError`, l'utilisateur voit la vraie raison.
+      const receiptApprove = await publicClient.waitForTransactionReceipt({hash: hashApprove});
+      if (receiptApprove.status !== 'success') {
+        throw new Error('Approve transaction reverted on-chain. Check your wallet for details.');
+      }
 
       // V.5/bug-base-gas-cap — `simulateContract` en pre-vol attrape le vrai revert (allowance,
       // solde, slippage, breche de bande, etc.) AVANT de passer la main au wallet. Meme pattern
@@ -244,7 +255,14 @@ function SwapForm(props: SwapFormProps) {
         args: [BigInt(quote.tokenIn.index), quote.tokenIn.amount, BigInt(quote.tokenOut.index), quote.tokenOut.minAmount],
         gas: TX_GAS_LIMIT,
       })
-      await publicClient.waitForTransactionReceipt({hash: hashSwap});
+      // V.5/bug-swap-silent-revert — meme garde que pour l'approve : on
+      // verifie que le swap a bien mine en succes avant de refetch les soldes.
+      // Sinon on refetch sur du faux etat (la pool state n'a pas change) et le
+      // message d'erreur « Allowance too low » reapparait systematiquement.
+      const receiptSwap = await publicClient.waitForTransactionReceipt({hash: hashSwap});
+      if (receiptSwap.status !== 'success') {
+        throw new Error('Swap transaction reverted on-chain. Check your wallet for details.');
+      }
       // V.4/bug-race — `invalidateQueries` marque stale sans refetch ;
       // le user balance / reserves reste sur l'ancienne valeur jusqu'au
       // prochain poll, et la quote suivante est calculée sur du faux.
