@@ -1,5 +1,3 @@
-'use client';
-
 import { type ButtonHTMLAttributes, type ReactNode } from 'react';
 
 type ButtonLevel = 'primary' | 'secondary' | 'tertiary';

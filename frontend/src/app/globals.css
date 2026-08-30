@@ -231,10 +231,11 @@ body {
   opacity: 0.4;
 }
 
-/* Curseur du présent — transition CSS sur `left`, 250 ms. Le killswitch
+/* Curseur du présent — transition CSS sur `transform: translateX`,
+   250 ms (GPU-accéléré, plus fluide que `left`). Le killswitch
    `prefers-reduced-motion` plus haut ramène la durée à 0 ms. */
 .merion-timeline-cursor {
-  left: 0;
+  transform: translateX(0);
   transition: transform 250ms ease-in-out;
 }
 
