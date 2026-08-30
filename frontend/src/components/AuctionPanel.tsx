@@ -133,6 +133,24 @@ export default function AuctionPanel() {
 
   const timeLeft = now !== null && closesAt !== undefined ? secondsLeft(closesAt, now) : null;
 
+  // `windowOpen()` du contrat rend `false` tant que `sellingEpoch != currentEpoch()+1`,
+  // donc AUSSI à l'état vierge (`sellingEpoch == 0`) et après un `settle`, tant que
+  // personne n'a rouvert le cycle. Or `placeBid` rouvre le slot lui-même : la vraie
+  // borne de la première mise d'un cycle est `now < startOfEpoch(currentEpoch) +
+  // auctionWindow`, soit les `auctionWindow` premières secondes de l'epoch courante.
+  // Sans cette dérivation, le bouton restait grisé pour la mise qui ouvre justement
+  // le créneau, et aucune enchère ne pouvait jamais démarrer depuis l'UI.
+  const firstBidWindowOpen = now !== null
+    && currentEpoch !== undefined
+    && sellingEpoch !== undefined
+    && sellingEpoch !== currentEpoch + 1n
+    && constants.genesis !== undefined
+    && constants.epochDuration !== undefined
+    && constants.auctionWindow !== undefined
+      ? now < constants.genesis + currentEpoch * constants.epochDuration + constants.auctionWindow
+      : false;
+  const canPlaceBid = windowOpen === true || firstBidWindowOpen;
+
   // Démarrage du mandat mis aux enchères : `genesis + sellingEpoch *
   // epochDuration`. La ligne se tait plutôt que d'inventer si l'une des trois
   // lectures manque. C'est le point de convergence entre l'enchère (qui le
@@ -308,7 +326,7 @@ export default function AuctionPanel() {
       )}
 
       <div>Mandate for sale: {sellingEpoch === undefined ? '—' : String(sellingEpoch)}</div>
-      <div>Window: {windowOpen === undefined ? '—' : (windowOpen ? 'open' : 'closed')}</div>
+      <div>Window: {windowOpen === undefined ? '—' : (canPlaceBid ? 'open' : 'closed')}</div>
       {windowOpen && closesAt !== undefined && (
         <div>Closes in {formatCountdown(timeLeft)}</div>
       )}
@@ -343,7 +361,7 @@ export default function AuctionPanel() {
           level="primary"
           onClick={handlePlaceBid}
           aria-busy={pending === 'bid' || undefined}
-          disabled={!user || pending !== null || wrongNetwork || bidInput === '' || bidBelowMinimum || windowOpen !== true}>
+          disabled={!user || pending !== null || wrongNetwork || bidInput === '' || bidBelowMinimum || !canPlaceBid}>
           {pending === 'bid' ? 'Approve + bid in progress' : 'Approve and bid'}
         </Button>
       </div>
@@ -352,7 +370,12 @@ export default function AuctionPanel() {
           Bid too low: minimum {formatUnits(minNextBid, MRN_DECIMALS)} MRN.
         </p>
       )}
-      {windowOpen === false && (
+      {firstBidWindowOpen && (
+        <p className='text-xs pt-1'>
+          No bid on this cycle yet — yours opens the window.
+        </p>
+      )}
+      {windowOpen === false && !firstBidWindowOpen && (
         <p className='text-xs pt-1'>
           {currentBid !== undefined && currentBid > 0n
             ? <>Window closed: manager {pendingEpoch !== undefined && pendingEpoch > 0n ? 'designated' : 'pending settlement'}</>

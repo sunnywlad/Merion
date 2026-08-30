@@ -17,6 +17,7 @@ export function useAuctionConstants() {
     contracts: [
       { address: auction ?? undefined, abi: auctionAbi, functionName: 'minOpeningBid', args: [] },
       { address: auction ?? undefined, abi: auctionAbi, functionName: 'bidSilence', args: [] },
+      { address: auction ?? undefined, abi: auctionAbi, functionName: 'auctionWindow', args: [] },
       { address: auction ?? undefined, abi: auctionAbi, functionName: 'HIGH_BID_BPS', args: [] },
       { address: auction ?? undefined, abi: auctionAbi, functionName: 'BPS_DEN', args: [] },
       { address: pool, abi: poolAbi, functionName: 'GENESIS', args: [] },
@@ -41,11 +42,12 @@ export function useAuctionConstants() {
   return {
     minOpeningBid: value(0),
     bidSilence: value(1),
-    highBidBps: value(2),
-    bpsDen: value(3),
-    genesis: value(4),
-    epochDuration: value(5),
-    priorityWindow: value(6),
+    auctionWindow: value(2),
+    highBidBps: value(3),
+    bpsDen: value(4),
+    genesis: value(5),
+    epochDuration: value(6),
+    priorityWindow: value(7),
     isLoading,
     error: error ?? data?.find((entry) => entry.status === 'failure')?.error
   };
