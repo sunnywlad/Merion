@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { useReadContracts } from 'wagmi';
+import { useMerionReadContracts } from '@/hooks/useMerionReadContracts';
 import { useDeployedChainId } from '@/hooks/useDeployedChainId';
 import { poolAbi } from '@/constants/abi';
 
@@ -26,7 +26,7 @@ const pairIndex = (indexIn: number, indexOut: number) =>
 
 export function useEffectiveFees() {
   const { pool } = useDeployedChainId();
-  const { data, isLoading, error, queryKey } = useReadContracts({
+  const { data, isLoading, error, queryKey } = useMerionReadContracts({
     contracts: FEE_PAIRS.map(([i, j]) => ({
       address: pool,
       abi: poolAbi,

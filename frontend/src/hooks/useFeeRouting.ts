@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { useReadContracts } from 'wagmi';
+import { useMerionReadContracts } from '@/hooks/useMerionReadContracts';
 import { useDeployedChainId } from '@/hooks/useDeployedChainId';
 import { useConstants } from '@/hooks/useConstants';
 import { useAuctionState } from '@/hooks/useAuctionState';
@@ -45,7 +45,7 @@ export function useFeeRouting(): {
     ? auction.currentEpoch.result
     : undefined;
 
-  const { data, isLoading, error } = useReadContracts({
+  const { data, isLoading, error } = useMerionReadContracts({
     contracts: [
       { address: pool, abi: poolAbi, functionName: 'feeNum', args: [] },
       { address: pool, abi: poolAbi, functionName: 'lastSetFeeEpoch', args: [] },

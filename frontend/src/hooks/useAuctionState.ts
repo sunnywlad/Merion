@@ -1,4 +1,4 @@
-import { useReadContracts } from 'wagmi';
+import { useMerionReadContracts } from '@/hooks/useMerionReadContracts';
 import { useDeployedChainId } from '@/hooks/useDeployedChainId';
 import { auctionAbi } from '@/constants/abi';
 import { AUCTION_POLL_MS } from '@/hooks/_constants';
@@ -15,7 +15,7 @@ import { AUCTION_POLL_MS } from '@/hooks/_constants';
 
 export function useAuctionState() {
   const { auction } = useDeployedChainId();
-  const { data, isLoading, error, queryKey } = useReadContracts({
+  const { data, isLoading, error, queryKey } = useMerionReadContracts({
     contracts: [
       { address: auction ?? undefined, abi: auctionAbi, functionName: 'currentEpoch', args: [] },
       { address: auction ?? undefined, abi: auctionAbi, functionName: 'sellingEpoch', args: [] },

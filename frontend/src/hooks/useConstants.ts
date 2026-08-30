@@ -1,10 +1,10 @@
-import { useReadContracts } from 'wagmi';
+import { useMerionReadContracts } from '@/hooks/useMerionReadContracts';
 import { useDeployedChainId } from '@/hooks/useDeployedChainId';
 import {poolAbi} from '@/constants/abi';
 
 export function useConstants() {
   const { pool } = useDeployedChainId();
-  const { data, isLoading, error } = useReadContracts({
+  const { data, isLoading, error } = useMerionReadContracts({
     contracts: [{
         address: pool,
         abi: poolAbi,

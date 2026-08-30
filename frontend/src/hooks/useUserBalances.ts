@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
-import { useConnection, useReadContracts } from 'wagmi';
+import { useConnection } from 'wagmi';
+import { useMerionReadContracts } from '@/hooks/useMerionReadContracts';
 import { useDeployedChainId } from '@/hooks/useDeployedChainId';
 import {auctionAbi, mrnAbi, mockWrappedBTCAbi} from '@/constants/abi';
 
@@ -33,7 +34,7 @@ export function useUserBalances() {
   const userAddress = useConnection().address;
   const { tokens, mrn, auction } = useDeployedChainId();
 
-  const { data, isLoading, error, refetch } = useReadContracts({
+  const { data, isLoading, error, refetch } = useMerionReadContracts({
     contracts: [
       ...tokens.map((token) => ({
         address: token.address,

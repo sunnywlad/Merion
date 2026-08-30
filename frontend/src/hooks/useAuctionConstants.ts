@@ -1,4 +1,4 @@
-import { useReadContracts } from 'wagmi';
+import { useMerionReadContracts } from '@/hooks/useMerionReadContracts';
 import { useDeployedChainId } from '@/hooks/useDeployedChainId';
 import { auctionAbi, poolAbi } from '@/constants/abi';
 
@@ -13,7 +13,7 @@ import { auctionAbi, poolAbi } from '@/constants/abi';
 // dériver, ce qui rend la lecture côté Pool exacte, pas approchée.
 export function useAuctionConstants() {
   const { auction, pool } = useDeployedChainId();
-  const { data, isLoading, error } = useReadContracts({
+  const { data, isLoading, error } = useMerionReadContracts({
     contracts: [
       { address: auction ?? undefined, abi: auctionAbi, functionName: 'minOpeningBid', args: [] },
       { address: auction ?? undefined, abi: auctionAbi, functionName: 'bidSilence', args: [] },
