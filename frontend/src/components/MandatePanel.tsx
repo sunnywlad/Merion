@@ -12,7 +12,7 @@ import { useMandateTimeline } from '@/hooks/useMandateTimeline';
 import { MRN_DECIMALS } from '@/constants/addresses';
 import { useAddresses } from '@/hooks/useAddresses';
 import { ZERO_ADDRESS } from '@/hooks/_constants';
-import { secondsLeft, formatCountdown } from '@/lib/mandateWindow';
+import { secondsLeft, formatCountdown } from '@/lib/readMandateWindow';
 import { short } from '@/lib/formatAddress';
 import AmountLine from '@/components/AmountLine';
 import { MandateTimeline } from '@/components/MandateTimeline';

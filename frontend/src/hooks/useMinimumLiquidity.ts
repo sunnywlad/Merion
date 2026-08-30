@@ -1,9 +1,9 @@
-import { useAddresses } from '@/hooks/useAddresses';
+import { useDeployedChainId } from '@/hooks/useDeployedChainId';
 import {poolAbi} from '@/constants/abi';
 import { useReadContract } from 'wagmi';
 
 export function useMinimumLiquidity(enabled: boolean) {
-  const { pool } = useAddresses();
+  const { pool } = useDeployedChainId();
   return useReadContract({
     address: pool,
     abi: poolAbi,

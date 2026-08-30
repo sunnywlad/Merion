@@ -1,5 +1,5 @@
 import { useReadContract } from 'wagmi';
-import { useAddresses } from '@/hooks/useAddresses';
+import { useDeployedChainId } from '@/hooks/useDeployedChainId';
 import { poolAbi } from '@/constants/abi';
 import { MANDATE_POLL_MS } from '@/hooks/_constants';
 
@@ -17,7 +17,7 @@ import { MANDATE_POLL_MS } from '@/hooks/_constants';
 // mandat vaut quelques dollars, donc un mandat invendu est la prédiction
 // honnête, et le pool tourne alors au tarif nominal.
 export function useManagerOf(epoch: bigint | undefined) {
-  const { pool } = useAddresses();
+  const { pool } = useDeployedChainId();
   return useReadContract({
     address: pool,
     abi: poolAbi,

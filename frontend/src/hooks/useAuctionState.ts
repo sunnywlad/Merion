@@ -1,5 +1,5 @@
 import { useReadContracts } from 'wagmi';
-import { useAddresses } from '@/hooks/useAddresses';
+import { useDeployedChainId } from '@/hooks/useDeployedChainId';
 import { auctionAbi } from '@/constants/abi';
 import { AUCTION_POLL_MS } from '@/hooks/_constants';
 
@@ -14,7 +14,7 @@ import { AUCTION_POLL_MS } from '@/hooks/_constants';
 // pour qu'un hook applicatif ne serve plus de module de constantes.
 
 export function useAuctionState() {
-  const { auction } = useAddresses();
+  const { auction } = useDeployedChainId();
   const { data, isLoading, error, queryKey } = useReadContracts({
     contracts: [
       { address: auction ?? undefined, abi: auctionAbi, functionName: 'currentEpoch', args: [] },

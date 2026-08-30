@@ -1,10 +1,10 @@
 import { useMemo } from 'react';
 import { useReadContracts } from 'wagmi';
-import { useAddresses } from '@/hooks/useAddresses';
+import { useDeployedChainId } from '@/hooks/useDeployedChainId';
 import {poolAbi} from '@/constants/abi';
 
 export function useReserves() {
-  const { pool, tokens } = useAddresses();
+  const { pool, tokens } = useDeployedChainId();
   const { data, isLoading, error, refetch, queryKey } = useReadContracts({
     contracts: [...tokens.map((token) => {
       return {

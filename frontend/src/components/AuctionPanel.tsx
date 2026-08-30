@@ -14,7 +14,7 @@ import { useEffectiveFees } from '@/hooks/useEffectiveFees';
 import { useManagerOf } from '@/hooks/useManagerOf';
 import { useRefund } from '@/hooks/useRefund';
 import { useChainNow } from '@/hooks/useChainNow';
-import { nextMinimumBid, secondsLeft, formatCountdown } from '@/lib/mandateWindow';
+import { nextMinimumBid, secondsLeft, formatCountdown } from '@/lib/readMandateWindow';
 import { parseAmount } from '@/lib/parseAmount';
 import { describeTxError } from '@/lib/txError';
 import { useIsWrongNetwork } from '@/hooks/useIsWrongNetwork';

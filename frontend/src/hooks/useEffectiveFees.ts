@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { useReadContracts } from 'wagmi';
-import { useAddresses } from '@/hooks/useAddresses';
+import { useDeployedChainId } from '@/hooks/useDeployedChainId';
 import { poolAbi } from '@/constants/abi';
 
 // I.5 — `effectiveFeeNum(i, j)` sur les six couples ordonnés, en un multicall.
@@ -25,7 +25,7 @@ const pairIndex = (indexIn: number, indexOut: number) =>
   FEE_PAIRS.findIndex(([i, j]) => i === indexIn && j === indexOut);
 
 export function useEffectiveFees() {
-  const { pool } = useAddresses();
+  const { pool } = useDeployedChainId();
   const { data, isLoading, error, queryKey } = useReadContracts({
     contracts: FEE_PAIRS.map(([i, j]) => ({
       address: pool,

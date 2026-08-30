@@ -5,7 +5,7 @@ import { useConstants } from '@/hooks/useConstants';
 import { useChainNow } from '@/hooks/useChainNow';
 import { useMandateTimeline } from '@/hooks/useMandateTimeline';
 import { useAddresses } from '@/hooks/useAddresses';
-import { secondsLeft, formatCountdown } from '@/lib/mandateWindow';
+import { secondsLeft, formatCountdown } from '@/lib/readMandateWindow';
 import AuctionPanel from '@/components/AuctionPanel';
 import MandatePanel from '@/components/MandatePanel';
 import Chevron from '@/components/ui/Chevron';

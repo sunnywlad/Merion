@@ -1,9 +1,9 @@
-import { useAddresses } from '@/hooks/useAddresses';
+import { useDeployedChainId } from '@/hooks/useDeployedChainId';
 import {poolAbi} from '@/constants/abi';
 import { useReadContract, useConnection } from 'wagmi';
 
 export function useLpBalance() {
-  const { pool } = useAddresses();
+  const { pool } = useDeployedChainId();
   const address = useConnection().address;
   // V.4/bug-race — `refetch` est exposé pour qu'AddLiquidity et
   // RemoveLiquidity puissent re-lire le solde LP APRÈS settle, sans

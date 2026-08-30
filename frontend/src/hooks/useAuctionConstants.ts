@@ -1,5 +1,5 @@
 import { useReadContracts } from 'wagmi';
-import { useAddresses } from '@/hooks/useAddresses';
+import { useDeployedChainId } from '@/hooks/useDeployedChainId';
 import { auctionAbi, poolAbi } from '@/constants/abi';
 
 // I.5 — Les scalaires qui ne bougent jamais : trois immuables de l'enchère,
@@ -12,7 +12,7 @@ import { auctionAbi, poolAbi } from '@/constants/abi';
 // à la construction précisément pour que les deux horloges ne puissent pas
 // dériver, ce qui rend la lecture côté Pool exacte, pas approchée.
 export function useAuctionConstants() {
-  const { auction, pool } = useAddresses();
+  const { auction, pool } = useDeployedChainId();
   const { data, isLoading, error } = useReadContracts({
     contracts: [
       { address: auction ?? undefined, abi: auctionAbi, functionName: 'minOpeningBid', args: [] },

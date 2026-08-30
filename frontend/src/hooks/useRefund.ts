@@ -1,5 +1,5 @@
 import { useReadContract } from 'wagmi';
-import { useAddresses } from '@/hooks/useAddresses';
+import { useDeployedChainId } from '@/hooks/useDeployedChainId';
 import { auctionAbi } from '@/constants/abi';
 import { MANDATE_POLL_MS } from '@/hooks/_constants';
 
@@ -7,7 +7,7 @@ import { MANDATE_POLL_MS } from '@/hooks/_constants';
 // est un mapping public de l'Auction). Sur le modèle de `useManagerOf` :
 // une seule lecture, par adresse, au même intervalle que le reste du panneau.
 export function useRefund(user: `0x${string}` | undefined) {
-  const { auction } = useAddresses();
+  const { auction } = useDeployedChainId();
   return useReadContract({
     address: auction ?? undefined,
     abi: auctionAbi,

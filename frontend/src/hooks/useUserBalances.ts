@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useConnection, useReadContracts } from 'wagmi';
-import { useAddresses } from '@/hooks/useAddresses';
+import { useDeployedChainId } from '@/hooks/useDeployedChainId';
 import {auctionAbi, mrnAbi, mockWrappedBTCAbi} from '@/constants/abi';
 
 // Toutes les balances utilisateur dans un seul multicall : trois BTCs + MRN +
@@ -31,7 +31,7 @@ type ReadEntry = { status: 'success' | 'failure'; result?: bigint; error?: Error
 
 export function useUserBalances() {
   const userAddress = useConnection().address;
-  const { tokens, mrn, auction } = useAddresses();
+  const { tokens, mrn, auction } = useDeployedChainId();
 
   const { data, isLoading, error, refetch } = useReadContracts({
     contracts: [
