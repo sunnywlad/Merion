@@ -38,14 +38,14 @@ const addresses = {
   // consignes dans `01-suivi/nuit-2026-08-29/journal-nuit.md`.
   84532: {
     tokens: [
-      { name: "wBTC", address: "0x070c5032577FBA6e5E6D5A6072b2Fd7E597CBAA7", index: 0n },
-      { name: "cbBTC", address: "0xABAa17eBAD405331cBCe6209886C3B90a54c1e37", index: 1n },
-      { name: "LBTC", address: "0x8eA819fd72F27a486fC98533535B9DE2E31bd8F4", index: 2n }
+      { name: "wBTC", address: "0x6b25b25659f234e1B97FF6e47C8580F744C479D2", index: 0n },
+      { name: "cbBTC", address: "0x4B2c1216c9D24d52f195e8ef6C52Fc4F4cF66D2b", index: 1n },
+      { name: "LBTC", address: "0x0FF87DdEc780221eAcd34C673E87671ce34D799C", index: 2n }
     ],
-    pool: "0x352be1F6649BD86015D54288440466878424b165" as `0x${string}`,
-    auction: "0x639FC7B13129BB546152d9Af402fF0319bF46b0f" as `0x${string}`,
-    faucet: "0x793ac63fe5Df272e141dd43BD6602BB89dfA9aE0" as `0x${string}`,
-    mrn: "0x7904893B731484508B1f62F28A9b1393862d1390" as `0x${string}`
+    pool: "0xc8698B0CD6E965F57942325EF93d071AA1fdf197" as `0x${string}`,
+    auction: "0xD5C54339Adc19e22Ef5724bbdcd478A4e9C2ACb2" as `0x${string}`,
+    faucet: "0x2ac4A71582f13e68D06aCe653A41FBeDDa558825" as `0x${string}`,
+    mrn: "0x23d6a62F59ACfdf735DF678F8826f3DF92DFFb3B" as `0x${string}`
   }
 } as const;
 
