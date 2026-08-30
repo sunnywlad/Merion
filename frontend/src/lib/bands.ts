@@ -1,26 +1,23 @@
 /**
- * Reserve bands — the front-end mirror of `Pool.sol`'s post-swap guard.
+ * Bandes de reserve — le miroir front du garde post-swap de `Pool.sol`.
  *
- * `Pool.swap` ends with, for each token i:
+ * `Pool.swap` finit par, pour chaque token i :
  *
- *   uint256 sum = r0 + r1 + r2;                  // AFTER the swap
+ *   uint256 sum = r0 + r1 + r2;                  // APRES le swap
  *   require(r[i] * 100 <  ceiling * sum, CeilingTouched(i));
  *   require(r[i] * 100 >  floor   * sum, FloorTouched(i));
  *
- * with `floor = 13` and `ceiling = 53`, both `constant` and setter-less.
+ * avec `floor = 13` et `ceiling = 53`, constants et sans setter.
  *
- * That is the one class of revert the quote libraries cannot see at all: they
- * model the PRICING, this models a CONSTRAINT on the resulting state. A swap
- * can be priced perfectly and still revert on a band.
+ * C'est le seul revert que les libs de devis ne voient pas : elles modelisent le PRIX,
+ * ceci modelise une CONTRAINTE sur l'etat resultant. Un swap peut etre parfaitement
+ * price et reverter quand meme sur une bande.
  *
- * Everything below reproduces the contract term for term. The point is not
- * merely to warn earlier — a front-end that mirrors the contract exactly is a
- * claim one can defend at review, where an approximation is a claim one has to
- * excuse.
+ * Tout ce qui suit reproduit le contrat terme pour terme.
  */
 
 export type BandBreach = {
-  /** Index of the token whose reserve left the band, matching the contract's argument. */
+  /** Index du token dont la reserve est sortie de la bande, comme l'argument du contrat. */
   index: number;
   kind: 'floor' | 'ceiling';
 };
@@ -28,33 +25,31 @@ export type BandBreach = {
 export type Reserves3 = readonly [bigint, bigint, bigint];
 
 /**
- * Everything `Pool.swap` needs to know to decide how much of the input reaches
- * the reserves. Pricing uses the EFFECTIVE fee; funding uses the BASE fee, and
- * the two are not the same number.
+ * Tout ce dont `Pool.swap` a besoin pour decider combien de l'entree atteint les reserves.
+ * Le prix utilise la fee EFFECTIVE ; le financement utilise la fee de BASE. Nombres differents.
  */
 export type FeeRouting = {
   feeDen: bigint;
-  /** `NOMINAL_FEE_NUM` — immutable, set in the constructor. */
+  /** `NOMINAL_FEE_NUM` — immuable, fixe au constructeur. */
   nominalFeeNum: bigint;
-  /** `feeNum` — the manager's tariff for the epoch. */
+  /** `feeNum` — le tarif du gestionnaire pour l'epoque. */
   feeNum: bigint;
-  /** `lastSetFeeEpoch == currentEpoch()` — whether that tariff is in force now. */
+  /** `lastSetFeeEpoch == currentEpoch()` — ce tarif est-il en vigueur maintenant. */
   feeSetThisEpoch: boolean;
-  /** `manager() != address(0)` — whether a manager is in office. */
+  /** `manager() != address(0)` — un gestionnaire est-il en poste. */
   hasManager: boolean;
   protocolFeeBps: bigint;
   splitDen: bigint;
 };
 
 /**
- * The post-swap guard, applied to reserves the caller has already advanced.
+ * Le garde post-swap, applique a des reserves deja avancees par l'appelant.
  *
- * Inequalities are strict in the contract, so the breach conditions are the
- * negations: `>= ceiling * sum` and `<= floor * sum`. Checks run per token in
- * contract order (ceiling before floor) so the reported index matches the
- * error the transaction would actually raise.
+ * Les inegalites sont strictes dans le contrat, donc les conditions de breche sont les
+ * negations : `>= ceiling * sum` et `<= floor * sum`. Verif par token dans l'ordre du
+ * contrat (ceiling avant floor) pour que l'index rapporte colle a l'erreur reelle.
  *
- * Returns the first breach found, or null when every reserve sits inside.
+ * Rend la premiere breche trouvee, ou null si toutes les reserves sont dans la bande.
  */
 export function breachedBand(
   reservesAfter: Reserves3,
@@ -73,10 +68,10 @@ export function breachedBand(
 }
 
 /**
- * The part of the input that actually reaches the reserves.
+ * La part de l'entree qui atteint reellement les reserves.
  *
- * `Pool.swap` books the fee cuts to pull-only registries instead of adding them
- * to the pool, so the reserves receive less than the user sent:
+ * `Pool.swap` verse les coupes de fee dans des registres pull-only au lieu de les ajouter
+ * au pool, donc les reserves recoivent moins que ce que l'utilisateur a envoye :
  *
  *   baseFee      = lastSetFeeEpoch == currentEpoch() ? feeNum : NOMINAL_FEE_NUM
  *   baseAmount   = _amount * baseFee / FEE_DEN
@@ -84,12 +79,10 @@ export function breachedBand(
  *   managerCut   = manager() == address(0) ? 0 : baseAmount - protocolCut
  *   toReserves   = _amount - protocolCut - managerCut
  *
- * Two regimes follow. With no manager elected, only the 10 % protocol cut
- * leaves the pool. With a manager in office, the whole base fee does — the
- * manager's share is credited to his fee registry, not to the reserves.
+ * Deux regimes : sans gestionnaire elu, seule la coupe protocole de 10 % sort du pool.
+ * Avec un gestionnaire, toute la fee de base sort ; sa part va dans son registre, pas aux reserves.
  *
- * Integer division truncates in Solidity and BigInt division truncates too, so
- * the two agree without any rounding correction.
+ * La division entiere tronque en Solidity comme en BigInt : les deux concordent sans correction.
  */
 export function amountToReserves(amountIn: bigint, r: FeeRouting): bigint {
   const baseFee = r.feeSetThisEpoch ? r.feeNum : r.nominalFeeNum;
@@ -100,11 +93,10 @@ export function amountToReserves(amountIn: bigint, r: FeeRouting): bigint {
 }
 
 /**
- * Reserves as they will stand once the swap lands.
+ * Les reserves telles qu'elles seront une fois le swap passe.
  *
- * `amountOut` comes from the quote, which prices on `effectiveFeeNum` read from
- * the contract — so the output side is already exact and is subtracted as is.
- * Only the input side needed the routing above.
+ * `amountOut` vient du devis, price sur `effectiveFeeNum` lu au contrat : le cote sortie
+ * est deja exact et se soustrait tel quel. Seul le cote entree exigeait le routage ci-dessus.
  */
 export function reservesAfterSwap(
   reserves: Reserves3,

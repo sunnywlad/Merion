@@ -15,7 +15,6 @@ import { isSupportedChain } from '@/constants/addresses';
 import { AppStateBoundary } from '@/components/ui/AppStateBoundary';
 import { formatAmount } from '@/components/ui/formatAmount';
 
-// II.2d — chain id the pool is deployed on, mirrored from constants/addresses.
 // V.0 — Un seul bouton : `drip()` sur le faucet. Plus de « envoyer à mon
 // adresse », qui ne fonctionnait que depuis l'owner et restait silencieusement
 // cassé pour quiconque. Le faucet redistribue depuis un réservoir pré-financé,
@@ -49,8 +48,8 @@ const MrnGrant = () => {
 
   // Le `lastDripAt` lu en polling lent (30 s) suffit : la valeur bouge une
   // fois par drip, et le bouton n'a pas besoin d'etre a la seconde pres.
-  // II.2d — connection pulled here so `userAddress` is available for the
-  // `lastDrip` args, while hook order stays unconditional for the rest.
+  // II.2d — `connection` lue ici pour que `userAddress` soit dispo pour les args de `lastDrip`,
+  // tout en gardant l'ordre des hooks inconditionnel pour le reste.
   const connection = useConnection();
   const userAddress = connection.address;
   const lastDrip = useReadContract({
@@ -88,9 +87,9 @@ const MrnGrant = () => {
         watchAsset({ type: 'ERC20', options: { address: mrn, symbol: 'MRN', decimals: MRN_DECIMALS } });
       }
     }
-    // `mrn` is a frozen per-chain constant, so listing it cannot re-fire the
-    // effect; it is here so the wallet is offered the token of the chain the
-    // user is actually on after a network switch.
+    // `mrn` est une constante figee par chaine : la lister ne peut pas relancer l'effet ;
+    // elle est la pour qu'apres un changement de reseau, le wallet se voie proposer le token
+    // de la chaine sur laquelle l'utilisateur se trouve vraiment.
   }, [isSuccess, queryClient, watchAsset, mrn]);
 
   // Bouton desactive aussi pendant le cooldown. `lastDripAt` et `dripInterval`
@@ -113,15 +112,15 @@ const MrnGrant = () => {
     : 0;
   const inCooldown = lastDripAt !== undefined && cooldownSeconds > 0;
   const faucetMissing = faucet === null;
-  // Note §4 « Montants en MRN » : 2 décimales, grouping français,
-  // troncature. Le helper `formatAmount` ne reçoit pas d'unité : on la
-  // rend en `<span>` séparé dans chaque carte ci-dessous, comme pour
-  // les autres panneaux.
+  // Montant de drip : entier rond côté contrat (5000 MRN), affiché sans
+  // décimales ni groupement — « 5000 MRN », pas « 5 000,00 MRN ». Le
+  // helper `formatAmount` ne reçoit pas d'unité : on la rend en `<span>`
+  // séparé dans chaque carte ci-dessous, comme pour les autres panneaux.
   const dripAmountLabel = dripAmount.data !== undefined
     ? formatAmount(dripAmount.data, {
-        displayDecimals: 2,
+        displayDecimals: 0,
         tokenDecimals: MRN_DECIMALS,
-        grouping: 'fr',
+        grouping: 'none',
       })
     : '...';
   const intervalHours = dripInterval.data !== undefined
@@ -139,8 +138,7 @@ const MrnGrant = () => {
       ? 'Cooldown active'
       : 'Ready to claim';
 
-  // II.2d — wallet gate at the bottom of the hook stack so reads above stay
-  // unconditional.
+  // II.2d — garde wallet en bas de la pile de hooks, pour que les lectures au-dessus restent inconditionnelles.
   if (connection.status === 'disconnected') {
     return <AppStateBoundary state={{ kind: 'wallet-not-connected' }} />;
   }

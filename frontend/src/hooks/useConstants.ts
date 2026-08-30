@@ -2,6 +2,8 @@ import { useMerionReadContracts } from '@/hooks/useMerionReadContracts';
 import { useDeployedChainId } from '@/hooks/useDeployedChainId';
 import {poolAbi} from '@/constants/abi';
 
+// Les constantes du Pool qui ne bougent jamais : denominateurs et bornes de fee, bandes de
+// reserve, split protocole/gestionnaire. Un seul multicall, staleTime infini : une lecture par session.
 export function useConstants() {
   const { pool } = useDeployedChainId();
   const { data, isLoading, error } = useMerionReadContracts({
@@ -61,19 +63,16 @@ export function useConstants() {
     maxFeeNum: data?.[1],
     minFeeNum: data?.[2],
     /**
-     * Reserve bands, as percentages of the post-swap sum. Both are `constant`
-     * in `Pool.sol` with no setter — the corridor is roadmap, the values are
-     * not — so `staleTime: Infinity` reads them exactly once per session.
-     * They ride in this multicall because Swap already pays for it: a
-     * separate hook would have meant a second round-trip for two uint8s.
+     * Bandes de reserve, en pourcentage de la somme post-swap. Toutes deux `constant` dans
+     * `Pool.sol`, sans setter, donc lues une seule fois par session. Embarquees dans ce
+     * multicall que Swap paie deja : un hook separe serait un second aller-retour pour deux uint8.
      */
     floorBps: data?.[3],
     ceilingBps: data?.[4],
     /**
-     * Fee split, needed to reproduce how much of an input actually reaches the
-     * reserves — `Pool.swap` books the cuts to pull-only registries instead.
-     * `NOMINAL_FEE_NUM` is `immutable` (constructor) and the other two are
-     * `constant`, so they belong here with the other read-once values.
+     * Split de fee, necessaire pour reproduire la part d'une entree qui atteint vraiment les
+     * reserves : `Pool.swap` verse les coupes dans des registres pull-only. `NOMINAL_FEE_NUM`
+     * est immutable (constructeur), les deux autres constant : leur place est ici.
      */
     nominalFeeNum: data?.[5],
     protocolFeeBps: data?.[6],

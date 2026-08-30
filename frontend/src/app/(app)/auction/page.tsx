@@ -1,4 +1,6 @@
 import { AuctionSummary } from '@/components/AuctionSummary';
+import AuctionProgress from '@/components/AuctionProgress';
+import { NextAuctionSummary } from '@/components/NextAuctionSummary';
 import AuctionPanel from '@/components/AuctionPanel';
 import MandatePanel from '@/components/MandatePanel';
 
@@ -18,6 +20,8 @@ export default function AuctionPage() {
   return (
     <div className="flex flex-col gap-6">
       <AuctionSummary />
+      <AuctionProgress />
+      <NextAuctionSummary />
       <AuctionPanel />
       <MandatePanel />
     </div>

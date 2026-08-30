@@ -1,31 +1,30 @@
 import { formatUnits } from 'viem';
 
 /**
- * Display-side number formatters for Merion, per the inspiration note §4.
+ * Formatteurs de nombres cote affichage pour Merion (note d'inspiration §4).
  *
- * Rules:
- *   - BTC wrapped (wBTC, cbBTC, LBTC) — 4 decimals, truncated, no grouping.
- *   - MRN — 2 decimals, French grouping ("90 004 980,00"), truncated.
- *   - Percentages (pool share, fees) — 2 decimals, suffixed with `%`.
+ * Regles :
+ *   - BTC wrappes (wBTC, cbBTC, LBTC) — 4 decimales, tronquees, sans groupement.
+ *   - MRN — 2 decimales, groupement francais (« 90 004 980,00 »), tronquees.
+ *   - Pourcentages (part de pool, fees) — 2 decimales, suffixe `%`.
  *
- * `value` is the on-chain bigint; we read the on-chain `tokenDecimals`
- * (e.g. 8 for wBTC mocks, 18 for MRN) and only THEN truncate to the
- * display precision. Truncation is deliberate: rounding up would let a
- * displayed balance exceed the real one.
+ * `value` est le bigint on-chain ; on lit `tokenDecimals` on-chain (8 pour les mocks wBTC,
+ * 18 pour MRN) et ALORS SEULEMENT on tronque a la precision d'affichage. Troncature deliberee :
+ * arrondir au superieur laisserait un solde affiche depasser le solde reel.
  */
 
 export type Grouping = 'fr' | 'none';
 
 export type FormatAmountOptions = {
-  /** Number of fractional digits to display. Truncated, not rounded. */
+  /** Nombre de decimales a afficher. Tronquees, pas arrondies. */
   displayDecimals: number;
-  /** On-chain decimals (how `value` is encoded). */
+  /** Decimales on-chain (encodage de `value`). */
   tokenDecimals: number;
-  /** Grouping style for the displayed string. Default 'none'. */
+  /** Style de groupement de la chaine affichee. Defaut 'none'. */
   grouping?: Grouping;
 };
 
-/** Truncate `value` to `decimals` fractional digits without rounding. */
+/** Tronque `value` a `decimals` decimales, sans arrondi. */
 export function truncate(value: number, decimals: number): number {
   if (!Number.isFinite(value)) return value;
   const factor = 10 ** decimals;
@@ -33,8 +32,7 @@ export function truncate(value: number, decimals: number): number {
 }
 
 /**
- * Format a `value / 10^tokenDecimals` number with French grouping
- * (non-breaking thousands separator, comma decimal).
+ * Formate un nombre avec groupement francais (espace insecable pour les milliers, virgule decimale).
  *
  *   formatFr(1234567.89, 2) === "1 234 567,89"
  *   formatFr(-1234567.89, 2) === "-1 234 567,89"
@@ -52,11 +50,10 @@ export function formatFr(value: number, decimals: number): string {
 }
 
 /**
- * Format `raw` (a token-denominated bigint) for display.
+ * Formate `raw` (un bigint libelle en token) pour l'affichage.
  *
- * Returns '—' when `raw` is undefined, finite-precision `value` collapses
- * to a non-finite number (e.g. reading a malformed balance), or any of
- * the inputs is invalid. Never invents a value.
+ * Rend '—' quand `raw` est undefined, quand `value` devient non fini (solde malforme), ou
+ * quand une entree est invalide. N'invente jamais de valeur.
  */
 export function formatAmount(
   raw: bigint | undefined,

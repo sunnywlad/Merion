@@ -21,11 +21,11 @@ export const getQuote = ({
   supply: bigint,
   maxShares: bigint | undefined}): QuoteResult<Quote> => {
 
-    // The tolerance is judged first: it is a field of its own, it must speak even on an empty form.
+    // La tolerance est jugee en premier : champ a part, elle doit repondre meme sur un formulaire vide.
     const {tolerance, reason: toleranceReason} = parseTolerance(toleranceInput);
     if (tolerance === null) return {quote: null, reason: toleranceReason};
 
-    // Unfinished form: nothing to say.
+    // Formulaire incomplet : rien a dire.
     if (anchor === null || !typedAmount) return {quote: null, reason: null};
 
     if (maxShares === undefined) return {quote: null, reason: null}

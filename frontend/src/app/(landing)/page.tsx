@@ -10,7 +10,7 @@ import Link from 'next/link';
  *
  * Les couleurs viennent des tokens posés par II.1 — aucun hex en dur.
  *
- * Statique : vit dans `app/(marketing)/` (sans `Providers`), donc aucun
+ * Statique : vit dans `app/(landing)/` (sans `Providers`), donc aucun
  * web3 n'est chargé sur cette route.
  */
 
@@ -33,7 +33,8 @@ export default function Home() {
             Make your BTC productive on Base
           </h1>
           <p className="text-body-lg text-cloud/80 max-w-2xl">
-            BTC-only DEX with liquidity and low fees.
+            Organic yield and liquidity for wrapped BTC.
+            Oracle-free DEX. Fees set by auction.
           </p>
           <div className="flex items-center gap-4">
             <Link

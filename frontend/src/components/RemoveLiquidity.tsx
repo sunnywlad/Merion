@@ -16,8 +16,7 @@ import { KpiCard } from "@/components/ui/KpiCard";
 import { AppStateBoundary } from "@/components/ui/AppStateBoundary";
 import { ReadErrorBoundary } from "@/components/ui/ReadErrorBoundary";
 import { isSupportedChain } from '@/constants/addresses';
-import Chevron from "@/components/ui/Chevron";
-import Disclosure from "@/components/ui/Disclosure";
+import { Panel } from "@/components/Panel";
 import { INPUT_CLASS_MONO } from "@/components/ui/formClasses";
 
 // II.2d — chaîne id du pool, miroir de constants/addresses.
@@ -132,29 +131,8 @@ const RemoveLiquidity = () => {
       ) : userAddress && maxShares === undefined ? (
         <AppStateBoundary state={{ kind: 'loading', title: 'Loading LP balance…' }} />
       ) : (
-        <div className="rounded-lg border border-cloud/10 bg-midnight text-cloud overflow-hidden">
-          <Disclosure
-            id="remove-liquidity-body"
-            defaultOpen={false}
-            trigger={(open, toggle) => (
-              <button
-                type="button"
-                aria-expanded={open}
-                aria-controls="disclosure-remove-liquidity-body"
-                onClick={toggle}
-                className={
-                  `flex w-full items-center justify-between gap-3 px-4 py-2 text-left ` +
-                  `transition-colors duration-150 ` +
-                  `hover:bg-cloud/5 ` +
-                  `focus:outline-none focus-visible:border-merion-blue focus-visible:border-2`
-                }
-              >
-                <span className="text-h4 font-medium">Remove Liquidity</span>
-                <Chevron open={open} />
-              </button>
-            )}
-          >
-            <div className="border-t border-cloud/10 p-4 flex flex-col gap-4">
+        <Panel title="Remove Liquidity">
+            <div className="flex flex-col gap-4">
               <div className="flex flex-col gap-2">
                 {tokensInfo.map((token) => {
                   const i = Number(token.index) as 0 | 1 | 2;
@@ -287,8 +265,7 @@ const RemoveLiquidity = () => {
                 </p>
               )}
             </div>
-          </Disclosure>
-        </div>
+        </Panel>
       )}
     </ReadErrorBoundary>
   );

@@ -11,19 +11,16 @@ if (!rawProjectId) {
 }
 export const projectId: string = rawProjectId
 
-// V.5 (perf H) — Hardhat ne déclare pas Multicall3 nativement sur 31337,
-// ce qui fait crasher tous les `useReadContracts` côté front avec
-// `ChainDoesNotSupportContract`. On déclare l'adresse canonique
-// 0xca11bde05977b3631167028862be2a173976ca11 à plat pour court-circuiter
-// le déploiement côté nœud. Plan §8 (l. 117-128). `hardhat.id` reste 31337.
-const hardhat: AppKitNetwork = {
-  ...hardhatBase,
-  contracts: {
-    multicall3: {
-      address: '0xca11bde05977b3631167028862be2a173976ca11'
-    }
-  }
-}
+// V.5 (perf H) — Le nœud Hardhat local ne prédéploie PAS Multicall3
+// (`eth_getCode 0xca11…ca11` renvoie `0x`). Déclarer malgré tout son
+// adresse canonique faisait appeler une non-adresse : viem recevait `0x`,
+// échouait au décodage en `ContractFunctionExecutionError`, et ce type
+// d'erreur court-circuite le repli automatique de wagmi vers des lectures
+// unitaires. On laisse donc `contracts` vide : `useMerionReadContracts`
+// passe `deployless: true` sur 31337 (bytecode Multicall3 inline via
+// `eth_call`, testé contre le nœud), et à défaut wagmi retombe sur des
+// `readContract` un-à-un. `hardhat.id` reste 31337.
+const hardhat: AppKitNetwork = { ...hardhatBase }
 
 // V.4 — `hardhat` ajouté aux networks AppKit pour que le wallet modal
 // propose le réseau local (chain 31337) à côté de Base Sepolia. Le
@@ -39,7 +36,13 @@ export const wagmiAdapter = new WagmiAdapter({
   networks,
   pollingInterval: { [baseSepolia.id]: 12_000, [hardhat.id]: 4_000 }, // épingle le défaut, plan §3 RPC
   transports: {
-    [hardhat.id]: http('http://127.0.0.1:8545'),
+    // Côté navigateur, on passe par le proxy même-origine `/rpc/hardhat`
+    // (rewrite dans `next.config.ts`) pour contourner l'absence de CORS
+    // sur le nœud local. Côté serveur (SSR, pas d'origine, pas de CORS),
+    // on tape le nœud en direct.
+    [hardhat.id]: http(
+      typeof window === 'undefined' ? 'http://127.0.0.1:8545' : '/rpc/hardhat'
+    ),
     [baseSepolia.id]: http(baseRpcUrl)
   }
 })

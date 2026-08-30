@@ -10,12 +10,11 @@ type ErrorStateProps = {
 };
 
 /**
- * Merion read error state — surfaced when a contract read fails (timeout,
- * revert, RPC down).
+ * Etat d'erreur de lecture Merion — affiche quand une lecture de contrat echoue (timeout,
+ * revert, RPC injoignable).
  *
- * Carries the same surface as `LoadingState`; the difference is `tone=danger`
- * on the icon, an optional `retry` action that re-runs the failing read.
- * The retry callback comes from the caller; the boundary is dumb.
+ * Meme surface que `LoadingState` ; la difference est `tone=danger` sur l'icone et une action
+ * `retry` optionnelle qui relance la lecture. Le callback `retry` vient de l'appelant ; la borne est passive.
  */
 export function ErrorState({
   title = 'Could not read on-chain data',

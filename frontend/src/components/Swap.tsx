@@ -171,10 +171,10 @@ type SwapFormProps = {
   effectiveFeeNum: bigint;
   feeDen: bigint;
   paused: boolean;
-  /** Reserve bands as percentages of the post-swap sum. Undefined until read. */
+  /** Bandes de reserve, en pourcentage de la somme post-swap. Undefined tant que non lues. */
   floorBps: bigint | undefined;
   ceilingBps: bigint | undefined;
-  /** Fee routing, to advance the reserves exactly as `Pool.swap` does. */
+  /** Routage de fee, pour avancer les reserves exactement comme `Pool.swap`. */
   routing: FeeRouting | undefined;
 };
 
@@ -224,12 +224,10 @@ function SwapForm(props: SwapFormProps) {
       })
       await publicClient.waitForTransactionReceipt({hash: hashApprove});
 
-      // V.5/bug-base-gas-cap — pre-flight `simulateContract` catches the
-      // *real* revert (allowance, balance, slippage, band breach, etc.)
-      // BEFORE we hand off to the wallet. Cf. le même pattern dans
-      // `AddLiquidity.tsx` — sans ce garde, le fallback gas du wallet
-      // peut dépasser le cap Base (2^24), et l'utilisateur voit
-      // "exceeds max transaction gas limit" au lieu du vrai revert.
+      // V.5/bug-base-gas-cap — `simulateContract` en pre-vol attrape le vrai revert (allowance,
+      // solde, slippage, breche de bande, etc.) AVANT de passer la main au wallet. Meme pattern
+      // que dans `AddLiquidity.tsx` : sans ce garde, le gas de repli du wallet peut depasser le
+      // cap Base (2^24), et l'utilisateur voit « exceeds max transaction gas limit » au lieu du vrai revert.
       await simulateContract(publicClient, {
         address: deployedPool,
         abi: poolAbi,
@@ -285,9 +283,8 @@ function SwapForm(props: SwapFormProps) {
     zeroOut: quote.tokenOut.amount === 0n ? "Swap output is zero." : null
   } : null;
 
-  // Band guard — the one revert the quote libraries cannot see. Stays null
-  // until the constants have landed, so the form never blocks on data it
-  // does not have (a guard without its data stays silent).
+  // Garde de bande — le seul revert que les libs de devis ne voient pas. Reste null tant que
+  // les constantes ne sont pas arrivees : le formulaire ne bloque jamais sur une donnee absente.
   // Perf E — `useMemo([quote, routing, ...])` : sans ça, chaque rendu
   // recompose le tuple `reservesAfter` (nouvelle référence) et invalide
   // le `bandBreach` qui en dépend.
@@ -313,17 +310,16 @@ function SwapForm(props: SwapFormProps) {
     [reservesAfter, floorBps, ceilingBps]
   );
 
-  // The band value is deliberately absent from the copy: the user is told the
-  // trade is impossible and what to do about it, not handed a protocol
-  // parameter he has no way to act on.
+  // La valeur de bande est volontairement absente du message : on dit a l'utilisateur que le
+  // trade est impossible et quoi faire, sans lui livrer un parametre de protocole inactionnable.
   const bandError = bandBreach
     ? bandBreach.kind === 'ceiling'
       ? `${nameOf(bandBreach.index) ?? 'This token'} would rise above its ceiling. Try a smaller amount.`
       : `${nameOf(bandBreach.index) ?? 'This token'} would fall below its floor. Try a smaller amount.`
     : null;
 
-  // Share the token will hold after the swap, shown alongside the band so the
-  // user can see how far past the limit the trade would push it.
+  // Part que le token detiendra apres le swap, affichee a cote de la bande pour montrer de
+  // combien le trade le pousserait au-dela de la limite.
   const bandSharePct = bandBreach && reservesAfter
     ? (() => {
         const sum = reservesAfter[0] + reservesAfter[1] + reservesAfter[2];
@@ -359,7 +355,12 @@ function SwapForm(props: SwapFormProps) {
               aria-label="From token"
               className={SELECT_CLASS}
               value={String(indexIn)}
-              onChange={(e) => {setIndexIn(Number(e.target.value) as 0 | 1 | 2); setError(null)}}>
+              onChange={(e) => {
+                const next = Number(e.target.value) as 0 | 1 | 2;
+                if (next === indexOut) setIndexOut(indexIn);
+                setIndexIn(next);
+                setError(null);
+              }}>
               {tokensInfo.map((token) => (
                 <option key={token.name} value={String(token.index)}>
                   {token.name}
@@ -401,7 +402,12 @@ function SwapForm(props: SwapFormProps) {
               aria-label="To token"
               className={SELECT_CLASS}
               value={String(indexOut)}
-              onChange={(e) => {setIndexOut(Number(e.target.value) as 0 | 1 | 2); setError(null)}}>
+              onChange={(e) => {
+                const next = Number(e.target.value) as 0 | 1 | 2;
+                if (next === indexIn) setIndexIn(indexOut);
+                setIndexOut(next);
+                setError(null);
+              }}>
               {tokensInfo.map((token) => (
                 <option key={token.name} value={String(token.index)}>
                   {token.name}

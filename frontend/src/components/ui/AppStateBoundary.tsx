@@ -6,11 +6,10 @@ import { PoolPausedState } from './PoolPausedState';
 import { MandateNoManagerState } from './MandateNoManagerState';
 
 /**
- * Discriminated union of the six app states the boundary can render.
+ * Union discriminee des six etats d'app que la borne peut rendre.
  *
- * Each branch carries the minimum data its state component needs. The caller
- * is responsible for assembling this object from the hooks it already has;
- * the boundary stays dumb and does no reads of its own.
+ * Chaque branche porte le minimum de donnees dont son composant a besoin. L'appelant assemble
+ * cet objet a partir des hooks qu'il a deja ; la borne reste passive et ne lit rien elle-meme.
  */
 export type AppState =
   | { kind: 'loading'; title?: string; description?: string }
@@ -26,16 +25,14 @@ export type AppState =
   | { kind: 'mandate-no-manager' };
 
 /**
- * Merion AppStateBoundary — orchestrates the six uniform state components.
+ * Merion AppStateBoundary — orchestre les six composants d'etat uniformes.
  *
- * The application components compute their `AppState` from what they already
- * read and pass it here when the state is not nominal. When the state IS
- * nominal they don't call this boundary at all; their normal rendering runs.
+ * Les composants applicatifs calculent leur `AppState` a partir de ce qu'ils lisent deja et le
+ * passent ici quand l'etat n'est pas nominal. Quand il l'est, ils n'appellent pas la borne du tout.
  *
- * This file is the single switch point; no application component imports a
- * state component directly. The exception is `MandatePanel`, which uses
- * `MandateNoManagerState` inline because that branch is one line of HTML, not
- * a layout substitution.
+ * Ce fichier est le point d'aiguillage unique ; aucun composant applicatif n'importe un composant
+ * d'etat directement. Exception : `MandatePanel`, qui utilise `MandateNoManagerState` inline, cette
+ * branche etant une ligne de HTML, pas une substitution de layout.
  */
 export function AppStateBoundary({ state }: { state: AppState }) {
   switch (state.kind) {

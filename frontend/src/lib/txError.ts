@@ -1,24 +1,21 @@
 import { BaseError, ContractFunctionRevertedError, UserRejectedRequestError } from 'viem';
 
 /**
- * Turns anything a wagmi/viem call can throw into one readable English line.
+ * Transforme tout ce qu'un appel wagmi/viem peut lancer en une ligne lisible.
  *
- * The rule this module exists to enforce: a raw `error.message` never reaches
- * the screen. viem's `message` is a multi-paragraph dump — "Execution reverted
- * for an unknown reason", trailing hex, nested `Details:` blocks — and the
- * `shortMessage` only trims it, it does not translate it.
+ * Regle du module : un `error.message` brut n'atteint jamais l'ecran. Le message
+ * de viem est un pave multi-paragraphes ; shortMessage ne fait que le tronquer.
  *
- * Resolution order, most specific first:
- *   1. the contract's own custom error, decoded by name (the good path);
- *   2. the wallet refusing to sign;
- *   3. a few infrastructure shapes worth naming in our own words — gas, nonce,
- *      and the node being unreachable, which is what used to surface as "RPC error";
- *   4. a generic line as a last resort. Better slightly vague than unreadable.
+ * Ordre de resolution, du plus precis au plus general :
+ *   1. l'erreur custom du contrat, decodee par son nom (le bon cas) ;
+ *   2. le wallet qui refuse de signer ;
+ *   3. quelques formes d'infra a nommer nous-memes (gas, nonce, noeud injoignable) ;
+ *   4. une ligne generique en dernier recours.
  */
 
-/** Custom errors, keyed by the `errorName` viem decodes from the revert data. */
+/** Erreurs custom, indexees par le `errorName` que viem decode dans la revert data. */
 const CUSTOM_ERRORS: Record<string, string> = {
-  // Pool — the ones a user can actually trigger
+  // Pool — celles qu'un utilisateur peut reellement declencher
   BadSlippage: 'Slippage exceeded. The pool moved against you — raise the tolerance and retry.',
   InsufficientReserve: 'Not enough reserve in the pool for this trade. Try a smaller amount.',
   ReserveOverflow: 'This amount exceeds the reserve limit. Try a smaller amount.',
@@ -55,7 +52,7 @@ const CUSTOM_ERRORS: Record<string, string> = {
   TooEarly: 'Too early — the cooldown has not elapsed yet.',
   FaucetEmpty: 'The faucet is empty.',
 
-  // ERC-20, shared by the pool, the mocks and MRN
+  // ERC-20, partagees par le pool, les mocks et MRN
   ERC20InsufficientBalance: 'Insufficient balance.',
   ERC20InsufficientAllowance: 'Allowance too low — approve the token first.',
   ERC20InvalidReceiver: 'Invalid recipient address.',
@@ -71,7 +68,7 @@ const CUSTOM_ERRORS: Record<string, string> = {
 
 const FALLBACK = 'The transaction could not be completed. Check the parameters and retry.';
 
-/** Infrastructure failures worth naming ourselves, checked against `shortMessage`. */
+/** Echecs d'infrastructure a nommer nous-memes, testes contre `shortMessage`. */
 const SHAPES: ReadonlyArray<readonly [RegExp, string]> = [
   [/user rejected|user denied|rejected the request/i, 'Transaction rejected in your wallet.'],
   [/insufficient funds|insufficient balance for gas/i, 'Not enough ETH to cover gas fees.'],
@@ -80,18 +77,17 @@ const SHAPES: ReadonlyArray<readonly [RegExp, string]> = [
   [/nonce/i, 'A pending transaction is conflicting. Wait for it, then retry.'],
   [/chain.*mismatch|unsupported chain|chain not/i, 'Wrong network. Switch to the expected chain.'],
   [/replacement.*underpriced|underpriced/i, 'A pending transaction is blocking this one. Wait, then retry.'],
-  // V.5 — Base / Base Sepolia enforce a per-transaction gas cap of 2^24 = 16 777 216.
-  // The wallet's fallback gas on a simulation failure can blow past this, and the RPC
-  // returns the raw cap message instead of the actual revert reason. We translate it:
-  // the user almost always has a true revert (allowance, balance, slippage) hidden upstream.
+  // V.5 — Base / Base Sepolia imposent un plafond de gas par transaction de 2^24 = 16 777 216.
+  // Le gas de repli du wallet apres un echec de simulation peut le depasser, et le RPC renvoie
+  // le message de plafond au lieu du vrai revert. On le traduit : la vraie cause (allowance,
+  // solde, slippage) est presque toujours en amont.
   [/exceeds\s+(?:maximum\s+)?per-transaction\s+gas\s+limit|exceeds\s+max\s+transaction\s+gas\s+limit/i,
    'The transaction simulation reverted upstream and the wallet fell back to a gas limit above Base\'s per-transaction cap (2^24 = 16,777,216). The likely real cause is missing approval, insufficient balance, or slippage — check those and retry.'],
 ];
 
 /**
- * The decoded name of a custom error, or undefined when viem only has a
- * revert string. `data` is a discriminated shape: a name when the ABI carried
- * the error, a bare message otherwise.
+ * Le nom decode d'une erreur custom, ou undefined quand viem n'a qu'une chaine
+ * de revert. `data` est discrimine : un nom si l'ABI portait l'erreur, un message brut sinon.
  */
 function revertName(revert: ContractFunctionRevertedError): string | undefined {
   const data = revert.data as { errorName?: string } | undefined;
@@ -114,12 +110,12 @@ export function describeTxError(error: unknown): string {
     if (revert instanceof ContractFunctionRevertedError) {
       const name = revertName(revert);
       if (name !== undefined && name in CUSTOM_ERRORS) return CUSTOM_ERRORS[name];
-      // An unknown custom error: the name is still more useful than viem's dump.
+      // Erreur custom inconnue : le nom reste plus utile que le pave de viem.
       if (name !== undefined) return `The contract rejected the call: ${name}.`;
     }
 
-    // viem's condensed one-liner. Better than `message`, but it still leaks
-    // raw wording, so it goes through the same shape matching as anything else.
+    // Le one-liner condense de viem. Mieux que `message`, mais encore brut :
+    // il passe par la meme detection de forme que le reste.
     const short = error.shortMessage;
     if (typeof short === 'string' && short.length > 0) {
       return fromShape(short) ?? short;

@@ -1,24 +1,23 @@
 import { parseAmount } from "@/lib/parseAmount";
 
-// A null quote means no transaction can be built yet. `reason` is filled only when the user
-// did something wrong: an unfinished form stays silent.
+// Un devis null : aucune transaction n'est encore constructible.
+// reason n'est rempli que si l'utilisateur s'est trompe ; un formulaire incomplet reste muet.
 export type QuoteResult<Q> =
   | {quote: Q, reason: null}
   | {quote: null, reason: string | null};
 
-// Same discriminated shape as QuoteResult: a null tolerance always carries its reason.
+// Meme forme discriminee que QuoteResult : une tolerance null porte toujours sa raison.
 export type ToleranceResult =
   | {tolerance: bigint, reason: null}
   | {tolerance: null, reason: string};
 
-// Share of `part` in `whole`, in basis points, so `formatUnits(_, 2)` renders it as a percentage.
-// A null `whole` yields 0 rather than an exception: the only way to get there is a swap of zero,
-// where every figure on screen is legitimately zero anyway.
+// Part de `part` dans `whole`, en points de base (formatUnits(_, 2) -> pourcentage).
+// whole nul -> 0 plutot qu'une exception : seul un swap de zero y mene, ou tout vaut zero.
 export function shareBps(part: bigint, whole: bigint): bigint {
   return whole === 0n ? 0n : part * 10000n / whole;
 }
 
-// An empty field means the default 0.5 %. The result is in basis points, hence 2 decimals.
+// Champ vide -> tolerance par defaut de 0,5 %. Resultat en bps (2 decimales).
 export function parseTolerance(toleranceInput: string): ToleranceResult {
   const tolerance = parseAmount(toleranceInput === "" ? "0.5" : toleranceInput, 2);
   if (tolerance === null || tolerance < 0) {
@@ -30,18 +29,13 @@ export function parseTolerance(toleranceInput: string): ToleranceResult {
   return {tolerance, reason: null};
 }
 
-// V.5/bug-addliquidity-rounding — `Math.ceilDiv` from Solidity, mirrored here.
-// The deposit pro-rata uses ceiling division on the amounts the pool pulls:
-// `Math.ceilDiv(_amount * cachedReserves[i], cachedReserves[anchor])`. The
-// frontend's quote previously used integer division (floor), which produced an
-// amount 1 unit short whenever the ratio wasn't exact — and the pool's `safeTransferFrom`
-// then reverted with `ERC20InsufficientAllowance`. Quote and contract MUST use the
-// same rounding; this is the only place to keep them aligned.
+// Division au superieur, copie de Math.ceilDiv de Solidity.
+// Le pro-rata de depot du pool arrondit au superieur les montants preleves ; le front doit
+// utiliser le meme arrondi, sinon le montant est 1 unite trop court et safeTransferFrom revert
+// avec ERC20InsufficientAllowance. Seul endroit ou garder devis et contrat alignes.
 export function ceilDiv(numerator: bigint, denominator: bigint): bigint {
   if (denominator === 0n) throw new Error("ceilDiv by 0");
-  // JS BigInt division truncates toward zero. Math.ceil(a/b) is a/b rounded AWAY
-  // from zero when not exact — +1 when the signs agree, +0 when they differ.
-  // Exact divisions return the truncated quotient directly.
+  // La division BigInt tronque vers zero. On ajoute 1 quand le reste est non nul et les signes concordent.
   const q = numerator / denominator;
   return numerator % denominator === 0n
     ? q

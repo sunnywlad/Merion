@@ -1,12 +1,11 @@
 import Panel from '@/components/Panel';
 
 /**
- * Merion mandate-no-manager state — the mandate exists but no manager has
- * been registered for the current epoch.
+ * Etat « mandat sans gestionnaire » — le mandat existe mais aucun gestionnaire n'a ete
+ * enregistre pour l'epoque courante.
  *
- * This is the nominal case for the first epoch: there is no auction yet, the
- * pool trades at the base fee, and everything works. The tone is neutral —
- * this is not a failure, and using `danger` would mislead the user.
+ * Cas nominal de la premiere epoque : pas encore d'enchere, le pool tourne au tarif de base,
+ * tout fonctionne. Ton neutre : ce n'est pas un echec, `danger` induirait l'utilisateur en erreur.
  */
 export function MandateNoManagerState() {
   return (

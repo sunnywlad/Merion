@@ -1,13 +1,11 @@
 import Panel from '@/components/Panel';
 
 /**
- * Merion pool-paused state — the pool's `paused` flag is on, swaps and
- * liquidity operations are temporarily suspended.
+ * Etat « pool en pause » — le flag `paused` du pool est actif, swaps et operations de
+ * liquidite sont temporairement suspendus.
  *
- * Tone: warning (brand book §2), signalled here with a left warning border
- * even though a pause is a normal operational state, not a failure.
- * Reserves and the auction stay visible so the user can keep an eye on
- * them.
+ * Ton : warning (brand book §2), signale par une bordure gauche warning, meme si une pause est
+ * un etat operationnel normal, pas un echec. Reserves et enchere restent visibles.
  */
 export function PoolPausedState() {
   return (

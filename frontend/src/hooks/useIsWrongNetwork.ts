@@ -2,16 +2,14 @@ import { useConnection } from 'wagmi';
 import { isSupportedChain } from '@/constants/addresses';
 
 /**
- * True when a wallet is connected to a chain Merion is not deployed on.
- * False while disconnected — "not connected" and "wrong network" are different
- * states: a disconnected user has no chain to be wrong about, and every write
- * is already gated on `userAddress`.
+ * Vrai quand un wallet est connecte a une chaine ou Merion n'est pas deploye.
+ * Faux si deconnecte : « non connecte » et « mauvais reseau » sont deux etats distincts, et
+ * chaque ecriture est deja gardee par `userAddress`.
  *
- * The test is membership in the address table, not equality with one hardcoded
- * ID, so a Hardhat wallet is accepted like Base Sepolia. The write paths that
- * are rendered inside a `wrong-network` boundary (Swap, AddLiquidity,
- * RemoveLiquidity, MrnGrant) use this indirectly; those rendered outside it —
- * the faucet buttons and the auction panel — gate on it directly.
+ * Le test est l'appartenance a la table d'adresses, pas l'egalite avec un ID code en dur : un
+ * wallet Hardhat est accepte comme Base Sepolia. Les ecritures rendues dans une frontiere
+ * `wrong-network` (Swap, AddLiquidity, RemoveLiquidity, MrnGrant) l'utilisent indirectement ;
+ * celles rendues hors frontiere (faucet, panneau d'enchere) la testent directement.
  */
 export function useIsWrongNetwork(): boolean {
   const { status, chainId } = useConnection();

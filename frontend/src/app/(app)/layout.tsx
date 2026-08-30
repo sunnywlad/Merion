@@ -8,8 +8,8 @@ import { ChainNowProvider } from '@/hooks/useChainNow';
  * Coquille applicative — groupe `(app)` (pas de segment d'URL).
  *
  * C'est ici que vit le web3 : `Providers` (wagmi + react-query + AppKit)
- * enveloppe tout le sous-arbre applicatif. La landing marketing, en
- * `app/(marketing)/`, est en dehors de ce groupe et ne charge donc rien
+ * enveloppe tout le sous-arbre applicatif. La landing, en
+ * `app/(landing)/`, est en dehors de ce groupe et ne charge donc rien
  * de tout ça — cf. plan perf-frontend §3, Étape C.
  *
  * Structure — note d'inspiration §1 :

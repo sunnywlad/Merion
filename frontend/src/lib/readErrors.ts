@@ -3,9 +3,8 @@ export type ReadSource = {
   error: Error | null | undefined;
 };
 
-// The two failure levels of useReadContracts (whole-request `error` vs a single `data[i].error`)
-// never overlap: a dead request leaves `data` undefined, so the per-entry sources simply don't
-// exist to report anything. No dedup needed.
+// Les deux niveaux d'echec de useReadContracts (erreur de requete globale vs data[i].error)
+// ne se chevauchent jamais : une requete morte laisse data undefined. Aucun dedoublonnage requis.
 export function collectReadErrors(sources: ReadSource[]): ReadSource[] {
   return sources.filter((source) => source.error);
 }

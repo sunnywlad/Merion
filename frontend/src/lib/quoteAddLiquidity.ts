@@ -22,11 +22,11 @@ export const getQuote = ({
   supply: bigint,
   minLiq: bigint | undefined}): QuoteResult<Quote> => {
 
-  // The tolerance is judged first: it is a field of its own, it must speak even on an empty form.
+  // La tolerance est jugee en premier : champ a part, elle doit repondre meme sur un formulaire vide.
   const {tolerance, reason: toleranceReason} = parseTolerance(toleranceInput);
   if (tolerance === null) return {quote: null, reason: toleranceReason};
 
-  // Unfinished form: nothing to say.
+  // Formulaire incomplet : rien a dire.
   if (anchor === null || !typedAmount) return {quote: null, reason: null};
 
   const amount = parseAmount(typedAmount);
@@ -45,21 +45,18 @@ export const getQuote = ({
   }
 
   const anchorReserve = reserves[anchor];
-  // V.5/bug-addliquidity-rounding — match the contract's `Math.ceilDiv` on the
-  // three amounts the pool pulls. Floor division here produced, for any
-  // non-anchor token, an amount 1 unit short whenever `amount * reserves[i]`
-  // was not divisible by `anchorReserve`; the consequent `safeTransferFrom`
-  // reverted with `ERC20InsufficientAllowance` and the wallet choked on a
-  // gas fallback above Base's per-tx cap (2^24) — surfacing as the misleading
-  // "exceeds max transaction gas limit" in the front. Bootstrap is exact (3
-  // equal deposits) and is handled separately above.
+  // V.5/bug-addliquidity-rounding — reproduire le Math.ceilDiv du contrat sur les trois montants
+  // preleves. La division au plancher rendait ici, pour tout token non-ancre, un montant 1 unite
+  // trop court des que `amount * reserves[i]` n'etait pas divisible par `anchorReserve` ; le
+  // safeTransferFrom revertait alors avec ERC20InsufficientAllowance. Le bootstrap est exact
+  // (3 depots egaux) et traite separement ci-dessus.
   const computed: [bigint, bigint, bigint] = [
     ceilDiv(amount * reserves[0], anchorReserve),
     ceilDiv(amount * reserves[1], anchorReserve),
     ceilDiv(amount * reserves[2], anchorReserve)
   ];
-  // `expected` is the LP shares the pool will mint. The contract computes it
-  // with floor division (the user's minimum), so the quote does too.
+  // `expected` : les parts LP que le pool va emettre. Le contrat les calcule au plancher
+  // (le minimum pour l'utilisateur), le devis fait pareil.
   const expected = supply * amount / anchorReserve;
   const minExpected = expected * (10000n - tolerance) / 10000n;
   return {quote: {computed, expected, minExpected}, reason: null};
