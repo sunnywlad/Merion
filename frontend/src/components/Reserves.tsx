@@ -3,6 +3,7 @@
 import { useReserves } from '@/hooks/useReserves';
 import { useDeployedChainId } from '@/hooks/useDeployedChainId';
 import AmountLine from '@/components/AmountLine';
+import { formatAmount } from '@/components/ui/formatAmount';
 import { AppStateBoundary } from '@/components/ui/AppStateBoundary';
 import ReservesBar from '@/components/ReservesBar';
 
@@ -12,11 +13,13 @@ import ReservesBar from '@/components/ReservesBar';
  * Lecture sur les mêmes hooks que la page `/pool`. La détection d'erreur
  * suit le motif de la voie C (§II.2d) : un échec global court-circuite
  * vers la borne d'état ; les erreurs par entrée restent visibles en
- * ligne via `AmountLine`, où elles ont leur place.
+ * ligne via la ligne de montant de chaque token, où elles ont leur
+ * place.
  *
- * Affichage : barres relatives d'abord (la question « est-ce équilibré ? »),
- * tableau de valeurs absolues ensuite (les montants sous-jacents). Le
- * tout plafonne dans la colonne du rail.
+ * Affichage : pour chaque token, une ligne avec `ReservesBar` (nom +
+ * % à droite) suivie d'une ligne de montant à droite seule (sans
+ * label à gauche). Les trois blocs sont espacés verticalement. Le
+ * « Total LP shares » garde son label à gauche.
  */
 export default function Reserves() {
   const { reserves, entries, supply, isLoading, error } = useReserves();
@@ -34,9 +37,8 @@ export default function Reserves() {
     );
   }
 
-  const allLoaded = reserves !== undefined;
-  const totalReserves = allLoaded
-    ? reserves!.reduce<bigint>((acc, v) => acc + v, 0n)
+  const totalReserves = reserves
+    ? reserves.reduce<bigint>((acc, v) => acc + v, 0n)
     : 0n;
   const shares = tokens.map((_token, i) => {
     const v = reserves?.[i];
@@ -46,45 +48,73 @@ export default function Reserves() {
 
   return (
     <section className="flex flex-col gap-3 min-w-0">
-      <h3 className="text-h5 font-medium text-cloud/80">Pool reserves</h3>
-
-      <div className="flex flex-col gap-2">
-        {tokens.map((token, i) => (
-          <ReservesBar
-            key={token.name}
-            tokenSymbol={token.name}
-            share={shares[i]}
-          />
-        ))}
-      </div>
-
-      <ul className="border-t border-merion-blue/40 pt-2">
+      <div className="flex flex-col gap-6">
         {tokens.map((token, i) => {
           const entry = entries?.[i];
           return (
-            <AmountLine
-              key={token.name}
-              label={`${token.name} reserves`}
-              isLoading={isLoading}
-              error={error ?? entry?.error}
-              value={entry?.status === 'success' ? entry.result : undefined}
-              displayDecimals={4}
-              tokenDecimals={8}
-              unit={token.name}
-            />
+            <div key={token.name} className="flex flex-col gap-1">
+              <ReservesBar tokenSymbol={token.name} share={shares[i]} />
+              <TokenAmountRow
+                isLoading={isLoading}
+                error={error ?? entry?.error}
+                value={entry?.status === 'success' ? entry.result : undefined}
+                unit={token.name}
+              />
+            </div>
           );
         })}
+      </div>
 
-        <AmountLine
-          label="Total LP shares"
-          isLoading={isLoading}
-          error={error ?? supply?.error}
-          value={supply?.status === 'success' ? supply.result : undefined}
-          displayDecimals={4}
-          tokenDecimals={8}
-          unit="LP"
-        />
-      </ul>
+      <AmountLine
+        label="Total LP shares"
+        isLoading={isLoading}
+        error={error ?? supply?.error}
+        value={supply?.status === 'success' ? supply.result : undefined}
+        displayDecimals={4}
+        tokenDecimals={8}
+        unit="LP"
+      />
     </section>
+  );
+}
+
+type TokenAmountRowProps = {
+  isLoading: boolean;
+  error: Error | null | undefined;
+  value: bigint | undefined;
+  unit: string;
+};
+
+/**
+ * Ligne de montant pour un token du pool — rail « Pool ».
+ *
+ * Reproduit la logique d'`AmountLine` (loading / read failed / `—` /
+ * valeur formatée) mais avec une taille de police plus grande et sans
+ * label à gauche : seul le chiffre et l'unité sont rendus, calés à
+ * droite de la colonne. Cf. demande sur la lisibilité du rail.
+ */
+function TokenAmountRow({ isLoading, error, value, unit }: TokenAmountRowProps) {
+  let content: string;
+  let contentClass: string;
+  if (isLoading) {
+    content = 'Loading…';
+    contentClass = 'text-cloud/60';
+  } else if (error) {
+    content = 'Read failed';
+    contentClass = 'text-danger';
+  } else if (value === undefined) {
+    content = '—';
+    contentClass = 'text-cloud/60';
+  } else {
+    content = formatAmount(value, { displayDecimals: 4, tokenDecimals: 8, grouping: 'none' });
+    contentClass = 'text-cloud';
+  }
+  return (
+    <p className="flex items-baseline justify-end gap-1.5 min-w-0 text-body-lg">
+      <span className={`font-mono text-code-lg num-tabular ${contentClass}`}>
+        {content}
+      </span>
+      <span className="font-mono text-code text-neutral">{unit}</span>
+    </p>
   );
 }

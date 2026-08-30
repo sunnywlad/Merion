@@ -19,17 +19,21 @@ export default function Home() {
     <div className="flex-1 min-h-0">
       <section className="px-8 py-20 bg-midnight">
         <div className="max-w-4xl mx-auto flex flex-col gap-8">
-          <p className="text-h3 font-semibold uppercase tracking-[0.2em] text-cloud mb-4">
-            Merion
-          </p>
+          <div className="flex items-center gap-3 mb-16">
+            <img
+              src="/merion-logo.svg"
+              alt="Merion"
+              className="h-12 w-12 [filter:brightness(0)_invert(1)]"
+            />
+            <p className="text-h2 font-semibold uppercase tracking-[0.2em] text-cloud">
+              Merion
+            </p>
+          </div>
           <h1 className="text-h2 text-white">
-            An oracle-free BTC DEX, settled by auction.
+            Make your BTC productive on Base
           </h1>
           <p className="text-body-lg text-cloud/80 max-w-2xl">
-            Merion trades wrapped Bitcoin at equal reserves across cbBTC, LBTC
-            and WBTC, with an on-chain auction that picks a manager each epoch
-            to keep the pool balanced. No external price feed, no implied
-            volatility surface, no off-chain keeper.
+            BTC-only DEX with liquidity and low fees.
           </p>
           <div className="flex items-center gap-4">
             <Link

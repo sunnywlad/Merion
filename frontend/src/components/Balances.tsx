@@ -4,7 +4,7 @@ import { useConnection, useBalance } from 'wagmi';
 import { useUserBalances } from '@/hooks/useUserBalances';
 import { useLpBalance } from '@/hooks/useLpBalance';
 import { useDeployedChainId } from '@/hooks/useDeployedChainId';
-import AmountLine from '@/components/AmountLine';
+import { formatAmount } from '@/components/ui/formatAmount';
 import { ReadErrorBoundary } from '@/components/ui/ReadErrorBoundary';
 
 /**
@@ -18,7 +18,8 @@ import { ReadErrorBoundary } from '@/components/ui/ReadErrorBoundary';
  * courante) ; les parts LP de `useLpBalance`.
  *
  * Affichage minimal : à gauche le symbole, à droite le montant, sans
- * phrase « Your … balance » ni en-tête de groupe.
+ * phrase « Your … balance » ni en-tête de groupe. Tailles de police
+ * alignées sur le rail gauche « Pool » (cf. demande).
  *
  * Les chiffres suivent la note §4 :
  *   - BTC wrappé : 4 décimales, troncature, sans grouping
@@ -40,7 +41,7 @@ export default function Balances() {
 
   if (status !== 'connected') {
     return (
-      <p className="text-small text-cloud/60">
+      <p className="text-body-lg text-cloud/60">
         Connect your wallet to see your balances.
       </p>
     );
@@ -56,43 +57,103 @@ export default function Balances() {
         { message: 'Failed to read your ETH balance', error: errorEth },
       ]}
     >
-    <ul className="flex flex-col gap-1">
-      {tokensInfo.map((token, i) => {
-        const entry = btcBalances[i];
-        return (
-          <AmountLine
-            key={token.name}
-            label={token.name}
-            isLoading={isLoading}
-            error={error ?? entry?.error}
-            value={
-              entry?.status === 'success' ? entry.result : undefined
-            }
-            displayDecimals={4}
-            tokenDecimals={8}
-          />
-        );
-      })}
+      <ul className="flex flex-col gap-3">
+        {tokensInfo.map((token, i) => {
+          const entry = btcBalances[i];
+          return (
+            <PositionRow
+              key={token.name}
+              label={token.name}
+              isLoading={isLoading}
+              error={error ?? entry?.error}
+              value={
+                entry?.status === 'success' ? entry.result : undefined
+              }
+              displayDecimals={4}
+              tokenDecimals={8}
+            />
+          );
+        })}
 
-      <AmountLine
-        label="ETH"
-        isLoading={isLoadingEth}
-        error={errorEth}
-        value={ethBalance?.value}
-        displayDecimals={4}
-        tokenDecimals={18}
-      />
+        <PositionRow
+          label="ETH"
+          isLoading={isLoadingEth}
+          error={errorEth}
+          value={ethBalance?.value}
+          displayDecimals={4}
+          tokenDecimals={18}
+        />
 
-      <AmountLine
-        label="LP"
-        isLoading={isLoadingLp}
-        error={errorLp}
-        value={dataLp}
-        displayDecimals={4}
-        tokenDecimals={18}
-        unit="LP"
-      />
-    </ul>
+        <PositionRow
+          label="LP"
+          isLoading={isLoadingLp}
+          error={errorLp}
+          value={dataLp}
+          displayDecimals={4}
+          tokenDecimals={18}
+          unit="LP"
+        />
+      </ul>
     </ReadErrorBoundary>
+  );
+}
+
+type PositionRowProps = {
+  label: string;
+  isLoading: boolean;
+  error: Error | null | undefined;
+  value: bigint | undefined;
+  displayDecimals: number;
+  tokenDecimals: number;
+  unit?: string;
+};
+
+/**
+ * Ligne de balance du rail droit « Your position ».
+ *
+ * Même logique et mêmes tailles que la ligne de montant du rail gauche
+ * « Pool » (`Reserves.TokenAmountRow`) : libellé à gauche en
+ * `text-body-lg`, montant à droite en `text-body-lg` mono, unité en
+ * `text-code`. Calque la gestion des états loading / erreur / `—`.
+ */
+function PositionRow({
+  label,
+  isLoading,
+  error,
+  value,
+  displayDecimals,
+  tokenDecimals,
+  unit,
+}: PositionRowProps) {
+  let content: string;
+  let contentClass: string;
+  if (isLoading) {
+    content = 'Loading…';
+    contentClass = 'text-cloud/60';
+  } else if (error) {
+    content = 'Read failed';
+    contentClass = 'text-danger';
+  } else if (value === undefined) {
+    content = '—';
+    contentClass = 'text-cloud/60';
+  } else {
+    content = formatAmount(value, { displayDecimals, tokenDecimals, grouping: 'none' });
+    contentClass = 'text-cloud';
+  }
+  return (
+    <li className="flex items-baseline justify-between gap-4 py-1 text-body-lg">
+      <span className="text-cloud/80">{label}</span>
+      <span className="flex items-baseline min-w-0">
+        <span className={`font-mono text-body-lg num-tabular ${contentClass}`}>
+          {content}
+        </span>
+        {unit ? (
+          <span className="font-mono text-code text-neutral">
+            {' '}
+            {unit}
+          </span>
+        ) : null}
+      </span>
+    </li>
   );
 }

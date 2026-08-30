@@ -152,8 +152,7 @@ const MrnGrant = () => {
     <Panel title="Get MRN">
       <div className="flex flex-col gap-4">
         <p className="text-small text-cloud/70">
-          Request {dripAmountLabel} MRN from the project faucet, which redistributes
-          from the reservoir pre-funded by the pool owner at deployment. One request
+          Request {dripAmountLabel} MRN from the project faucet. One request
           every {intervalHours} h per address.
         </p>
 

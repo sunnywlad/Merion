@@ -59,7 +59,7 @@ const Swap = () => {
   const [indexIn, setIndexIn] = useState<0 | 1 | 2>(0);
   const [indexOut, setIndexOut] = useState<0 | 1 | 2>(1);
   const [error, setError] = useState<string | null>(null);
-  const [tolerance, setTolerance] = useState("");
+  const [tolerance, setTolerance] = useState("0.5");
   const [isPending, setIsPending] = useState(false);
 
   const publicClient = usePublicClient();
@@ -442,11 +442,12 @@ function SwapForm(props: SwapFormProps) {
           Decomposition — note §6 : « ne réserve son espace qu'une fois
           une quote reçue ; à vide, elle est réduite à une ligne
           "Decomposition — awaiting quote", pas une carte à hauteur fixe ».
-          On rend la carte complète quand une quote existe, sinon une
-          ligne d'attente dans la même typographie.
+          Perf Étape I : on garde le `<Panel>` monté en permanence (sinon
+          l'animation `merion-panel-in` 200 ms rejoue à chaque flip
+          quote ↔ null). On permute juste le contenu intérieur.
         */}
-        {quote ? (
-          <Panel title="Decomposition" tone="muted">
+        <Panel title="Decomposition" tone="muted" className={quote ? '' : 'hidden'}>
+          {quote ? (
             <SwapDecompositionBar
               input={Number(btcAmount(quote.tokenIn.amount))}
               fee={Number(btcAmount(quote.tokenIn.fee))}
@@ -455,14 +456,8 @@ function SwapForm(props: SwapFormProps) {
               amountOut={Number(btcAmount(quote.tokenOut.amount))}
               feeUnit={nameOf(indexIn) ?? ''}
             />
-          </Panel>
-        ) : (
-          <p className="text-small text-cloud/60">
-            <span className="text-h5 font-medium text-cloud/80">Decomposition</span>
-            <span aria-hidden="true"> · </span>
-            <span>Awaiting quote</span>
-          </p>
-        )}
+          ) : null}
+        </Panel>
 
         <div className="flex items-center gap-3">
           <StatusDot

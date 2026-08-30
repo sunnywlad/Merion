@@ -1,27 +1,38 @@
 import Link from 'next/link';
 import NavbarClient from './NavbarClient';
+import AppkitButton from './AppkitButton';
 
 /**
  * Merion navbar — chrome du haut, présent sur les pages applicatives
  * (monté par `app/(app)/layout.tsx`).
  *
- * Coque server component : tout ce qui est statique (logo, layout du
- * header) vit ici. Les bits dynamiques (lien actif + `appkit-button`)
- * sont délégués à la feuille client `NavbarClient`. Le split évite
+ * Coque server component : tout ce qui est statique (logo, mise en
+ * page du header) vit ici. Les bits dynamiques (lien actif +
+ * `appkit-button`) sont délégués aux feuilles client `NavbarClient`
+ * (nav centrale) et `AppkitButton` (bouton à droite). Le split évite
  * que la landing marketing (`app/(marketing)/`) ne charge AppKit —
  * cf. plan perf-frontend §3, Étape C.
  *
- * Marque à gauche, liens applicatifs au centre, bouton de connexion à droite.
- * L'onglet actif est souligné en Merion Blue (cf. brand book §7, onglets).
+ * Mise en page : grille à 3 colonnes `1fr | auto | 1fr`. Le logo
+ * occupe la colonne gauche, les liens applicatifs la colonne
+ * centrale, le bouton de connexion la colonne droite. Les deux `1fr`
+ * absorbent l'espace restant de façon symétrique, ce qui force les
+ * liens à se centrer **sur la largeur réelle du viewport** — alignés
+ * sur l'axe vertical du panneau principal rendu en dessous (le main
+ * est lui-même centré entre les deux rails `Sidebar | main |
+ * RightSidebar` du layout applicatif). Sans cette symétrie, le centrage
+ * se ferait entre le logo et le bouton, donc décalé du centre du
+ * viewport.
+ *
  * Couleurs et tailles viennent des tokens posés par II.1.
  */
 export default function Navbar() {
   return (
     <header className="sticky top-0 z-50 h-16 bg-midnight border-b border-cloud/5">
-      <div className="h-full flex items-center px-6 gap-8">
+      <div className="h-full grid grid-cols-[1fr_auto_1fr] items-center px-6 gap-8">
         <Link
           href="/"
-          className="flex items-center gap-2 mt-2 hover:text-white transition-colors"
+          className="flex items-center gap-2 justify-self-start mt-2 hover:text-white transition-colors"
         >
           <img
             src="/merion-logo.svg"
@@ -34,6 +45,10 @@ export default function Navbar() {
         </Link>
 
         <NavbarClient />
+
+        <div className="justify-self-end">
+          <AppkitButton />
+        </div>
       </div>
     </header>
   );

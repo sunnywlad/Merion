@@ -43,16 +43,16 @@ export function Panel({
   return (
     <section
       className={
-        `merion-panel flex flex-col rounded-lg border border-cloud/10 p-4 min-w-0 ` +
+        `merion-panel flex flex-col rounded-lg border-[3px] border-merion-blue/40 p-4 min-w-0 ` +
         `${TONE_BG[tone]} text-cloud ${className}`
       }
     >
       {title ? (
-        <header className="mb-3 text-h4 font-medium">{title}</header>
+        <header className="mb-6 text-h4 font-medium">{title}</header>
       ) : null}
       <div className="flex flex-col min-w-0 flex-1">{children}</div>
       {footer ? (
-        <footer className="mt-3 border-t border-cloud/10 pt-3 text-small text-cloud/70">
+        <footer className="mt-3 border-t border-merion-blue/40 pt-3 text-small text-cloud/70">
           {footer}
         </footer>
       ) : null}

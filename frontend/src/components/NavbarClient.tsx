@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 const NAV_LINKS = [
   { href: '/swap', label: 'Swap' },
   { href: '/pool', label: 'Pool' },
+  { href: '/auction', label: 'Auction' },
   { href: '/tools', label: 'Tools' },
 ] as const;
 
@@ -16,38 +17,33 @@ const NAV_LINKS = [
  * ne soit bundlé sur la landing marketing (`app/(marketing)/`), où ce
  * composant n'est jamais monté. Cf. plan perf-frontend §3, Étape C.
  *
- * Deux responsabilités client :
- *  1. `usePathname()` pour souligner l'onglet actif (Merion Blue),
- *     les liens étant centrés dans la navbar (cf. demande).
- *  2. `<appkit-button>` — bouton de connexion AppKit, replacé dans la
- *     navbar (à droite) pour simplifier la mise en page.
+ * Responsabilité client unique : `usePathname()` pour souligner
+ * l'onglet actif en Merion Blue. Le bouton AppKit est rendu par
+ * `AppkitButton` (autre feuille client), chacun posant sa colonne dans
+ * la grille `1fr | auto | 1fr` du Navbar — voir `Navbar.tsx`.
  */
 export default function NavbarClient() {
   const pathname = usePathname();
 
   return (
-    <>
-      <nav className="flex-1 flex items-center justify-center gap-6">
-        {NAV_LINKS.map(({ href, label }) => {
-          const active = pathname === href || pathname?.startsWith(`${href}/`);
-          return (
-            <Link
-              key={href}
-              href={href}
-              className={
-                `text-h5 transition-colors ` +
-                (active
-                  ? 'text-cloud underline underline-offset-8 decoration-2 decoration-merion-blue'
-                  : 'text-neutral hover:text-cloud')
-              }
-            >
-              {label}
-            </Link>
-          );
-        })}
-      </nav>
-
-      <appkit-button balance="hide" />
-    </>
+    <nav className="flex items-center gap-16">
+      {NAV_LINKS.map(({ href, label }) => {
+        const active = pathname === href || pathname?.startsWith(`${href}/`);
+        return (
+          <Link
+            key={href}
+            href={href}
+            className={
+              `text-h5 transition-colors ` +
+              (active
+                ? 'text-cloud underline underline-offset-8 decoration-2 decoration-merion-blue'
+                : 'text-neutral hover:text-cloud')
+            }
+          >
+            {label}
+          </Link>
+        );
+      })}
+    </nav>
   );
 }

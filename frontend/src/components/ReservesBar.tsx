@@ -48,9 +48,9 @@ export function ReservesBar({
 
   return (
     <div className={`flex flex-col gap-1 min-w-0 ${className}`}>
-      <div className="flex items-baseline justify-between gap-2 text-small">
+      <div className="flex items-baseline justify-between gap-2 text-body-lg">
         <span className="text-cloud/80">{tokenSymbol}</span>
-        <span className="font-mono text-code text-cloud">
+        <span className="font-mono text-code-lg text-cloud">
           {pct.toFixed(2)}%
         </span>
       </div>
@@ -63,7 +63,7 @@ export function ReservesBar({
         className="relative h-2 rounded bg-slate overflow-hidden"
       >
         <div
-          className={`absolute inset-y-0 left-0 transition-all duration-300 ease-out ${fillClass}`}
+          className={`absolute inset-y-0 left-0 transition-[width,background-color] duration-300 ease-out ${fillClass}`}
           style={{ width: `${pct}%` }}
         />
         <div

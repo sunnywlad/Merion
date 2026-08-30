@@ -17,7 +17,7 @@
 // à ~3.6:1 (cloud/40) sur Midnight.
 
 const BASE_INPUT =
-  'w-full rounded border border-cloud/10 bg-slate px-3 py-1.5 ' +
+  'w-full rounded border border-merion-blue/40 bg-slate px-3 py-1.5 ' +
   'text-code text-cloud placeholder:text-cloud/60 ' +
   'focus:outline-none focus:border-merion-blue focus:border-2 ' +
   'disabled:opacity-50 disabled:cursor-not-allowed';
@@ -25,7 +25,7 @@ const BASE_INPUT =
 export const INPUT_CLASS_MONO = BASE_INPUT + 'num-tabular font-mono';
 
 export const SELECT_CLASS =
-  'shrink-0 rounded border border-cloud/10 bg-slate px-3 py-2 ' +
+  'shrink-0 rounded border border-merion-blue/40 bg-slate px-3 py-2 ' +
   'text-body text-cloud ' +
   'focus:outline-none focus:border-merion-blue focus:border-2 ' +
   'disabled:opacity-50 disabled:cursor-not-allowed';
