@@ -57,9 +57,10 @@ const MintButton = ({name, address}: {name: string, address: Address}) => {
             : 'Ready to mint';
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-2 w-48">
       <Button
         level="primary"
+        className="w-full"
         onClick={() => {
           if (!userAddress || wrongNetwork) return;
           mutate({

@@ -1,9 +1,13 @@
 'use client';
 
+import { useEffect, useState } from 'react';
+import { parseUnits } from 'viem';
 import { useConnection, useBalance } from 'wagmi';
 import { useUserBalances } from '@/hooks/useUserBalances';
 import { useLpBalance } from '@/hooks/useLpBalance';
+import { useClaimableRent } from '@/hooks/useClaimableRent';
 import { useDeployedChainId } from '@/hooks/useDeployedChainId';
+import { MRN_DECIMALS } from '@/constants/addresses';
 import { formatAmount } from '@/components/ui/formatAmount';
 import { ReadErrorBoundary } from '@/components/ui/ReadErrorBoundary';
 
@@ -30,7 +34,7 @@ export default function Balances() {
   const { status, address: userAddress } = useConnection();
   const { tokens: tokensInfo } = useDeployedChainId();
 
-  const { btcBalances, isLoading, error } = useUserBalances();
+  const { btcBalances, mrnBalance, isLoading, error } = useUserBalances();
   const {
     data: ethBalance,
     isLoading: isLoadingEth,
@@ -38,6 +42,19 @@ export default function Balances() {
   } = useBalance({ address: userAddress });
   const { data: dataLp, isLoading: isLoadingLp, error: errorLp } =
     useLpBalance();
+  const { data: rentData } = useClaimableRent(userAddress);
+
+  // `?demo=1` : loyer factice pour visualiser la ligne « MRN to claim »
+  // sans avoir joué un cycle d'enchère complet. Lu via `window.location`
+  // pour ne pas imposer de frontière Suspense (`useSearchParams`).
+  const [demo, setDemo] = useState(false);
+  useEffect(() => {
+    // Lecture ponctuelle de l'URL après montage.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setDemo(new URLSearchParams(window.location.search).get('demo') === '1');
+  }, []);
+  const claimable = demo ? parseUnits('1234.56', MRN_DECIMALS) : rentData;
+  const hasClaim = claimable !== undefined && claimable > 0n;
 
   if (status !== 'connected') {
     return (
@@ -55,6 +72,7 @@ export default function Balances() {
         { message: 'Failed to read your balances', error },
         { message: 'Failed to read your LP shares', error: errorLp },
         { message: 'Failed to read your ETH balance', error: errorEth },
+        { message: 'Failed to read your MRN balance', error: mrnBalance?.error },
       ]}
     >
       <ul className="flex flex-col gap-3">
@@ -76,22 +94,43 @@ export default function Balances() {
         })}
 
         <PositionRow
+          label="LP Shares"
+          isLoading={isLoadingLp}
+          error={errorLp}
+          value={dataLp}
+          displayDecimals={4}
+          tokenDecimals={18}
+        />
+
+        <PositionRow
+          label="MRN"
+          isLoading={isLoading}
+          error={error ?? mrnBalance?.error}
+          value={mrnBalance?.status === 'success' ? mrnBalance.result : undefined}
+          displayDecimals={4}
+          tokenDecimals={MRN_DECIMALS}
+        />
+
+        {/* Loyer à réclamer : ligne affichée seulement quand il y a un
+            montant non nul, pour ne pas encombrer le rail le reste du temps. */}
+        {hasClaim && (
+          <PositionRow
+            label="MRN to claim"
+            isLoading={false}
+            error={null}
+            value={claimable}
+            displayDecimals={4}
+            tokenDecimals={MRN_DECIMALS}
+          />
+        )}
+
+        <PositionRow
           label="ETH"
           isLoading={isLoadingEth}
           error={errorEth}
           value={ethBalance?.value}
           displayDecimals={4}
           tokenDecimals={18}
-        />
-
-        <PositionRow
-          label="LP"
-          isLoading={isLoadingLp}
-          error={errorLp}
-          value={dataLp}
-          displayDecimals={4}
-          tokenDecimals={18}
-          unit="LP"
         />
       </ul>
     </ReadErrorBoundary>
@@ -144,7 +183,7 @@ function PositionRow({
     <li className="flex items-baseline justify-between gap-4 py-1 text-body-lg">
       <span className="text-cloud/80">{label}</span>
       <span className="flex items-baseline min-w-0">
-        <span className={`font-mono text-body-lg num-tabular ${contentClass}`}>
+        <span className={`font-mono text-code-lg num-tabular ${contentClass}`}>
           {content}
         </span>
         {unit ? (

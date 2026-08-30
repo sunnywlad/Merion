@@ -79,9 +79,10 @@ const MintAllButton = ({ tokens }: { tokens: readonly { name: string; address: A
           : 'Ready to mint';
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-2 w-48">
       <Button
         level="primary"
+        className="w-full"
         onClick={handleMintAll}
         aria-busy={pending || undefined}
         disabled={pending || !userAddress || wrongNetwork}

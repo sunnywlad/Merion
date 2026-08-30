@@ -1,6 +1,5 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import { useConnection } from 'wagmi';
 import { useAuctionState } from '@/hooks/useAuctionState';
 import { useAuctionConstants } from '@/hooks/useAuctionConstants';
@@ -26,20 +25,6 @@ export default function MandatePanel() {
   const now = useChainNow();
   const user = useConnection().address;
   const { auction: deployedAuction, tokens: tokensInfo } = useDeployedChainId();
-
-  // État factice pour la démo : `?demo=1` dans l'URL injecte un gestionnaire
-  // en fonction, pour visualiser le panneau dans son état « epoch vendue »
-  // sans avoir à jouer une enchère complète. Lu via `window.location` en
-  // effet plutôt que `useSearchParams`, qui forcerait une frontière
-  // Suspense sur toute la page.
-  const [demo, setDemo] = useState(false);
-  useEffect(() => {
-    // Lecture ponctuelle de l'URL après montage : pas d'état externe à
-    // synchroniser en continu, d'où le `setState` unique en effet.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setDemo(new URLSearchParams(window.location.search).get('demo') === '1');
-  }, []);
-  const DEMO_MANAGER = '0x00000000000000000000000000000000DecafBad' as const;
 
   const auction = useAuctionState();
   const constants = useAuctionConstants();
@@ -77,7 +62,7 @@ export default function MandatePanel() {
   // trois lectures manque.
   const timeToEnd = now !== null && endTime !== undefined ? secondsLeft(endTime, now) : null;
 
-  const managerInOffice = demo ? DEMO_MANAGER : managerNow.data;
+  const managerInOffice = managerNow.data;
   const hasManagerNow = managerInOffice !== undefined && managerInOffice !== ZERO_ADDRESS;
 
   return (

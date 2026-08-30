@@ -1,7 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { parseUnits } from 'viem';
+import { useEffect } from 'react';
 import { useConnection, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
 import { useClaimableRent } from '@/hooks/useClaimableRent';
@@ -29,14 +28,6 @@ export default function ClaimableRentPanel() {
   const queryClient = useQueryClient();
   const rent = useClaimableRent(user);
 
-  // `?demo=1` injecte un loyer à réclamer pour visualiser l'état « rempli »
-  // sans jouer un cycle complet. Lecture ponctuelle de l'URL après montage.
-  const [demo, setDemo] = useState(false);
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setDemo(new URLSearchParams(window.location.search).get('demo') === '1');
-  }, []);
-
   const { mutate: claimRent, isPending, error: claimError, data: claimHash } =
     useWriteContract();
   const { isLoading: claimConfirming, isSuccess: claimConfirmed } =
@@ -46,7 +37,7 @@ export default function ClaimableRentPanel() {
     if (claimConfirmed) queryClient.invalidateQueries();
   }, [claimConfirmed, queryClient]);
 
-  const claimable = demo ? parseUnits('1234.56', MRN_DECIMALS) : rent.data;
+  const claimable = rent.data;
   const hasClaim = claimable !== undefined && claimable > 0n;
 
   return (
@@ -57,13 +48,13 @@ export default function ClaimableRentPanel() {
     >
       <Panel title="Claimable rent">
         <div className='text-body flex items-center justify-between gap-4'>
-          <div>{user || demo
+          <div>{user
             ? <span className='font-mono num-tabular'>
                 {formatAmount(claimable, { displayDecimals: 2, tokenDecimals: MRN_DECIMALS, grouping: 'fr' })}
                 <span className='text-code-sm text-neutral'>{' '}MRN</span>
               </span>
             : 'Connect to read.'}</div>
-          {(user || demo) && (
+          {user && (
             <Button
               level='primary'
               onClick={() => {

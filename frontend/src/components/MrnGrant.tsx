@@ -112,15 +112,15 @@ const MrnGrant = () => {
     : 0;
   const inCooldown = lastDripAt !== undefined && cooldownSeconds > 0;
   const faucetMissing = faucet === null;
-  // Note §4 « Montants en MRN » : 2 décimales, grouping français,
-  // troncature. Le helper `formatAmount` ne reçoit pas d'unité : on la
-  // rend en `<span>` séparé dans chaque carte ci-dessous, comme pour
-  // les autres panneaux.
+  // Montant de drip : entier rond côté contrat (5000 MRN), affiché sans
+  // décimales ni groupement — « 5000 MRN », pas « 5 000,00 MRN ». Le
+  // helper `formatAmount` ne reçoit pas d'unité : on la rend en `<span>`
+  // séparé dans chaque carte ci-dessous, comme pour les autres panneaux.
   const dripAmountLabel = dripAmount.data !== undefined
     ? formatAmount(dripAmount.data, {
-        displayDecimals: 2,
+        displayDecimals: 0,
         tokenDecimals: MRN_DECIMALS,
-        grouping: 'fr',
+        grouping: 'none',
       })
     : '...';
   const intervalHours = dripInterval.data !== undefined

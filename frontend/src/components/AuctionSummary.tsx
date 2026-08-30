@@ -4,9 +4,7 @@ import { useEffectiveFees } from '@/hooks/useEffectiveFees';
 import { useConstants } from '@/hooks/useConstants';
 import { useChainNow } from '@/hooks/useChainNow';
 import { useMandateTimeline } from '@/hooks/useMandateTimeline';
-import { useDeployedChainId } from '@/hooks/useDeployedChainId';
 import { secondsLeft, formatCountdown } from '@/lib/readMandateWindow';
-import { Badge, type BadgeVariant } from '@/components/ui/Badge';
 
 /**
  * Merion `AuctionSummary` — entête de la page `/auction`.
@@ -24,24 +22,7 @@ export function AuctionSummary() {
   const fees = useEffectiveFees();
   const poolConstants = useConstants();
   const now = useChainNow();
-  const {
-    currentEpoch,
-    endTime,
-    timelineStatus,
-  } = useMandateTimeline();
-
-  const STATUS_VARIANT: Record<typeof timelineStatus, BadgeVariant> = {
-    new: 'new',
-    active: 'active',
-    late: 'beta',
-    closed: 'deprecated',
-  };
-  const STATUS_LABEL: Record<typeof timelineStatus, string> = {
-    new: 'New',
-    active: 'Active',
-    late: 'Late window',
-    closed: 'Closed',
-  };
+  const { currentEpoch, endTime } = useMandateTimeline();
 
   const timeToEnd =
     now !== null && endTime !== undefined
@@ -61,11 +42,9 @@ export function AuctionSummary() {
       : '—';
 
   const indexLabel =
-    currentEpoch !== undefined ? `Mandate #${String(currentEpoch)}` : 'Mandate —';
+    currentEpoch !== undefined ? `#${String(currentEpoch)}` : '#—';
   const timeLabel =
     timeToEnd !== null ? formatCountdown(timeToEnd) : '—';
-
-  const auctionDeployed = useDeployedChainId().auction !== null;
 
   return (
     <div className="bg-slate border border-cloud/10 rounded-lg overflow-hidden">
@@ -76,17 +55,10 @@ export function AuctionSummary() {
         }
       >
         <div className="flex items-center gap-4 min-w-0">
-          <span className="text-h4 font-medium text-cloud">Auction</span>
-          <span className="text-caption uppercase tracking-wide text-cloud/60 num-tabular">
+          <span className="text-h4 font-medium text-cloud">Epoch</span>
+          <span className="text-body font-medium text-cloud/80 num-tabular">
             {indexLabel}
           </span>
-          {!auctionDeployed ? (
-            <Badge variant="deprecated">No auction</Badge>
-          ) : (
-            <Badge variant={STATUS_VARIANT[timelineStatus]}>
-              {STATUS_LABEL[timelineStatus]}
-            </Badge>
-          )}
         </div>
         <div className="flex items-center gap-6">
           <div className="flex items-baseline gap-3">
