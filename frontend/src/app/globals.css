@@ -159,9 +159,9 @@ body {
 }
 
 .merion-retractable > .merion-retractable-inner {
-  /* The inner div is the row's only child; overflow-hidden on the inner
-     keeps the content clipped while the row collapses, no max-height
-     trickery. */
+  /* Le div interne est l'unique enfant de la ligne ; `overflow-hidden`
+     dessus garde le contenu rogné pendant que la ligne se replie, sans
+     bricolage de `max-height`. */
   overflow: hidden;
   min-height: 0;
 }

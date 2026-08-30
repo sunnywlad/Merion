@@ -135,11 +135,12 @@ export default function MandatePanel() {
 
             <li>Mandate index: {currentEpoch === undefined ? '—' : String(currentEpoch)}</li>
 
-            {/* The current manager. Absence is read as a state of the mechanism:
-                the mandate found no bidder, the pool runs at the base fee, and
-                everything works. A "You" badge appears next to the address when
-                the connected user is that manager, so the line doesn't have to
-                be mentally compared with MetaMask. */}
+            {/* Le gestionnaire courant. Son absence se lit comme un état de la
+                mécanique : le mandat n'a trouvé aucun enchérisseur, le pool
+                tourne au tarif de base, tout fonctionne. Un badge « You »
+                apparaît à côté de l'adresse quand l'utilisateur connecté est
+                ce gestionnaire, pour éviter la comparaison mentale avec
+                MetaMask. */}
             <li>
               {hasManagerNow
                 ? <>Manager: {short(managerInOffice)}{user !== undefined && managerInOffice === user && (

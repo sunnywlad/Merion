@@ -34,9 +34,9 @@ export function computeLateWindow(
  * jamais une phase).
  *
  * Formule :
- *   now <  start              → 'new'      (mandate hasn't begun)
- *   now ≤  end - lateWindow   → 'active'   (body phase)
- *   now <  end                → 'late'     (late window)
+ *   now <  start              → 'new'      (mandat pas encore commencé)
+ *   now ≤  end - lateWindow   → 'active'   (phase corps)
+ *   now <  end                → 'late'     (fenêtre tardive)
  *   sinon                     → 'closed'
  */
 export function computeMandateStatus(args: {
