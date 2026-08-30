@@ -10,6 +10,7 @@ import { auctionAbi, mrnAbi, poolAbi } from '@/constants/abi';
 import { useAuctionState } from '@/hooks/useAuctionState';
 import { useAuctionConstants } from '@/hooks/useAuctionConstants';
 import { useConstants } from '@/hooks/useConstants';
+import { useEffectiveFees } from '@/hooks/useEffectiveFees';
 import { useManagerOf } from '@/hooks/useManagerOf';
 import { useRefund } from '@/hooks/useRefund';
 import { useChainNow } from '@/hooks/useChainNow';
@@ -57,6 +58,10 @@ export default function AuctionPanel() {
   const auction = useAuctionState();
   const constants = useAuctionConstants();
   const poolConstants = useConstants();
+  // Perf G — `queryKey` consommé par `setFee` pour invalider
+  // `effectiveFeeNum` (consommé par Swap/AuctionBar/MandatePanel) sans
+  // tirer `useConstants` (`staleTime:Infinity`, immuable).
+  const fees = useEffectiveFees();
 
   const currentEpoch = auction.currentEpoch?.status === 'success' ? auction.currentEpoch.result : undefined;
   const sellingEpoch = auction.sellingEpoch?.status === 'success' ? auction.sellingEpoch.result : undefined;
@@ -193,7 +198,12 @@ export default function AuctionPanel() {
         args: [amount]
       });
       await publicClient.waitForTransactionReceipt({ hash: hashBid });
-      queryClient.invalidateQueries();
+      // Perf G — invalidation ciblée de l'enchère seulement
+      // (`currentBid`, `highBidder`, `pendingEpoch`, `pendingAmount`,
+      // `windowOpen`, `closesAt`) ; `useConstants`/`useAuctionConstants`
+      // ont `staleTime:Infinity` et ne bougent pas, on ne les réveille
+      // pas. Pattern aligné sur `Swap.tsx:256`.
+      await queryClient.invalidateQueries({ queryKey: auction.queryKey });
       setBidInput('');
     } catch (e) {
       setActionError('bid', describeTxError(e));
@@ -212,7 +222,9 @@ export default function AuctionPanel() {
         args: []
       });
       await publicClient.waitForTransactionReceipt({ hash });
-      queryClient.invalidateQueries();
+      // Perf G — `withdrawRefund` ne touche que le `refunds(user)` du
+      // caller ; le reste de la chaîne n'a pas bougé.
+      await refund.refetch();
     } catch (e) {
       setActionError('refund', describeTxError(e));
     } finally { setPending(null); }
@@ -230,7 +242,14 @@ export default function AuctionPanel() {
         args: []
       });
       await publicClient.waitForTransactionReceipt({ hash });
-      queryClient.invalidateQueries();
+      // Perf G — `settle` transitionne le mandat : l'enchère passe à
+      // l'epoch suivante, un nouveau gestionnaire est nommé, et les
+      // bidders perdants sont crédités. Trois refetch ciblés.
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: auction.queryKey }),
+        managerNow.refetch(),
+        refund.refetch()
+      ]);
     } catch (e) {
       setActionError('settle', describeTxError(e));
     } finally { setPending(null); }
@@ -252,7 +271,16 @@ export default function AuctionPanel() {
         args: [feeNum]
       });
       await publicClient.waitForTransactionReceipt({ hash });
-      queryClient.invalidateQueries();
+      // Perf G — `setFee` ne change que `feeNum` et `lastSetFeeEpoch` :
+      // on réveille le multicall `effectiveFeeNum` (consommé ailleurs
+      // par Swap/AuctionBar/MandatePanel) et la lecture locale
+      // `lastSetFeeEpoch`. Les immuables (`useConstants`,
+      // `useAuctionConstants`) ont `staleTime:Infinity` et n'ont rien
+      // à faire ici.
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: fees.queryKey }),
+        lastSetFee.refetch()
+      ]);
       setFeeInput('');
     } catch (e) {
       setActionError('setFee', describeTxError(e));
