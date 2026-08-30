@@ -193,10 +193,12 @@ contract AuctionEpochResetTest is AuctionTestBase {
 //   - `managerOf[sellingEpoch]` est sette au `highBidder` du moment, par
 //     `_settle`, qui peut etre auto (a l'ouverture d'une nouvelle enchere)
 //     ou externe (par n'importe quel tiers) ;
-//   - un settle sur un mandat où `managerOf` est déjà posé revert
-//     `ManagerAlreadySet` (la garde de Pool.sol), ce qui est la protection
-//     du Pool contre une double nomination, et c'est le test qu'un deuxieme
-//     appel a `pool.setManager` est bien bloque.
+//   - un settle sur un mandat où `managerOf` est déjà posé ne revert PLUS
+//     depuis l'AUDIT F1 : il rembourse le gagnant capture, purge le slot
+//     et laisse le gestionnaire en place. La protection du Pool contre la
+//     double nomination (`ManagerAlreadySet`) tient toujours, mais elle
+//     n'est plus atteignable depuis l'enchere, qui refuse d'appeler
+//     `pool.setManager` sur une epoch inattribuable.
 // ---------------------------------------------------------------------------
 
 contract AuctionManagerCouplingTest is AuctionTestBase {
@@ -271,9 +273,15 @@ contract AuctionManagerCouplingTest is AuctionTestBase {
     // 1, on l'appelle directement, et on verifie que managerOf[1] est
     // l'unique enchérisseur. Le contrat de test n'a pas besoin d'un
     // prank ici : `settle` est permissionless.
+    //
+    // Le warp vers la fenetre BID_SILENCE est EXIGE depuis la correction
+    // F3 : `settle` refuse desormais de capturer une enchere vive tant
+    // que la fenetre de mise n'est pas fermee (`WindowStillOpen`).
+    // Regler a la premiere seconde figerait le mandat au prix plancher.
     _warpToEpoch(0);
     _bidAs(BIDDER_A, FIRST_BID);
 
+    _warpToBidSilenceWindow(1);
     auction.settle();
 
     assertEq(
@@ -283,22 +291,43 @@ contract AuctionManagerCouplingTest is AuctionTestBase {
     );
   }
 
-  function test_SettleOnAlreadyManagedEpochReverts() public {
-    // Le Pool porte la garde `managerOf[epoch] != address(0)` (Pool.sol
-    // I.1). Pour tester la protection depuis l'Auction, on deploie
-    // un pool isole avec un manager pose par bootstrap pour l'epoch 1,
-    // puis on branche l'enchere par `setAuction`. Une fois la voie
-    // bootstrap fermee, l'enchere ne peut plus ecrire dans
-    // `managerOf[1]`. Le test verifie qu'un `settle()` externe
-    // (appele pendant la fenetre BID_SILENCE) reverte bien
-    // `ManagerAlreadySet` : c'est la protection du Pool contre une
-    // double nomination par l'enchere.
+  // AUDIT F1 — ce bloc testait autrefois un REVERT, il teste desormais un
+  // REMBOURSEMENT, et le changement est voulu.
+  //
+  // L'ancien `test_SettleOnAlreadyManagedEpochReverts` attendait que
+  // `settle()` sur un mandat deja pourvu remonte `Pool.ManagerAlreadySet`.
+  // C'etait precisement la brique F1 : le revert survenait AVANT la purge
+  // du slot pending, donc chaque `settle()` ultérieur rejouait le meme
+  // revert et le MRN du gagnant capture restait prisonnier de l'Auction,
+  // sans aucun chemin de sortie, jusqu'a la rotation d'epoch.
+  //
+  // `_settle` traite maintenant un `pendingEpoch` inattribuable — deja
+  // pourvu, ou deja commence — comme un mandat perime : remboursement
+  // integral du gagnant capture, purge du slot, `SettlementExpired`, et
+  // retour sans nomination ni burn ni loyer. `Pool.ManagerAlreadySet`
+  // reste une garde vivante du Pool, mais elle n'est plus atteignable
+  // depuis le chemin de l'enchere ; sa couverture positive est dans
+  // test/Pool.manager.test.ts (voie owner), et c'est exactement
+  // l'affirmation sur laquelle repose test/Auction.invariant.t.sol.
+  //
+  // L'interet propre de ce bloc, distinct de
+  // `AuctionAlreadyNominatedMandateTest` (test/Auction.security.t.sol) qui
+  // ecrit `managerOf[1]` par la voie de l'enchere : ici le mandat est pose
+  // par la voie d'AMORCAGE de l'owner, avant `setAuction`. F6 borne cette
+  // voie a `currentEpoch() + 1` sans la lui interdire, donc c'est un etat
+  // legitimement atteignable en production.
+
+  // Deploie un pool isole dont le mandat 1 est deja pourvu par la voie
+  // d'amorcage de l'owner, branche une enchere qui vend ce meme mandat 1,
+  // y encaisse une mise de BIDDER_A, puis place l'horloge dans la fenetre
+  // de reglement (mise fermee, garde F3 satisfaite).
+  function _stageBootstrapNominatedMandate() private returns (Pool localPool, Auction localAuction) {
     wbtc = new MockWrappedBTC("Wrapped BTC", "wBTC");
     cbbtc = new MockWrappedBTC("Coinbase BTC", "cbBTC");
     lbtc = new MockWrappedBTC("Lombard BTC", "lBTC");
     address[3] memory tokens = [address(wbtc), address(cbbtc), address(lbtc)];
-    Pool localPool = new Pool(tokens, 14400, 12, 1, 5, TREASURY, address(mrn), address(this));
-    Auction localAuction = new Auction(
+    localPool = new Pool(tokens, 14400, 12, 1, 5, TREASURY, address(mrn), address(this));
+    localAuction = new Auction(
       address(localPool),
       address(mrn),
       AUCTION_WINDOW,
@@ -308,7 +337,8 @@ contract AuctionManagerCouplingTest is AuctionTestBase {
     );
 
     // Voie bootstrap : le contrat de test est owner, `auction` n'est
-    // pas encore branchee, on pose un manager pour l'epoch 1.
+    // pas encore branchee, on pose un manager pour l'epoch 1. F6 autorise
+    // `currentEpoch() + 1`, donc l'epoch 1 depuis l'epoch 0.
     localPool.setManager(1, address(0xDEAD));
 
     // Maintenant on branche l'enchere : la voie bootstrap se ferme.
@@ -324,20 +354,51 @@ contract AuctionManagerCouplingTest is AuctionTestBase {
     _warpToEpoch(0);
     vm.prank(BIDDER_A);
     localAuction.placeBid(FIRST_BID);
+
+    // Fenetre de mise fermee : depuis F3, `settle()` refuse de capturer
+    // une enchere vive tant qu'elle est encore contestable.
+    _warpToBidSilenceWindow(1);
+  }
+
+  function test_TheBootstrapMandateIsAlreadyTakenBeforeSettling() public {
+    // Prealable rendu explicite : sans lui, les deux tests suivants
+    // pourraient passer par le chemin NOMINAL de `_settle` et rester
+    // verts pour la mauvaise raison.
+    (Pool localPool,) = _stageBootstrapNominatedMandate();
+
     assertEq(
       localPool.managerOf(1),
       address(0xDEAD),
-      "placeBid ne doit PAS modifier managerOf[1] : la nomination est reportee a settle"
+      "fixture : le mandat 1 doit deja etre pourvu par la voie owner quand le reglement se presente, et placeBid ne doit pas l'avoir touche"
     );
+  }
 
-    // Le bot appelle `settle()` pendant la fenetre BID_SILENCE. Le
-    // `settle` capture l'enchere courante et appelle `_settle`, qui
-    // appelle `pool.setManager(1, highBidder)`. Comme
-    // `managerOf[1] == 0xDEAD` deja, le `_settle` reverte
-    // `ManagerAlreadySet` : c'est la garde de Pool.sol qui tient.
-    _warpToBidSilenceWindow(1);
-    vm.expectRevert(Pool.ManagerAlreadySet.selector);
+  function test_SettleOnAlreadyManagedEpochRefundsTheCapturedWinner() public {
+    // LA verite du bloc : `settle()` ne revert plus, il rend l'argent.
+    (, Auction localAuction) = _stageBootstrapNominatedMandate();
+
     localAuction.settle();
+
+    assertEq(
+      localAuction.refunds(BIDDER_A),
+      FIRST_BID,
+      "F1 : un mandat pourvu par la voie owner doit rembourser integralement le gagnant capture, la ou l'ancien code revertait ManagerAlreadySet et emprisonnait son MRN"
+    );
+  }
+
+  function test_SettleOnAlreadyManagedEpochLeavesTheIncumbentInPlace() public {
+    // La contrepartie : rembourser n'est pas une occasion d'ecraser le
+    // gestionnaire en place. Le mandat est perdu pour l'encherisseur,
+    // pas repris.
+    (Pool localPool, Auction localAuction) = _stageBootstrapNominatedMandate();
+
+    localAuction.settle();
+
+    assertEq(
+      localPool.managerOf(1),
+      address(0xDEAD),
+      "F1 : le remboursement ne doit jamais renommer le mandat, managerOf[1] doit rester le gestionnaire pose par l'amorcage"
+    );
   }
 }
 

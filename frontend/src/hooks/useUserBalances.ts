@@ -1,5 +1,7 @@
-import { useConnection, useReadContracts } from 'wagmi';
-import {deployedAuction, deployedMrn, tokensInfo} from '@/constants/addresses';
+import { useMemo } from 'react';
+import { useConnection } from 'wagmi';
+import { useMerionReadContracts } from '@/hooks/useMerionReadContracts';
+import { useDeployedChainId } from '@/hooks/useDeployedChainId';
 import {auctionAbi, mrnAbi, mockWrappedBTCAbi} from '@/constants/abi';
 
 // Toutes les balances utilisateur dans un seul multicall : trois BTCs + MRN +
@@ -30,32 +32,41 @@ type ReadEntry = { status: 'success' | 'failure'; result?: bigint; error?: Error
 
 export function useUserBalances() {
   const userAddress = useConnection().address;
+  const { tokens, mrn, auction } = useDeployedChainId();
 
-  const { data, isLoading, error } = useReadContracts({
+  const { data, isLoading, error, refetch } = useMerionReadContracts({
     contracts: [
-      ...tokensInfo.map((token) => ({
+      ...tokens.map((token) => ({
         address: token.address,
         abi: mockWrappedBTCAbi,
         functionName: 'balanceOf',
         args: [userAddress!]
       })),
       {
-        address: deployedMrn,
+        address: mrn,
         abi: mrnAbi,
         functionName: 'balanceOf',
         args: [userAddress!]
       },
       {
-        address: deployedAuction ?? undefined,
+        address: auction ?? undefined,
         abi: auctionAbi,
         functionName: 'refunds',
         args: [userAddress!]
       }
     ] as const,
-    query: { enabled: Boolean(userAddress) }
+    // lisse les allers-retours onglet, plan §6 RPC
+    query: { enabled: Boolean(userAddress), staleTime: 5_000 }
   });
 
-  const btcBalances = tokensInfo.map((_, i) => data?.[i] as ReadEntry | undefined);
+  // Perf E — `useMemo([data])` : sans ça, `btcBalances` est un nouveau
+  // tableau à chaque rendu (même contenu, identité différente) et casse
+  // les dépendances en aval — Swap lit `btcBalances[indexIn]` puis
+  // compare la référence dans ses propres `useMemo`.
+  const btcBalances = useMemo(
+    () => tokens.map((_, i) => data?.[i] as ReadEntry | undefined),
+    [data, tokens]
+  );
   const mrnBalance = data?.[3] as ReadEntry | undefined;
   const refundBalance = data?.[4] as ReadEntry | undefined;
 
@@ -64,6 +75,11 @@ export function useUserBalances() {
     mrnBalance,
     refundBalance,
     isLoading,
+    // V.4/bug-race — refetch exposé pour que les flows multi-tx (Swap)
+    // puissent forcer un re-read ciblé des soldes APRÈS settle, au lieu
+    // de `refetchQueries()` global qui tire aussi les constants, fees,
+    // auction, etc.
+    refetch,
     // Deux niveaux d'erreur replies en un : la requete globale peut mourir
     // (noeud injoignable), ou une entree individuelle peut echouer pendant
     // que ses voisines reussissent (cf. web3-libs-seen, "two error levels").

@@ -12,7 +12,7 @@ import { network } from "hardhat";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const FUNDING_AMOUNT = 10_000_000n * 10n ** 18n; // 10 M MRN à 18 décimales
+const FUNDING_AMOUNT = 1_000_000n * 10n ** 18n; // 1 M MRN à 18 décimales
 
 const { viem, networkName } = await network.getOrCreate();
 const [deployer] = await viem.getWalletClients();
@@ -57,7 +57,7 @@ if (deployerBalance < FUNDING_AMOUNT) {
   );
 }
 
-console.log("Transfert de 10 000 000 MRN vers le faucet...");
+console.log("Transfert de 1 000 000 MRN vers le faucet...");
 const txHash = await mrn.write.transfer([faucetAddress, FUNDING_AMOUNT], {
   account: deployer.account,
 });

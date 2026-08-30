@@ -2,33 +2,35 @@
 
 import { useReserves } from "@/hooks/useReserves";
 import { useMinimumLiquidity } from "@/hooks/useMinimumLiquidity";
+import { useUserBalances } from "@/hooks/useUserBalances";
+import { usePoolPaused } from "@/hooks/usePoolPaused";
 import { useState } from "react";
-import { deployedPool, tokensInfo } from "@/constants/addresses";
+import { useDeployedChainId } from "@/hooks/useDeployedChainId";
 import {mockWrappedBTCAbi, poolAbi} from '@/constants/abi';
-import {useWriteContract, useConnection, usePublicClient} from 'wagmi';
-import { useQueryClient } from "@tanstack/react-query";
+import { useWriteContract, useConnection, usePublicClient} from 'wagmi';
+import { simulateContract } from 'viem/actions';
 import { getQuote } from "@/lib/quoteAddLiquidity";
+import { describeTxError } from "@/lib/txError";
 import Panel from "@/components/Panel";
-import { collectReadErrors } from "@/lib/readErrors";
 import { Button } from "@/components/ui/Button";
 import { StatusDot } from "@/components/ui/StatusDot";
 import { KpiCard } from "@/components/ui/KpiCard";
 import { AppStateBoundary } from "@/components/ui/AppStateBoundary";
-import { EXPECTED_CHAIN_ID } from '@/components/ui/deployment';
+import { ReadErrorBoundary } from "@/components/ui/ReadErrorBoundary";
+import { isSupportedChain } from '@/constants/addresses';
 import { formatAmount } from '@/components/ui/formatAmount';
+import { INPUT_CLASS_MONO } from '@/components/ui/formClasses';
+
+// V.5 — plafond par transaction de Base / Base Sepolia (2^24 = 16 777 216).
+// On laisse les calls `addLiquidity` / `swap` / `approve` respirer (largement
+// sous le plafond), mais le wallet ne sort plus en fallback gas par défaut
+// quand l'estimation reverte — le contrat reverte, on l'attrape et on le
+// montre via `describeTxError`, donc l'erreur qui remonte à l'utilisateur
+// est la vraie (allowance / balance / slippage), pas "exceeds max gas".
+const TX_GAS_LIMIT = 5_000_000n;
 
 // II.2d — chaîne id du pool, miroir de constants/addresses.
-// py-1.5 (6 px) plutôt que py-2 (8 px) : compaction uniforme des
-// formulaires pour gagner la marge 1440×900 sur /pool. La note §2 borne
-// le padding interne d'un input entre 0.25 et 0.5 rem, on reste dans
-// la fenêtre (1.5/16 = 0.375 rem par côté).
-// `placeholder:text-cloud/60` : WCAG AA, le placeholder sinon tombe à
-// ~3.6:1 (cloud/40) sur Midnight.
-const inputClass =
-  'w-full rounded border border-cloud/10 bg-slate px-3 py-1.5 ' +
-  'text-code text-cloud placeholder:text-cloud/60 num-tabular ' +
-  'focus:outline-none focus:border-merion-blue focus:border-2 ' +
-  'disabled:opacity-50 disabled:cursor-not-allowed';
+// `INPUT_CLASS_MONO` vit dans `ui/formClasses.ts` depuis R3/C.1.
 
 /** BTC wrappé (8 décimales on-chain) à 4 décimales affichées. */
 const btcAmount = (v: bigint) =>
@@ -43,60 +45,50 @@ const AddLiquidity = () => {
 
   const { mutateAsync } = useWriteContract();
   const publicClient = usePublicClient();
-  const queryClient = useQueryClient();
+  const { pool: deployedPool, tokens: tokensInfo } = useDeployedChainId();
 
-  const { reserves: reserveEntries, supply: supplyEntry, error: errorReserves } = useReserves();
+  const { reserves, entries, supply: supplyEntry, error: errorReserves, refetch: refetchReserves } = useReserves();
   const supply = supplyEntry?.status === 'success' ? supplyEntry.result : undefined;
   const { data: minLiq, error: errorMinLiq } = useMinimumLiquidity(supply === 0n);
+  const { btcBalances } = useUserBalances();
+  const { data: paused, error: errorPaused } = usePoolPaused();
 
   const connection = useConnection();
   const userAddress = connection.address;
 
-  const failedReads = collectReadErrors([
-    {message: "Failed to read the pool reserves.", error: errorReserves},
-    ...(reserveEntries ?? []).map((entry, i) => ({
-      message: `Failed to read the ${tokensInfo[i].name} reserve.`,
-      error: entry?.error
-    })),
-    {message: "Failed to read total LP shares.", error: supplyEntry?.error},
-    {message: "Failed to read minimum liquidity.", error: errorMinLiq},
-  ]);
-  if (failedReads.length > 0) {
-    for (const r of failedReads) console.error('[Merion]', r.message, r.error);
-    const cause = failedReads.find((r) => r.error)?.error?.message ?? 'unknown';
-    return (
-      <AppStateBoundary
-        state={{
-          kind: 'error',
-          title: 'Could not read pool data',
-          description: `Unable to read the pool. ${failedReads.map((r) => r.message).join('; ')}`,
-          cause,
-        }}
-      />
-    );
-  }
+  // `getQuote` est gated par les mêmes conditions que les bornes
+  // d'état ci-dessous : quand le formulaire rend, `reserves` et
+  // `supply` (et `minLiq` pour le cas pool vide) sont définis, donc
+  // l'appel est valide. Hors formulaire, on rend un QuoteResult vide
+  // pour que `quote` et `reason` soient toujours du bon type.
+  const quoteResult = reserves && supply !== undefined && !(supply === 0n && minLiq === undefined)
+    ? getQuote({
+        anchor,
+        typedAmount,
+        toleranceInput: supply === 0n ? "" : tolerance,
+        reserves,
+        supply,
+        minLiq
+      })
+    : { quote: null, reason: null };
+  const {quote, reason} = quoteResult;
 
-  if (connection.status === 'disconnected') {
-    return <AppStateBoundary state={{ kind: 'wallet-not-connected' }} />;
-  }
-  if (connection.status === 'connected' && connection.chainId !== EXPECTED_CHAIN_ID) {
-    return <AppStateBoundary state={{ kind: 'wrong-network' }} />;
-  }
-  if (!reserveEntries || supply === undefined) return <AppStateBoundary state={{ kind: 'loading', title: 'Loading pool data…' }} />;
-  if (supply === 0n && minLiq === undefined) return <AppStateBoundary state={{ kind: 'loading', title: 'Loading minimum liquidity…' }} />;
-
-  const reserves = reserveEntries.map((r) => r.result).filter((r) => r !== undefined);
-  const {quote, reason} = getQuote({
-    anchor,
-    typedAmount,
-    toleranceInput: supply === 0n ? "" : tolerance,
-    reserves,
-    supply,
-    minLiq
-  });
+  // A guard without its data stays silent: `useUserBalances` is disabled when
+  // no wallet is connected, so `btcBalances[i].result` is undefined and no
+  // shortfall is ever reported. The form therefore stays fully usable while
+  // disconnected, and the check only bites once balances are actually known.
+  const shortfalls = quote
+    ? quote.computed.flatMap((amount, i) => {
+        const balance = btcBalances[i]?.result;
+        return balance !== undefined && amount > balance ? [tokensInfo[i].name] : [];
+      })
+    : [];
+  const balanceError = shortfalls.length > 0
+    ? `Insufficient balance: ${shortfalls.join(', ')}.`
+    : null;
 
   const handleAdd = async () => {
-    if (!userAddress || anchor === null || !quote || !publicClient) return;
+    if (paused || !userAddress || anchor === null || !quote || !publicClient || balanceError !== null) return;
     setError(null);
     try {
       for (let i = 0 ; i < 3 ; i++) {
@@ -107,24 +99,45 @@ const AddLiquidity = () => {
           address: token.address,
           abi: mockWrappedBTCAbi,
           functionName: "approve",
-          args: [deployedPool, quote.computed[i]]
+          args: [deployedPool, quote.computed[i]],
+          gas: TX_GAS_LIMIT,
         })
         await publicClient.waitForTransactionReceipt({hash})
       }
       setStep(3);
+      // V.5/bug-base-gas-cap — pre-flight `simulateContract` catches the
+      // *real* revert (allowance, balance, slippage) BEFORE we hand off to
+      // the wallet. Without this, a reverting call falls into the wallet's
+      // fallback gas path, which lands above Base's per-tx cap (2^24), and
+      // the user sees the alarming "exceeds max transaction gas limit"
+      // instead of the actual reason. Surface the revert here so it ends
+      // up in `setError` exactly the same way as a tx-level revert.
+      await simulateContract(publicClient, {
+        address: deployedPool,
+        abi: poolAbi,
+        functionName: "addLiquidity",
+        args: [BigInt(anchor), quote.computed[anchor], quote.minExpected],
+        account: userAddress,
+        gas: TX_GAS_LIMIT,
+      });
       const hash = await mutateAsync({
         address: deployedPool,
         abi: poolAbi,
         functionName: "addLiquidity",
-        args: [BigInt(anchor), quote.computed[anchor], quote.minExpected]
+        args: [BigInt(anchor), quote.computed[anchor], quote.minExpected],
+        gas: TX_GAS_LIMIT,
       })
       await publicClient.waitForTransactionReceipt({hash});
-      queryClient.invalidateQueries();
+      // V.4/bug-race — refetch ciblé des réserves APRÈS settle pour
+      // que la prochaine quote voie le bon état du pool. Le supply
+      // (totalSupply) est inclus dans le même useReadContracts que
+      // les réserves, donc un seul appel RPC suffit.
+      await refetchReserves();
       setTypedAmount("");
       setAnchor(null);
       setTolerance("");
     } catch (e) {
-        setError(e instanceof Error ? e.message : String(e))
+        setError(describeTxError(e))
     } finally {setStep(null)};
   }
 
@@ -133,120 +146,162 @@ const AddLiquidity = () => {
 
   const quoteTone: 'success' | 'danger' | 'neutral' = !quote
     ? 'neutral'
-    : reason
+    : reason || balanceError
       ? 'danger'
       : 'success';
 
   return (
-    <Panel title="Add Liquidity">
-      <div className="flex flex-col gap-4">
+    <ReadErrorBoundary
+      title="Could not read pool data"
+      description={(msgs) => `Unable to read the pool. ${msgs.join('; ')}`}
+      sources={[
+        {message: "Failed to read the pool reserves.", error: errorReserves},
+        ...(entries ?? []).map((entry, i) => ({
+          message: `Failed to read the ${tokensInfo[i].name} reserve.`,
+          error: entry?.error
+        })),
+        {message: "Failed to read total LP shares.", error: supplyEntry?.error},
+        {message: "Failed to read minimum liquidity.", error: errorMinLiq},
+        {message: "Failed to read whether the pool is paused.", error: errorPaused},
+      ]}
+    >
+      {connection.status === 'connected' && !isSupportedChain(connection.chainId) ? (
+        <AppStateBoundary state={{ kind: 'wrong-network' }} />
+      ) : !reserves || supply === undefined ? (
+        <AppStateBoundary state={{ kind: 'loading', title: 'Loading pool data…' }} />
+      ) : supply === 0n && minLiq === undefined ? (
+        <AppStateBoundary state={{ kind: 'loading', title: 'Loading minimum liquidity…' }} />
+      ) : (
+        <Panel title="Add Liquidity">
+          <div className="flex flex-col gap-4">
 
-        <div className="flex flex-col gap-2">
-          {tokensInfo.map((token) => {
-            const i = Number(token.index) as 0 | 1 | 2;
-            const full =
-              anchor === i ? typedAmount : quote ? btcAmount(quote.computed[i]) : "";
+            <div className="flex flex-col gap-2">
+              {tokensInfo.map((token) => {
+                const i = Number(token.index) as 0 | 1 | 2;
+                const full =
+                  anchor === i ? typedAmount : quote ? btcAmount(quote.computed[i]) : "";
 
-            return (
-              <div key={token.name} className="flex items-center gap-3">
-                <label htmlFor={`add-${token.name}`} className="w-20 shrink-0 text-small text-cloud/80">
-                  {token.name}
-                </label>
-                <input
-                  className={`${inputClass} font-mono`}
-                  type="text"
-                  inputMode="decimal"
-                  id={`add-${token.name}`}
-                  value={full}
-                  disabled={isPending}
-                  onChange={(e) => {
-                    setTypedAmount(e.target.value);
-                    setAnchor(i);
-                    setError(null);
-                  }}/>
+                return (
+                  <div key={token.name} className="flex items-center gap-3">
+                    <label htmlFor={`add-${token.name}`} className="w-20 shrink-0 text-small text-cloud/80">
+                      {token.name}
+                    </label>
+                    <input
+                      className={INPUT_CLASS_MONO}
+                      type="text"
+                      inputMode="decimal"
+                      id={`add-${token.name}`}
+                      value={full}
+                      disabled={isPending}
+                      onChange={(e) => {
+                        setTypedAmount(e.target.value);
+                        setAnchor(i);
+                        setError(null);
+                      }}/>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <label
+                htmlFor="add-tolerance"
+                className={`text-small ${isEmptyPool ? 'text-cloud/60' : 'text-cloud/80'}`}
+              >
+                Slippage tolerance (%)
+              </label>
+              <input
+                className={INPUT_CLASS_MONO}
+                type="text"
+                inputMode="decimal"
+                id="add-tolerance"
+                placeholder={isEmptyPool ? "" : "0.5"}
+                value={isEmptyPool ? "" : tolerance}
+                disabled={isEmptyPool || isPending}
+                onChange={(e) => {setTolerance(e.target.value); setError(null)}}/>
+              {isEmptyPool && (
+                <p className="text-caption text-cloud/60">
+                  Empty pool: LP amount is fully determined, no slippage possible.
+                </p>
+              )}
+            </div>
+
+            {quote && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <KpiCard
+                  label="LP shares received (expected)"
+                  value={
+                    <span className="font-mono num-tabular">
+                      {btcAmount(quote.expected)}
+                      <span className="text-cloud/60 text-small"> LP</span>
+                    </span>
+                  }
+                />
+                <KpiCard
+                  label="LP shares received (minimum)"
+                  value={
+                    <span className="font-mono num-tabular">
+                      {btcAmount(quote.minExpected)}
+                      <span className="text-cloud/60 text-small"> LP</span>
+                    </span>
+                  }
+                />
               </div>
-            );
-          })}
-        </div>
+            )}
 
-        <div className="flex flex-col gap-2">
-          <label
-            htmlFor="add-tolerance"
-            className={`text-small ${isEmptyPool ? 'text-cloud/60' : 'text-cloud/80'}`}
-          >
-            Slippage tolerance (%)
-          </label>
-          <input
-            className={`${inputClass} font-mono`}
-            type="text"
-            inputMode="decimal"
-            id="add-tolerance"
-            placeholder={isEmptyPool ? "" : "0.5"}
-            value={isEmptyPool ? "" : tolerance}
-            disabled={isEmptyPool || isPending}
-            onChange={(e) => {setTolerance(e.target.value); setError(null)}}/>
-          {isEmptyPool && (
-            <p className="text-caption text-cloud/60">
-              Empty pool: LP amount is fully determined, no slippage possible.
-            </p>
-          )}
-        </div>
+            <div className="flex items-center gap-3">
+              <StatusDot
+                tone={quoteTone}
+                label={
+                  paused
+                    ? 'Pool paused'
+                    : !userAddress
+                      ? 'Wallet not connected'
+                      : quoteTone === 'success'
+                        ? 'Quote ready'
+                        : quoteTone === 'danger'
+                          ? (reason ?? balanceError ?? 'Quote rejected')
+                          : 'Awaiting quote'
+                }
+              />
+              <Button
+                level="primary"
+                onClick={handleAdd}
+                aria-busy={isPending || undefined}
+                disabled={isPending || paused === true || !userAddress || !quote || balanceError !== null}>
+                {step !== null ? `Deposit in progress (${step + 1}/4)` : "Add Liquidity"}
+              </Button>
+            </div>
 
-        {quote && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <KpiCard
-              label="LP shares received (expected)"
-              value={
-                <span className="font-mono num-tabular">
-                  {btcAmount(quote.expected)}
-                  <span className="text-cloud/60 text-small"> LP</span>
-                </span>
-              }
-            />
-            <KpiCard
-              label="LP shares received (minimum)"
-              value={
-                <span className="font-mono num-tabular">
-                  {btcAmount(quote.minExpected)}
-                  <span className="text-cloud/60 text-small"> LP</span>
-                </span>
-              }
-            />
+            {paused && (
+              <p className="text-small text-danger" role="alert">
+                The pool is paused — deposits are suspended until the owner unpauses it.
+              </p>
+            )}
+            {balanceError && (
+              <p className="text-small text-danger" role="alert">
+                {balanceError}
+              </p>
+            )}
+            {!userAddress && (
+              <p className="text-small text-cloud/70" role="status">
+                Connect a wallet to deposit — the quote keeps updating while you are disconnected.
+              </p>
+            )}
+            {reason && (
+              <p className="text-small text-danger" role="alert">
+                {reason}
+              </p>
+            )}
+            {error && (
+              <p className="text-small text-danger" role="alert">
+                {error}
+              </p>
+            )}
           </div>
-        )}
-
-        <div className="flex items-center gap-3">
-          <StatusDot
-            tone={quoteTone}
-            label={
-              quoteTone === 'success'
-                ? 'Quote ready'
-                : quoteTone === 'danger'
-                  ? (reason ?? 'Quote rejected')
-                  : 'Awaiting quote'
-            }
-          />
-          <Button
-            level="primary"
-            onClick={handleAdd}
-            aria-busy={isPending || undefined}
-            disabled={isPending || !userAddress || !quote}>
-            {step !== null ? `Deposit in progress (${step + 1}/4)` : "Add Liquidity"}
-          </Button>
-        </div>
-
-        {reason && (
-          <p className="text-small text-warning" role="status">
-            {reason}
-          </p>
-        )}
-        {error && (
-          <p className="text-small text-danger" role="alert">
-            {error}
-          </p>
-        )}
-      </div>
-    </Panel>
+        </Panel>
+      )}
+    </ReadErrorBoundary>
   )
 }
 

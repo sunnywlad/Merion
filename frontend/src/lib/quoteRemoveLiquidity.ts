@@ -32,18 +32,18 @@ export const getQuote = ({
 
     const amount = parseAmount(typedAmount);
     if (amount===null || amount < 0) {
-      return {quote: null, reason: "Montant invalide"};
+      return {quote: null, reason: "Invalid amount"};
     }
 
-    if (supply === 0n) return { quote: null, reason: "Le pool est vide"}
+    if (supply === 0n) return { quote: null, reason: "The pool is empty"}
 
 
     const reservesA = [...reserves, supply] as const;
     const anchorReserve = reservesA[anchor];
     const shares = amount * supply / anchorReserve;
 
-    if (shares === 0n) return { quote: null, reason: "Montant trop faible, rien à brûler"}
-    if (shares > maxShares) return { quote: null, reason: "Vous n'avez pas assez de LP Shares"};
+    if (shares === 0n) return { quote: null, reason: "Amount too small — nothing to burn"}
+    if (shares > maxShares) return { quote: null, reason: "You don't have enough LP shares"};
 
     const expected: [bigint, bigint, bigint] = [
       shares * reserves[0] / supply,

@@ -6,15 +6,15 @@
 
    Régimes :
      - mode sombre assumé, fond Midnight, texte Cloud
-     - Info (#2563EB) et Merion Blue (#1E4BFF) sont deux bleus
-       proches et distincts, jamais substituer l'un à l'autre
+     - Info (#2563EB) et Merion Blue (#311ca7) sont deux couleurs
+       distinctes, jamais substituer l'une à l'autre
      - seuls les deux dégradés de §3 sont autorisés
      - IBM Plex Sans pour l'UI, IBM Plex Mono pour code et données
    ============================================================= */
 
 :root {
   /* Dégradés approuvés — §3, rien d'autre n'est autorisé. */
-  --gradient-blue: linear-gradient(135deg, #1E4BFF 0%, #0B1220 100%);
+  --gradient-blue: linear-gradient(135deg, #311ca7 0%, #0B1220 100%);
   --gradient-midnight: linear-gradient(135deg, #0B1220 0%, #1A2235 100%);
 }
 
@@ -24,7 +24,12 @@
   --color-slate: #1A2235;
   --color-cloud: #F3F5F8;
   --color-white: #ffffff;
-  --color-merion-blue: #1E4BFF;
+  --color-merion-blue: #311ca7;
+  /* Turquoise — accent ajouté pour la zone « potential » (slippage
+     buffer) du Decomposition bar, distinct de merion-blue qui reste
+     la couleur des pertes certaines. Choisi pour le contraste chaud
+     sur fond Midnight. */
+  --color-turquoise: #2DD4BF;
 
   /* Palette sémantique — §2 */
   --color-success: #16A34A;
@@ -226,10 +231,12 @@ body {
   opacity: 0.4;
 }
 
-/* Curseur du présent — transition CSS sur `left`, 250 ms. Le killswitch
+/* Curseur du présent — transition CSS sur `transform: translateX`,
+   250 ms (GPU-accéléré, plus fluide que `left`). Le killswitch
    `prefers-reduced-motion` plus haut ramène la durée à 0 ms. */
 .merion-timeline-cursor {
-  transition: left 250ms ease-in-out;
+  transform: translateX(0);
+  transition: transform 250ms ease-in-out;
 }
 
 /* =============================================================

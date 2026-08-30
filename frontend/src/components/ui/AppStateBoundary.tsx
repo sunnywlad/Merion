@@ -18,8 +18,6 @@ export type AppState =
       kind: 'error';
       title?: string;
       description?: string;
-      // Underlying error message, rendered muted under the description for debug.
-      cause?: string;
       retry?: () => void;
     }
   | { kind: 'wallet-not-connected' }
@@ -50,7 +48,6 @@ export function AppStateBoundary({ state }: { state: AppState }) {
         <ErrorState
           title={state.title}
           description={state.description}
-          cause={state.cause}
           retry={state.retry}
         />
       );

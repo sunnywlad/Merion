@@ -1,7 +1,7 @@
 import { useReadContract } from 'wagmi';
-import { deployedPool } from '@/constants/addresses';
+import { useDeployedChainId } from '@/hooks/useDeployedChainId';
 import { poolAbi } from '@/constants/abi';
-import { AUCTION_POLL_MS } from '@/hooks/useAuctionState';
+import { MANDATE_POLL_MS } from '@/hooks/_constants';
 
 // I.5 — Le gestionnaire nommé pour un mandat donné, lu sur le Pool.
 //
@@ -17,14 +17,15 @@ import { AUCTION_POLL_MS } from '@/hooks/useAuctionState';
 // mandat vaut quelques dollars, donc un mandat invendu est la prédiction
 // honnête, et le pool tourne alors au tarif nominal.
 export function useManagerOf(epoch: bigint | undefined) {
+  const { pool } = useDeployedChainId();
   return useReadContract({
-    address: deployedPool,
+    address: pool,
     abi: poolAbi,
     functionName: 'managerOf',
     args: epoch === undefined ? undefined : [epoch],
     query: {
       enabled: epoch !== undefined,
-      refetchInterval: AUCTION_POLL_MS
+      refetchInterval: MANDATE_POLL_MS
     }
   });
 }

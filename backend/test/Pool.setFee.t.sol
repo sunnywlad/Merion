@@ -343,6 +343,13 @@ contract SetFeeWindowFuzzTest is SetFeeTestBase {
     // contrat, pendant les douze premieres secondes, et fermerait tous les
     // mandats suivants. Ce test la ferait echouer a toute epoch non nulle.
     uint256 epoch = bound(rawEpoch, 1, 1000);
+    // AUDIT F6 : la voie d'amorcage de l'owner est desormais bornee a
+    // `currentEpoch() + 1`. On se transporte donc a l'epoch precedente
+    // AVANT de nommer, au lieu de nommer une epoch lointaine depuis
+    // l'epoch 0. Le sujet du test est la fenetre de priorite, pas la
+    // borne de nomination : le warp supplementaire ne change rien a ce
+    // qu'il eprouve.
+    _warpTo(epoch - 1, 0);
     pool.setManager(epoch, MANAGER);
     _warpTo(epoch, pool.PRIORITY_WINDOW() - 1);
 
@@ -382,6 +389,12 @@ contract SetFeeAnyEpochFuzzTest is SetFeeTestBase {
   // `feeNum`. La nomination a lieu AVANT le warp : setManager exige une epoch
   // strictement future (Pool.sol:129), et setUp laisse l'horloge a l'epoch 0.
   function _runMandate(uint256 epoch, uint256 feeNum) internal {
+    // AUDIT F6 : la voie d'amorcage de l'owner est bornee a
+    // `currentEpoch() + 1`. La nomination se fait donc depuis l'epoch
+    // precedente, et non plus depuis l'epoch 0 pour une epoch
+    // quelconque. `epoch >= FIRST_MANDATE == 1`, donc `epoch - 1` ne
+    // sous-deborde pas.
+    _warpTo(epoch - 1, 0);
     pool.setManager(epoch, MANAGER);
     _warpTo(epoch, 0);
     vm.prank(MANAGER);

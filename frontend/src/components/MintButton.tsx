@@ -3,6 +3,8 @@
 import {useWriteContract, useConnection, useWaitForTransactionReceipt, useWatchAsset} from 'wagmi';
 import {parseUnits, Address} from 'viem';
 import {mockWrappedBTCAbi} from '@/constants/abi';
+import { describeTxError } from '@/lib/txError';
+import { useIsWrongNetwork } from '@/hooks/useIsWrongNetwork';
 import { useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/Button';
@@ -13,6 +15,7 @@ const BTC_MOCK_DECIMALS = 8; // I.6 — les trois mocks BTC codent `decimals()` 
 
 const MintButton = ({name, address}: {name: string, address: Address}) => {
   const userAddress = useConnection().address;
+  const wrongNetwork = useIsWrongNetwork();
   const { mutate, isPending, error, data: hash } = useWriteContract();
   const { isLoading, isSuccess } = useWaitForTransactionReceipt({ hash });
   const waiting = isPending || isLoading;
@@ -47,14 +50,18 @@ const MintButton = ({name, address}: {name: string, address: Address}) => {
       ? 'Mint in progress'
       : isSuccess
         ? 'Mint confirmed'
-        : 'Ready to mint';
+        : wrongNetwork
+          ? 'Wrong network'
+          : !userAddress
+            ? 'Connect a wallet'
+            : 'Ready to mint';
 
   return (
     <div className="flex flex-col gap-2">
       <Button
         level="primary"
         onClick={() => {
-          if (!userAddress) return;
+          if (!userAddress || wrongNetwork) return;
           mutate({
             address: address,
             abi: mockWrappedBTCAbi,
@@ -63,13 +70,13 @@ const MintButton = ({name, address}: {name: string, address: Address}) => {
           });
         }}
         aria-busy={waiting || undefined}
-        disabled={waiting || !userAddress}>
+        disabled={waiting || !userAddress || wrongNetwork}>
         {waiting ? "Mint pending" : `Mint 10 ${name}`}
       </Button>
       <StatusDot tone={stateTone} label={stateLabel} />
       {error && (
         <p className="text-caption text-danger" role="alert">
-          {error.message}
+          {describeTxError(error)}
         </p>
       )}
     </div>

@@ -4,45 +4,54 @@ import { useReserves } from "@/hooks/useReserves";
 import { useEffectiveFees } from "@/hooks/useEffectiveFees";
 import { useConstants } from "@/hooks/useConstants";
 import { useUserBalances } from "@/hooks/useUserBalances";
-import { useState } from "react";
-import { deployedPool, tokensInfo } from "@/constants/addresses";
+import { usePoolPaused } from "@/hooks/usePoolPaused";
+import { useFeeRouting } from "@/hooks/useFeeRouting";
+import { useState, useRef, useMemo } from "react";
+import { useDeployedChainId } from "@/hooks/useDeployedChainId";
 import {mockWrappedBTCAbi, poolAbi} from '@/constants/abi';
 import {useWriteContract, useConnection, usePublicClient} from 'wagmi';
-import { useQueryClient } from "@tanstack/react-query";
+import { simulateContract } from 'viem/actions';
 import { getQuote } from "@/lib/quoteSwap";
 import { shareBps } from "@/lib/quote";
+import { describeTxError } from "@/lib/txError";
+import { breachedBand, reservesAfterSwap, type FeeRouting } from "@/lib/bands";
 import Panel from '@/components/Panel';
-import { collectReadErrors } from "@/lib/readErrors";
 import { Button } from "@/components/ui/Button";
 import { StatusDot } from "@/components/ui/StatusDot";
 import { AppStateBoundary } from "@/components/ui/AppStateBoundary";
+import { ReadErrorBoundary } from "@/components/ui/ReadErrorBoundary";
 import { SwapDecompositionBar } from "@/components/SwapDecompositionBar";
-import { EXPECTED_CHAIN_ID } from '@/components/ui/deployment';
+import { isSupportedChain } from '@/constants/addresses';
 import { formatAmount } from '@/components/ui/formatAmount';
+import { INPUT_CLASS_MONO, SELECT_CLASS } from '@/components/ui/formClasses';
+
+// V.5 — même plafond par transaction que `AddLiquidity` (cf. le commentaire
+// dans `txError.ts`). Garde-fou explicite pour éviter le fallback gas du
+// wallet qui dépasse le cap Base, et `simulateContract` avant le swap
+// pour exposer le vrai revert au lieu de "exceeds max gas".
+const TX_GAS_LIMIT = 5_000_000n;
 
 // II.2d — chaîne id du pool, miroir de constants/addresses.
-// Re-stylage des inputs natifs : fond Slate, bordure Cloud à 10 %, focus
-// Merion Blue 2 px (cf. brand book §7). Les valeurs monétaires passent en
-// `font-mono` pour respecter §4 du brand book.
-// py-1.5 : compaction uniforme des formulaires (cf. AddLiquidity).
-// `placeholder:text-cloud/60` : WCAG AA, le placeholder sinon tombe à
-// ~3.6:1 (cloud/40) sur Midnight.
-const inputClass =
-  'w-full rounded border border-cloud/10 bg-slate px-3 py-1.5 ' +
-  'text-code text-cloud placeholder:text-cloud/60 num-tabular ' +
-  'focus:outline-none focus:border-merion-blue focus:border-2 ' +
-  'disabled:opacity-50 disabled:cursor-not-allowed';
-
-const selectClass =
-  'shrink-0 rounded border border-cloud/10 bg-slate px-3 py-2 ' +
-  'text-body text-cloud ' +
-  'focus:outline-none focus:border-merion-blue focus:border-2 ' +
-  'disabled:opacity-50 disabled:cursor-not-allowed';
+// Re-stylage des inputs natifs (cf. brand book §7) ; les classes
+// `INPUT_CLASS_MONO` et `SELECT_CLASS` vivent dans `ui/formClasses.ts`
+// depuis R3/C.1.
 
 /** Formate un montant BTC wrappé (8 décimales on-chain) à 4 décimales
  *  affichées, sans grouping (note §4 « Montants en BTC wrappé »). */
 const btcAmount = (v: bigint) =>
   formatAmount(v, { displayDecimals: 4, tokenDecimals: 8 });
+
+// Perf E — `Record<number,string>` au niveau module : `tokensInfo`
+// variant par chaîne (Hardhat 31337 / Base Sepolia 84532) mais les noms
+// affichés sont les mêmes (wBTC/cbBTC/LBTC) aux mêmes indices (cf.
+// `constants/addresses.ts`). Sortir ce Record du composant évite de
+// reconstruire le même objet à chaque rendu ; `nameOf` était une
+// fermeture qui parcourait `tokensInfo` par `find()` à chaque appel.
+const NAME_OF: Record<number, string> = {
+  0: 'wBTC',
+  1: 'cbBTC',
+  2: 'LBTC',
+};
 
 const Swap = () => {
   const [typedAmount, setTypedAmount] = useState("");
@@ -50,74 +59,159 @@ const Swap = () => {
   const [indexIn, setIndexIn] = useState<0 | 1 | 2>(0);
   const [indexOut, setIndexOut] = useState<0 | 1 | 2>(1);
   const [error, setError] = useState<string | null>(null);
-  const [tolerance, setTolerance] = useState("");
+  const [tolerance, setTolerance] = useState("0.5");
   const [isPending, setIsPending] = useState(false);
 
-  const { mutateAsync } = useWriteContract();
   const publicClient = usePublicClient();
-  const queryClient = useQueryClient();
+  const { pool: deployedPool, tokens: tokensInfo } = useDeployedChainId();
 
-  const { btcBalances } = useUserBalances();
+  const { btcBalances, refetch: refetchBalances } = useUserBalances();
   const balanceInData = btcBalances[indexIn];
   const balanceIn = balanceInData?.result;
 
-  const {error: errorReserves, reserves: reserveEntries} = useReserves();
+  const {error: errorReserves, reserves, entries, refetch: refetchReserves} = useReserves();
   const {error: errorFees, feeFor, errorFor} = useEffectiveFees();
   const effectiveFeeNum = feeFor(indexIn, indexOut);
-  const {error: errorConstants, feeDen: feeDenData} = useConstants();
+  const {error: errorConstants, feeDen: feeDenData, floorBps: floorEntry, ceilingBps: ceilingEntry} = useConstants();
   const feeDen = feeDenData?.result;
+  const floorBps = floorEntry?.status === 'success' ? BigInt(floorEntry.result) : undefined;
+  const ceilingBps = ceilingEntry?.status === 'success' ? BigInt(ceilingEntry.result) : undefined;
+  const { data: paused, error: errorPaused } = usePoolPaused();
+  const { routing, error: errorRouting } = useFeeRouting();
 
   const connection = useConnection();
   const userAddress = connection.address;
 
-  const failedReads = collectReadErrors([
-    {message: "Could not read the pool reserves.", error: errorReserves},
-    ...(reserveEntries ?? []).map((entry, i) => ({
-      message: `Could not read the ${tokensInfo[i].name} reserve.`,
-      error: entry?.error
-    })),
-    {message: "Could not read the effective fee.", error: errorFees},
-    {
-      message: `Could not read the effective fee ${tokensInfo[indexIn].name} → ${tokensInfo[indexOut].name}.`,
-      error: errorFor(indexIn, indexOut)
-    },
-    {message: "Could not read the pool constants.", error: errorConstants},
-    {message: "Could not read the fee denominator.", error: feeDenData?.error},
-  ]);
-  if (failedReads.length > 0) {
-    for (const r of failedReads) console.error('[Merion]', r.message, r.error);
-    const cause = failedReads.find((r) => r.error)?.error?.message ?? 'unknown';
-    return (
-      <AppStateBoundary
-        state={{
-          kind: 'error',
-          title: 'Could not read pool data',
-          description: `Unable to read the pool. ${failedReads.map((r) => r.message).join('; ')}`,
-          cause,
-        }}
-      />
-    );
-  }
+  return (
+    <ReadErrorBoundary
+      title="Could not read pool data"
+      description={(msgs) => `Unable to read the pool. ${msgs.join('; ')}`}
+      sources={[
+        {message: "Could not read the pool reserves.", error: errorReserves},
+        ...(entries ?? []).map((entry, i) => ({
+          message: `Could not read the ${tokensInfo[i].name} reserve.`,
+          error: entry?.error
+        })),
+        {message: "Could not read the effective fee.", error: errorFees},
+        {
+          message: `Could not read the effective fee ${tokensInfo[indexIn].name} → ${tokensInfo[indexOut].name}.`,
+          error: errorFor(indexIn, indexOut)
+        },
+        {message: "Could not read the pool constants.", error: errorConstants},
+        {message: "Could not read the fee denominator.", error: feeDenData?.error},
+        {message: "Could not read whether the pool is paused.", error: errorPaused},
+        {message: "Could not read the fee routing.", error: errorRouting},
+      ]}
+    >
+      {connection.status === 'connected' && !isSupportedChain(connection.chainId) ? (
+        <AppStateBoundary state={{ kind: 'wrong-network' }} />
+      ) : !reserves || effectiveFeeNum===undefined || !feeDen ? (
+        <AppStateBoundary state={{ kind: 'loading', title: 'Loading swap data…' }} />
+      ) : (
+        <SwapForm
+          indexIn={indexIn}
+          indexOut={indexOut}
+          setIndexIn={setIndexIn}
+          setIndexOut={setIndexOut}
+          side={side}
+          setSide={setSide}
+          typedAmount={typedAmount}
+          setTypedAmount={setTypedAmount}
+          tolerance={tolerance}
+          setTolerance={setTolerance}
+          isPending={isPending}
+          setIsPending={setIsPending}
+          error={error}
+          setError={setError}
+          userAddress={userAddress}
+          balanceInData={balanceInData}
+          balanceIn={balanceIn}
+          deployedPool={deployedPool}
+          publicClient={publicClient}
+          refetchBalances={refetchBalances}
+          refetchReserves={refetchReserves}
+          tokensInfo={tokensInfo}
+          reserves={reserves}
+          effectiveFeeNum={effectiveFeeNum}
+          feeDen={feeDen}
+          paused={paused === true}
+          floorBps={floorBps}
+          ceilingBps={ceilingBps}
+          routing={routing}
+        />
+      )}
+    </ReadErrorBoundary>
+  );
+}
 
-  if (connection.status === 'disconnected') {
-    return <AppStateBoundary state={{ kind: 'wallet-not-connected' }} />;
-  }
-  if (connection.status === 'connected' && connection.chainId !== EXPECTED_CHAIN_ID) {
-    return <AppStateBoundary state={{ kind: 'wrong-network' }} />;
-  }
-  if (!reserveEntries || effectiveFeeNum===undefined || !feeDen) {
-    return <AppStateBoundary state={{ kind: 'loading', title: 'Loading swap data…' }} />;
-  }
+type SwapFormProps = {
+  indexIn: 0 | 1 | 2;
+  indexOut: 0 | 1 | 2;
+  setIndexIn: (i: 0 | 1 | 2) => void;
+  setIndexOut: (i: 0 | 1 | 2) => void;
+  side: 'in' | 'out' | null;
+  setSide: (s: 'in' | 'out' | null) => void;
+  typedAmount: string;
+  setTypedAmount: (s: string) => void;
+  tolerance: string;
+  setTolerance: (s: string) => void;
+  isPending: boolean;
+  setIsPending: (b: boolean) => void;
+  error: string | null;
+  setError: (s: string | null) => void;
+  userAddress: `0x${string}` | undefined;
+  balanceInData: { result?: bigint; error?: Error } | undefined;
+  balanceIn: bigint | undefined;
+  deployedPool: `0x${string}`;
+  publicClient: ReturnType<typeof usePublicClient>;
+  refetchBalances: () => Promise<unknown>;
+  refetchReserves: () => Promise<unknown>;
+  tokensInfo: ReturnType<typeof useDeployedChainId>['tokens'];
+  reserves: [bigint, bigint, bigint];
+  effectiveFeeNum: bigint;
+  feeDen: bigint;
+  paused: boolean;
+  /** Reserve bands as percentages of the post-swap sum. Undefined until read. */
+  floorBps: bigint | undefined;
+  ceilingBps: bigint | undefined;
+  /** Fee routing, to advance the reserves exactly as `Pool.swap` does. */
+  routing: FeeRouting | undefined;
+};
 
-  const reserves = reserveEntries.map((r) => r.result).filter((r) => r !== undefined);
+function SwapForm(props: SwapFormProps) {
+  const {
+    indexIn, indexOut, setIndexIn, setIndexOut, side, setSide,
+    typedAmount, setTypedAmount, tolerance, setTolerance,
+    isPending, setIsPending, error, setError, userAddress, balanceInData,
+    balanceIn, deployedPool, publicClient, refetchBalances, refetchReserves,
+    tokensInfo, reserves, effectiveFeeNum, feeDen, paused, floorBps, ceilingBps, routing
+  } = props;
+  const { mutateAsync } = useWriteContract();
 
-  const {quote, reason} = getQuote({
-  userAsk: {side, typedAmount, indexIn, indexOut, toleranceInput: tolerance},
-  poolState: {reserves, effectiveFeeNum, feeDen}
-  });
+  // Perf E — `useMemo([...])` : sans ça, chaque rendu rappelle `getQuote`
+  // et le `quote` qu'il rend (objet neuf à chaque fois) invalide tous les
+  // `useMemo` dépendants en aval (`expected`, `infos`, `reservesAfter`,
+  // `bandBreach`, etc.). Le `useMemo` change la signature de `reason`
+  // (nouvelle référence à chaque render), donc on stocke le résultat brut
+  // puis on déstructure.
+  const quoteResult = useMemo(
+    () => getQuote({
+      userAsk: {side, typedAmount, indexIn, indexOut, toleranceInput: tolerance},
+      poolState: {reserves, effectiveFeeNum, feeDen}
+    }),
+    [side, typedAmount, indexIn, indexOut, tolerance, reserves, effectiveFeeNum, feeDen]
+  );
+  const {quote, reason} = quoteResult;
 
+  // V.4/bug-race — `setIsPending(true)` est asynchrone, donc entre les
+  // deux clicks d'un double-clic rapide, l'état React n'a pas encore
+  // basculé et le bouton n'est pas encore `disabled`. Un ref synchrone
+  // ferme cette fenêtre, sans dépendre du scheduling React.
+  const swapInFlight = useRef(false);
   const handleSwap = async () => {
-    if (!userAddress || side === null || !quote || !publicClient) return;
+    if (swapInFlight.current) return;
+    if (paused || !userAddress || side === null || !quote || !publicClient || bandError !== null) return;
+    swapInFlight.current = true;
     setError(null);
     try {
       setIsPending(true);
@@ -125,24 +219,50 @@ const Swap = () => {
         address: tokensInfo[indexIn].address,
         abi: mockWrappedBTCAbi,
         functionName: "approve",
-        args: [deployedPool, quote.tokenIn.amount]
+        args: [deployedPool, quote.tokenIn.amount],
+        gas: TX_GAS_LIMIT,
       })
       await publicClient.waitForTransactionReceipt({hash: hashApprove});
+
+      // V.5/bug-base-gas-cap — pre-flight `simulateContract` catches the
+      // *real* revert (allowance, balance, slippage, band breach, etc.)
+      // BEFORE we hand off to the wallet. Cf. le même pattern dans
+      // `AddLiquidity.tsx` — sans ce garde, le fallback gas du wallet
+      // peut dépasser le cap Base (2^24), et l'utilisateur voit
+      // "exceeds max transaction gas limit" au lieu du vrai revert.
+      await simulateContract(publicClient, {
+        address: deployedPool,
+        abi: poolAbi,
+        functionName: "swap",
+        args: [BigInt(quote.tokenIn.index), quote.tokenIn.amount, BigInt(quote.tokenOut.index), quote.tokenOut.minAmount],
+        account: userAddress,
+        gas: TX_GAS_LIMIT,
+      });
 
       const hashSwap = await mutateAsync({
         address: deployedPool,
         abi: poolAbi,
         functionName: "swap",
-        args: [BigInt(quote.tokenIn.index), quote.tokenIn.amount, BigInt(quote.tokenOut.index), quote.tokenOut.minAmount]
+        args: [BigInt(quote.tokenIn.index), quote.tokenIn.amount, BigInt(quote.tokenOut.index), quote.tokenOut.minAmount],
+        gas: TX_GAS_LIMIT,
       })
       await publicClient.waitForTransactionReceipt({hash: hashSwap});
-      queryClient.invalidateQueries();
+      // V.4/bug-race — `invalidateQueries` marque stale sans refetch ;
+      // le user balance / reserves reste sur l'ancienne valeur jusqu'au
+      // prochain poll, et la quote suivante est calculée sur du faux.
+      // Refetch ciblé sur les deux queries qui bougent réellement (soldes
+      // de l'appelant + réserves du pool) ; le reste (constants, fees,
+      // auction state) n'a aucune raison d'être re-lu.
+      await Promise.all([refetchBalances(), refetchReserves()]);
       setTypedAmount("");
       setSide(null);
       setTolerance("");
     } catch (e) {
-        setError(e instanceof Error ? e.message : String(e))
-    } finally {setIsPending(false)};
+        setError(describeTxError(e))
+    } finally {
+      setIsPending(false);
+      swapInFlight.current = false;
+    }
   }
 
   const expected = quote ? {in: quote.tokenIn.amount, out: quote.tokenOut.amount} : null;
@@ -151,7 +271,7 @@ const Swap = () => {
     else if (expected) return btcAmount(expected[j]);
     else return "";
   }
-  const nameOf = (index: number) => tokensInfo.find((token) => token.index === BigInt(index))?.name;
+  const nameOf = (index: number) => NAME_OF[index];
 
   const infos = quote ? {
     minAmount : quote.tokenOut.minAmount,
@@ -165,9 +285,58 @@ const Swap = () => {
     zeroOut: quote.tokenOut.amount === 0n ? "Swap output is zero." : null
   } : null;
 
+  // Band guard — the one revert the quote libraries cannot see. Stays null
+  // until the constants have landed, so the form never blocks on data it
+  // does not have (a guard without its data stays silent).
+  // Perf E — `useMemo([quote, routing, ...])` : sans ça, chaque rendu
+  // recompose le tuple `reservesAfter` (nouvelle référence) et invalide
+  // le `bandBreach` qui en dépend.
+  const reservesAfter = useMemo(
+    () =>
+      quote && routing
+        ? reservesAfterSwap(
+            reserves, indexIn, quote.tokenIn.amount, routing,
+            indexOut, quote.tokenOut.amount,
+          )
+        : null,
+    [quote, routing, reserves, indexIn, indexOut]
+  );
+
+  // Perf E — `useMemo([reservesAfter, floorBps, ceilingBps])` : sans ça,
+  // le résultat de `breachedBand` est recalculé (et éventuellement
+  // ré-invalide `bandSharePct`) à chaque rendu, même quand rien ne change.
+  const bandBreach = useMemo(
+    () =>
+      reservesAfter && floorBps !== undefined && ceilingBps !== undefined
+        ? breachedBand(reservesAfter, floorBps, ceilingBps)
+        : null,
+    [reservesAfter, floorBps, ceilingBps]
+  );
+
+  // The band value is deliberately absent from the copy: the user is told the
+  // trade is impossible and what to do about it, not handed a protocol
+  // parameter he has no way to act on.
+  const bandError = bandBreach
+    ? bandBreach.kind === 'ceiling'
+      ? `${nameOf(bandBreach.index) ?? 'This token'} would rise above its ceiling. Try a smaller amount.`
+      : `${nameOf(bandBreach.index) ?? 'This token'} would fall below its floor. Try a smaller amount.`
+    : null;
+
+  // Share the token will hold after the swap, shown alongside the band so the
+  // user can see how far past the limit the trade would push it.
+  const bandSharePct = bandBreach && reservesAfter
+    ? (() => {
+        const sum = reservesAfter[0] + reservesAfter[1] + reservesAfter[2];
+        return sum === 0n
+          ? null
+          : (Number((reservesAfter[bandBreach.index] * 10000n) / sum) / 100)
+              .toFixed(2).replace('.', ',');
+      })()
+    : null;
+
   const quoteTone: 'success' | 'danger' | 'neutral' = !quote
     ? 'neutral'
-    : infos?.balanceError || infos?.zeroOut
+    : infos?.balanceError || infos?.zeroOut || bandError
       ? 'danger'
       : 'success';
 
@@ -188,7 +357,7 @@ const Swap = () => {
           <div className="flex items-stretch gap-2">
             <select
               aria-label="From token"
-              className={selectClass}
+              className={SELECT_CLASS}
               value={String(indexIn)}
               onChange={(e) => {setIndexIn(Number(e.target.value) as 0 | 1 | 2); setError(null)}}>
               {tokensInfo.map((token) => (
@@ -198,7 +367,7 @@ const Swap = () => {
               ))}
             </select>
             <input
-              className={`${inputClass} font-mono`}
+              className={INPUT_CLASS_MONO}
               type="text"
               inputMode="decimal"
               id="swap-amountIn"
@@ -230,7 +399,7 @@ const Swap = () => {
           <div className="flex items-stretch gap-2">
             <select
               aria-label="To token"
-              className={selectClass}
+              className={SELECT_CLASS}
               value={String(indexOut)}
               onChange={(e) => {setIndexOut(Number(e.target.value) as 0 | 1 | 2); setError(null)}}>
               {tokensInfo.map((token) => (
@@ -240,7 +409,7 @@ const Swap = () => {
               ))}
             </select>
             <input
-              className={`${inputClass} font-mono`}
+              className={INPUT_CLASS_MONO}
               type="text"
               inputMode="decimal"
               id="swap-amountOut"
@@ -259,7 +428,7 @@ const Swap = () => {
             Slippage tolerance (%)
           </label>
           <input
-            className={`${inputClass} font-mono`}
+            className={INPUT_CLASS_MONO}
             type="text"
             inputMode="decimal"
             id="swap-tolerance"
@@ -273,11 +442,12 @@ const Swap = () => {
           Decomposition — note §6 : « ne réserve son espace qu'une fois
           une quote reçue ; à vide, elle est réduite à une ligne
           "Decomposition — awaiting quote", pas une carte à hauteur fixe ».
-          On rend la carte complète quand une quote existe, sinon une
-          ligne d'attente dans la même typographie.
+          Perf Étape I : on garde le `<Panel>` monté en permanence (sinon
+          l'animation `merion-panel-in` 200 ms rejoue à chaque flip
+          quote ↔ null). On permute juste le contenu intérieur.
         */}
-        {quote ? (
-          <Panel title="Decomposition" tone="muted">
+        <Panel title="Decomposition" tone="muted" className={quote ? '' : 'hidden'}>
+          {quote ? (
             <SwapDecompositionBar
               input={Number(btcAmount(quote.tokenIn.amount))}
               fee={Number(btcAmount(quote.tokenIn.fee))}
@@ -285,36 +455,44 @@ const Swap = () => {
               slippage={tolerance === '' ? 0 : Number(tolerance) || 0}
               amountOut={Number(btcAmount(quote.tokenOut.amount))}
               feeUnit={nameOf(indexIn) ?? ''}
-              impactUnit={nameOf(indexOut) ?? ''}
             />
-          </Panel>
-        ) : (
-          <p className="text-small text-cloud/60">
-            <span className="text-h5 font-medium text-cloud/80">Decomposition</span>
-            <span aria-hidden="true"> · </span>
-            <span>Awaiting quote</span>
-          </p>
-        )}
+          ) : null}
+        </Panel>
 
         <div className="flex items-center gap-3">
           <StatusDot
             tone={quoteTone}
             label={
-              quoteTone === 'success'
-                ? 'Quote ready'
-                : quoteTone === 'danger'
-                  ? (infos?.balanceError ?? infos?.zeroOut ?? 'Quote rejected')
-                  : 'Awaiting quote'
+              paused
+                ? 'Pool paused'
+                : !userAddress
+                  ? 'Wallet not connected'
+                  : quoteTone === 'success'
+                    ? 'Quote ready'
+                  : quoteTone === 'danger'
+                    ? (infos?.balanceError ?? infos?.zeroOut ?? bandError ?? 'Quote rejected')
+                    : 'Awaiting quote'
             }
           />
           <Button
             level="primary"
             onClick={handleSwap}
             aria-busy={isPending || undefined}
-            disabled={isPending || !userAddress || !quote || Boolean(infos?.balanceError)}>
+            disabled={isPending || paused || !userAddress || !quote || Boolean(infos?.balanceError) || Boolean(infos?.zeroOut) || Boolean(bandError)}>
             {isPending ? "Swap pending" : "Swap"}
           </Button>
         </div>
+
+        {paused && (
+          <p className="text-small text-danger" role="alert">
+            The pool is paused — swaps are suspended until the owner unpauses it.
+          </p>
+        )}
+        {!userAddress && (
+          <p className="text-small text-cloud/70" role="status">
+            Connect a wallet to swap — the quote keeps updating while you are disconnected.
+          </p>
+        )}
 
         {balanceInData?.error && (
           <p className="text-small text-danger" role="alert">
@@ -327,7 +505,7 @@ const Swap = () => {
           </p>
         )}
         {reason && (
-          <p className="text-small text-warning" role="status">
+          <p className="text-small text-danger" role="alert">
             {reason}
           </p>
         )}
@@ -342,7 +520,7 @@ const Swap = () => {
           </p>
         )}
         {infos && (
-          <div className="rounded border border-cloud/10 bg-slate p-3 text-small flex flex-col gap-1">
+          <div className="rounded border-[3px] border-merion-blue/40 bg-slate p-3 text-small flex flex-col gap-1">
             <p className="flex items-baseline justify-between gap-4 py-1">
               <span className="text-cloud/80">Minimum {nameOf(indexOut)} received</span>
               <span className="flex items-baseline gap-1.5 min-w-0">
@@ -400,7 +578,30 @@ const Swap = () => {
                 </span>
               </span>
             </p>
+
+            {bandSharePct !== null && bandSharePct !== undefined ? (
+              <div className="flex items-baseline justify-between gap-4 py-1 border-t border-merion-blue/40 mt-1 pt-2">
+                <span className="text-cloud/80">
+                  {bandBreach?.kind === 'ceiling' ? 'Ceiling after swap' : 'Floor after swap'}
+                </span>
+                <span className="flex items-baseline gap-1.5 min-w-0">
+                  <span className="font-mono text-code num-tabular text-danger">
+                    {bandSharePct}%
+                  </span>
+                  <span className="font-mono text-code-sm text-neutral">
+                    {' '}
+                    {nameOf(bandBreach!.index)}
+                  </span>
+                </span>
+              </div>
+            ) : null}
           </div>
+        )}
+
+        {bandError && (
+          <p className="text-small text-danger" role="alert">
+            {bandError}
+          </p>
         )}
       </div>
     </Panel>

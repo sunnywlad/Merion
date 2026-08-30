@@ -1,20 +1,21 @@
 import { useReadContract } from 'wagmi';
-import { deployedAuction } from '@/constants/addresses';
+import { useDeployedChainId } from '@/hooks/useDeployedChainId';
 import { auctionAbi } from '@/constants/abi';
-import { AUCTION_POLL_MS } from '@/hooks/useAuctionState';
+import { MANDATE_POLL_MS } from '@/hooks/_constants';
 
 // I.6 — Le remboursement crédité et jamais poussé pour une adresse (`refunds`
 // est un mapping public de l'Auction). Sur le modèle de `useManagerOf` :
 // une seule lecture, par adresse, au même intervalle que le reste du panneau.
 export function useRefund(user: `0x${string}` | undefined) {
+  const { auction } = useDeployedChainId();
   return useReadContract({
-    address: deployedAuction ?? undefined,
+    address: auction ?? undefined,
     abi: auctionAbi,
     functionName: 'refunds',
     args: user === undefined ? undefined : [user],
     query: {
-      enabled: deployedAuction !== null && user !== undefined,
-      refetchInterval: AUCTION_POLL_MS
+      enabled: auction !== null && user !== undefined,
+      refetchInterval: MANDATE_POLL_MS
     }
   });
 }

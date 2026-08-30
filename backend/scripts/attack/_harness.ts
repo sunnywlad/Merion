@@ -90,6 +90,10 @@ export interface AttackContracts {
 
 export interface AttackContext {
   viem: any;
+  // Helpers de nœud (`time.setNextBlockTimestamp`, `mine`) tels que les
+  // suites TypeScript les utilisent. `undefined` si la connexion ne les
+  // expose pas ; `warpTo` retombe alors sur le JSON-RPC équivalent.
+  networkHelpers?: any;
   publicClient: any;
   walletClients: any[];
   deployer: any;
@@ -110,6 +114,7 @@ export interface AttackContext {
 // déployeur.
 export async function connectToLocalNode(): Promise<{
   viem: any;
+  networkHelpers?: any;
   publicClient: any;
   walletClients: any[];
   deployer: any;
@@ -117,7 +122,7 @@ export async function connectToLocalNode(): Promise<{
   chainId: number;
   networkName: string;
 }> {
-  const { viem, networkName } = await network.getOrCreate();
+  const { viem, networkName, networkHelpers } = await network.getOrCreate() as any;
   const publicClient = await viem.getPublicClient();
   const chainId = await publicClient.getChainId();
   const walletClients = await viem.getWalletClients();
@@ -132,7 +137,7 @@ export async function connectToLocalNode(): Promise<{
   if (!attacker) {
     throw new Error("Le réseau local doit fournir au moins deux comptes (déployeur + attaquant)");
   }
-  return { viem, publicClient, walletClients, deployer, attacker, chainId, networkName };
+  return { viem, networkHelpers, publicClient, walletClients, deployer, attacker, chainId, networkName };
 }
 
 // ---------------------------------------------------------------------------
@@ -281,6 +286,62 @@ export async function bootstrapPool(ctx: AttackContext): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// 4 bis. Horloge du nœud local
+// ---------------------------------------------------------------------------
+//
+// Les scripts d'audit F1/F3/F5 se formulent en TEMPS : un mandat périmé, une
+// fenêtre d'enchère fermée, une tranche de rente écoulée sur un pool vide.
+// Sur un nœud Hardhat local, le seul moyen d'y arriver est de pousser
+// l'horloge du nœud.
+//
+// L'idiome du dépôt est `networkHelpers.time.setNextBlockTimestamp(ts)` suivi
+// de `networkHelpers.mine()` : c'est exactement le `warpTo` de
+// test/Pool.manager.test.ts:127-130, repris par toutes les suites
+// TypeScript. On l'utilise ici plutôt qu'un appel JSON-RPC brut, pour ne pas
+// entretenir une seconde façon de faire la même chose.
+//
+// `network.getOrCreate()` n'expose `networkHelpers` que si le plugin
+// hardhat-network-helpers est chargé sur la connexion. Le repli sur
+// `evm_setNextBlockTimestamp` / `evm_mine` — les deux méthodes que
+// networkHelpers appelle lui-même — garde les scripts exécutables même dans
+// ce cas, sans changer de sémantique.
+//
+// Ces méthodes ne sont PAS disponibles sur un vrai réseau : ces scripts-là
+// sont, par construction, réservés au nœud local (chaîne 31337), comme tout
+// le reste du dossier.
+
+export async function chainNow(ctx: AttackContext): Promise<bigint> {
+  const block = await ctx.publicClient.getBlock();
+  return BigInt(block.timestamp);
+}
+
+// Avance l'horloge jusqu'à `timestamp` et mine un bloc. No-op si le nœud est
+// déjà au-delà : `setNextBlockTimestamp` refuse un temps passé, et un script
+// qui hérite d'un nœud déjà avancé doit continuer, pas planter.
+export async function warpTo(ctx: AttackContext, timestamp: bigint): Promise<void> {
+  const now = await chainNow(ctx);
+  if (timestamp <= now) return;
+
+  const helpers = ctx.networkHelpers;
+  if (helpers) {
+    await helpers.time.setNextBlockTimestamp(timestamp);
+    await helpers.mine();
+    return;
+  }
+
+  await ctx.publicClient.request({
+    method: "evm_setNextBlockTimestamp",
+    params: [`0x${timestamp.toString(16)}`],
+  } as any);
+  await ctx.publicClient.request({ method: "evm_mine", params: [] } as any);
+}
+
+// Avance de `seconds` secondes à partir de l'instant courant de la chaîne.
+export async function warpBy(ctx: AttackContext, seconds: bigint): Promise<void> {
+  await warpTo(ctx, (await chainNow(ctx)) + seconds);
+}
+
+// ---------------------------------------------------------------------------
 // 5. expectRevert — affirme le NOM de l'erreur custom OU le message de chaîne
 // ---------------------------------------------------------------------------
 //
@@ -332,6 +393,10 @@ const ERROR_OWNER: Record<string, ContractKey> = {
   InvalidTokenAddress: "pool",
   InvalidTokenDecimals: "pool",
   InvalidMrn: "pool",
+  // Pool.sol — gardes ajoutees par la campagne d'audit (F6).
+  // `OwnerEpochTooFar(uint256)` borne la voie d'amorcage de l'owner a
+  // `currentEpoch() + 1`.
+  OwnerEpochTooFar: "pool",
   // MrnFaucet.sol.
   FaucetEmpty: "faucet",
   TooEarly: "faucet",
@@ -340,10 +405,17 @@ const ERROR_OWNER: Record<string, ContractKey> = {
   WindowClosed: "auction",
   NoBidToRefund: "auction",
   NoBidToSettle: "auction",
-  // OpenZeppelin via Pool (Pausable, Ownable). Le décodage passe par l'ABI
-  // du Pool puisque c'est lui qui hérite et qui répercute ces erreurs.
+  // Auction.sol — garde ajoutée par la campagne d'audit (F3).
+  // `WindowStillOpen(uint256 closesAt)` refuse un `settle()` tant que la
+  // fenêtre de mise du mandat vendu n'est pas fermée.
+  WindowStillOpen: "auction",
+  // OpenZeppelin via Pool (Pausable, Ownable, ReentrancyGuard). Le décodage
+  // passe par l'ABI du Pool puisque c'est lui qui hérite et qui répercute
+  // ces erreurs. `ReentrancyGuardReentrantCall` est devenue atteignable
+  // avec la garde F4 posée sur addLiquidity / removeLiquidity / swap.
   EnforcedPause: "pool",
   OwnableUnauthorizedAccount: "pool",
+  ReentrancyGuardReentrantCall: "pool",
 };
 
 // Erreurs à chaîne (revert `require(..., "message")`). Le nom symbolique est
@@ -486,9 +558,9 @@ export function finalize(): void {
 // `buildAttackContext` regroupe les trois premières briques en un seul appel
 // pour les scripts qui n'ont pas besoin de bootstrap.
 export async function buildAttackContext(): Promise<AttackContext> {
-  const { viem, publicClient, walletClients, deployer, attacker, chainId, networkName } =
+  const { viem, networkHelpers, publicClient, walletClients, deployer, attacker, chainId, networkName } =
     await connectToLocalNode();
   const addresses = loadAddresses(chainId);
   const contracts = await loadContracts(viem, addresses);
-  return { viem, publicClient, walletClients, deployer, attacker, chainId, networkName, addresses, contracts };
+  return { viem, networkHelpers, publicClient, walletClients, deployer, attacker, chainId, networkName, addresses, contracts };
 }

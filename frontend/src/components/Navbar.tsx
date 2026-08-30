@@ -1,56 +1,54 @@
-'use client';
-
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-
-const NAV_LINKS = [
-  { href: '/swap', label: 'Swap' },
-  { href: '/pool', label: 'Pool' },
-  { href: '/tools', label: 'Tools' },
-] as const;
+import NavbarClient from './NavbarClient';
+import AppkitButton from './AppkitButton';
 
 /**
- * Merion navbar — chrome du haut, présent sur toutes les pages (le `app/layout.tsx`
- * racine la monte au-dessus de `{children}`).
+ * Merion navbar — chrome du haut, présent sur les pages applicatives
+ * (monté par `app/(app)/layout.tsx`).
  *
- * Marque à gauche, liens applicatifs au centre, bouton de connexion à droite.
- * L'onglet actif est souligné en Merion Blue (cf. brand book §7, onglets).
+ * Coque server component : tout ce qui est statique (logo, mise en
+ * page du header) vit ici. Les bits dynamiques (lien actif +
+ * `appkit-button`) sont délégués aux feuilles client `NavbarClient`
+ * (nav centrale) et `AppkitButton` (bouton à droite). Le split évite
+ * que la landing marketing (`app/(marketing)/`) ne charge AppKit —
+ * cf. plan perf-frontend §3, Étape C.
+ *
+ * Mise en page : grille à 3 colonnes `1fr | auto | 1fr`. Le logo
+ * occupe la colonne gauche, les liens applicatifs la colonne
+ * centrale, le bouton de connexion la colonne droite. Les deux `1fr`
+ * absorbent l'espace restant de façon symétrique, ce qui force les
+ * liens à se centrer **sur la largeur réelle du viewport** — alignés
+ * sur l'axe vertical du panneau principal rendu en dessous (le main
+ * est lui-même centré entre les deux rails `Sidebar | main |
+ * RightSidebar` du layout applicatif). Sans cette symétrie, le centrage
+ * se ferait entre le logo et le bouton, donc décalé du centre du
+ * viewport.
+ *
  * Couleurs et tailles viennent des tokens posés par II.1.
  */
 export default function Navbar() {
-  const pathname = usePathname();
-
   return (
     <header className="sticky top-0 z-50 h-16 bg-midnight border-b border-cloud/5">
-      <div className="h-full flex items-center justify-between px-6 gap-8">
+      <div className="h-full grid grid-cols-[1fr_auto_1fr] items-center px-6 gap-8">
         <Link
           href="/"
-          className="text-h5 font-semibold text-cloud hover:text-white transition-colors"
+          className="flex items-center gap-2 justify-self-start mt-2 hover:text-white transition-colors"
         >
-          Merion
+          <img
+            src="/merion-logo.svg"
+            alt="Merion"
+            className="h-9 w-9 [filter:brightness(0)_invert(1)]"
+          />
+          <p className="text-h3 font-semibold uppercase tracking-[0.2em] text-cloud">
+            Merion
+          </p>
         </Link>
 
-        <nav className="flex items-center gap-6">
-          {NAV_LINKS.map(({ href, label }) => {
-            const active = pathname === href || pathname?.startsWith(`${href}/`);
-            return (
-              <Link
-                key={href}
-                href={href}
-                className={
-                  `text-body transition-colors ` +
-                  (active
-                    ? 'text-cloud underline underline-offset-8 decoration-2 decoration-merion-blue'
-                    : 'text-neutral hover:text-cloud')
-                }
-              >
-                {label}
-              </Link>
-            );
-          })}
-        </nav>
+        <NavbarClient />
 
-        <appkit-button balance="hide" />
+        <div className="justify-self-end">
+          <AppkitButton />
+        </div>
       </div>
     </header>
   );

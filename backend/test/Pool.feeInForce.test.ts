@@ -232,8 +232,9 @@ describe("Pool.feeInForce", async function () {
 
     describe("B) Accord avec le getter brut feeNum()", function () {
       it("a l'epoch 0, feeInForce() et feeNum() rendent la meme valeur", async function () {
-        // A l'epoch 0, lastSetFeeEpoch (0) egale currentEpoch() (0), donc le
-        // ternaire prend sa premiere branche et rend feeNum. Comme le
+        // AUDIT F7 : depuis la sentinelle, lastSetFeeEpoch
+        // (type(uint32).max) DIFFERE de currentEpoch() (0) des l'epoch 0,
+        // et le ternaire prend sa seconde branche, le nominal. Comme le
         // constructeur a pose feeNum = NOMINAL_FEE_NUM, les deux branches
         // coincident : cet accord ne dit donc PAS quelle branche a ete prise.
         // Ce qu'il fige, c'est qu'un front qui lirait l'un ou l'autre getter
@@ -250,19 +251,25 @@ describe("Pool.feeInForce", async function () {
     });
 
     describe("C) lastSetFeeEpoch est lisible par l'ABI", function () {
-      it("lastSetFeeEpoch() vaut 0 au deploiement", async function () {
-        // Le constructeur ne l'ecrit pas (Pool.sol:100-105) : il reste a la
-        // valeur par defaut du slot. Ce test fige deux choses a la fois : que
-        // le champ est bien expose en public — le front en aura besoin pour
-        // savoir si le mandat courant a deja pose son frais — et que sa valeur
-        // de depart est 0, ce dont depend toute la section I.B ci-dessus.
+      it("lastSetFeeEpoch() vaut la sentinelle type(uint32).max au deploiement", async function () {
+        // AUDIT F7. Le constructeur pose desormais la sentinelle « aucun
+        // tarif de mandat n'a jamais ete pose ». Avant, il ne l'ecrivait
+        // pas et le champ restait a la valeur par defaut du slot, 0 —
+        // qui est un numero d'epoch REEL et coincide avec l'epoch 0 : le
+        // gestionnaire du premier mandat recevait FeeAlreadySetThisEpoch
+        // sans avoir rien ecrit.
+        //
+        // Ce test fige deux choses a la fois : que le champ est bien
+        // expose en public — le front en aura besoin pour savoir si le
+        // mandat courant a deja pose son frais — et que sa valeur de
+        // depart est hors du domaine des epochs atteignables.
         const { pool } = await networkHelpers.loadFixture(deployPoolFixture);
 
         const lastSetFeeEpoch = await pool.read.lastSetFeeEpoch();
         assert.equal(
-          lastSetFeeEpoch,
-          0,
-          `lastSetFeeEpoch() vaut ${lastSetFeeEpoch} au deploiement, attendu 0`,
+          BigInt(lastSetFeeEpoch),
+          2n ** 32n - 1n,
+          `lastSetFeeEpoch() vaut ${lastSetFeeEpoch} au deploiement, attendu ${2n ** 32n - 1n} (sentinelle type(uint32).max)`,
         );
       });
     });
@@ -282,8 +289,10 @@ describe("Pool.feeInForce", async function () {
     describe("A) L'epoch 1", function () {
       it("a GENESIS + EPOCH_DURATION, feeInForce() rend NOMINAL_FEE_NUM sans qu'aucune transaction ait ete envoyee", async function () {
         // Calcul a la main : (GENESIS + 14400 - GENESIS) / 14400 = 1, donc
-        // lastSetFeeEpoch (0) differe de currentEpoch() (1) et le ternaire
-        // prend sa seconde branche. Le seul bloc mine entre le deploiement et
+        // lastSetFeeEpoch differe de currentEpoch() (1) et le ternaire prend
+        // sa seconde branche. AUDIT F7 : lastSetFeeEpoch vaut la sentinelle
+        // type(uint32).max au deploiement, non plus 0 ; la conclusion ne
+        // change pas, la sentinelle ne vaut aucune epoch atteignable. Le seul bloc mine entre le deploiement et
         // la lecture est VIDE : aucun appelant n'a eu a payer un SSTORE de
         // remise a zero, ce qui est toute la raison d'etre du reset paresseux.
         const { pool, genesis } = await networkHelpers.loadFixture(deployPoolFixture);

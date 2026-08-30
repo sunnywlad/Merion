@@ -3,13 +3,15 @@
 import { useState, useRef, useEffect } from 'react';
 import { useWriteContract, useConnection, useWaitForTransactionReceipt, useReadContract, useWatchAsset } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
-import { deployedFaucet, deployedMrn, MRN_DECIMALS } from '@/constants/addresses';
+import { useDeployedChainId } from '@/hooks/useDeployedChainId';
+import { MRN_DECIMALS } from '@/constants/addresses';
 import { mrnFaucetAbi } from '@/constants/abi';
+import { describeTxError } from '@/lib/txError';
 import Panel from '@/components/Panel';
 import { Button } from '@/components/ui/Button';
 import { KpiCard } from '@/components/ui/KpiCard';
 import { StatusDot } from '@/components/ui/StatusDot';
-import { EXPECTED_CHAIN_ID } from '@/components/ui/deployment';
+import { isSupportedChain } from '@/constants/addresses';
 import { AppStateBoundary } from '@/components/ui/AppStateBoundary';
 import { formatAmount } from '@/components/ui/formatAmount';
 
@@ -23,6 +25,7 @@ const MrnGrant = () => {
   const { isLoading, isSuccess } = useWaitForTransactionReceipt({ hash });
   const waiting = isPending || isLoading;
   const queryClient = useQueryClient();
+  const { faucet, mrn } = useDeployedChainId();
 
   // `dripInterval` et `dripAmount` sont des `immutable` cote contrat : une
   // lecture par session suffit (staleTime Infinity). Lire depuis le contrat
@@ -30,18 +33,18 @@ const MrnGrant = () => {
   // faucet change, le front suit en silence, sans desync entre le label, le
   // cooldown et la regle on-chain.
   const dripInterval = useReadContract({
-    address: deployedFaucet ?? undefined,
+    address: faucet ?? undefined,
     abi: mrnFaucetAbi,
     functionName: 'dripInterval',
     args: [],
-    query: { enabled: deployedFaucet !== null, staleTime: Infinity }
+    query: { enabled: faucet !== null, staleTime: Infinity }
   });
   const dripAmount = useReadContract({
-    address: deployedFaucet ?? undefined,
+    address: faucet ?? undefined,
     abi: mrnFaucetAbi,
     functionName: 'dripAmount',
     args: [],
-    query: { enabled: deployedFaucet !== null, staleTime: Infinity }
+    query: { enabled: faucet !== null, staleTime: Infinity }
   });
 
   // Le `lastDripAt` lu en polling lent (30 s) suffit : la valeur bouge une
@@ -51,18 +54,18 @@ const MrnGrant = () => {
   const connection = useConnection();
   const userAddress = connection.address;
   const lastDrip = useReadContract({
-    address: deployedFaucet ?? undefined,
+    address: faucet ?? undefined,
     abi: mrnFaucetAbi,
     functionName: 'lastDripAt',
     args: userAddress === undefined ? undefined : [userAddress],
-    query: { enabled: deployedFaucet !== null && userAddress !== undefined, refetchInterval: 30000 }
+    query: { enabled: faucet !== null && userAddress !== undefined, refetchInterval: 30000 }
   });
   const lastDripAt = lastDrip.data;
 
   const drip = () => {
-    if (!userAddress || deployedFaucet === null) return;
+    if (!userAddress || faucet === null) return;
     mutate({
-      address: deployedFaucet,
+      address: faucet,
       abi: mrnFaucetAbi,
       functionName: 'drip',
       args: []
@@ -82,10 +85,13 @@ const MrnGrant = () => {
         asked.current = true;
         // L'ajout au wallet regarde MRN, pas le faucet : c'est MRN que
         // l'utilisateur veut voir avec 18 decimales dans MetaMask.
-        watchAsset({ type: 'ERC20', options: { address: deployedMrn, symbol: 'MRN', decimals: MRN_DECIMALS } });
+        watchAsset({ type: 'ERC20', options: { address: mrn, symbol: 'MRN', decimals: MRN_DECIMALS } });
       }
     }
-  }, [isSuccess, queryClient, watchAsset]);
+    // `mrn` is a frozen per-chain constant, so listing it cannot re-fire the
+    // effect; it is here so the wallet is offered the token of the chain the
+    // user is actually on after a network switch.
+  }, [isSuccess, queryClient, watchAsset, mrn]);
 
   // Bouton desactive aussi pendant le cooldown. `lastDripAt` et `dripInterval`
   // sont en secondes (block.timestamp), `now` aussi : l'ecart est direct.
@@ -106,7 +112,7 @@ const MrnGrant = () => {
     ? Number(lastDripAt) + Number(dripInterval.data) - now
     : 0;
   const inCooldown = lastDripAt !== undefined && cooldownSeconds > 0;
-  const faucetMissing = deployedFaucet === null;
+  const faucetMissing = faucet === null;
   // Note §4 « Montants en MRN » : 2 décimales, grouping français,
   // troncature. Le helper `formatAmount` ne reçoit pas d'unité : on la
   // rend en `<span>` séparé dans chaque carte ci-dessous, comme pour
@@ -138,7 +144,7 @@ const MrnGrant = () => {
   if (connection.status === 'disconnected') {
     return <AppStateBoundary state={{ kind: 'wallet-not-connected' }} />;
   }
-  if (connection.status === 'connected' && connection.chainId !== EXPECTED_CHAIN_ID) {
+  if (connection.status === 'connected' && !isSupportedChain(connection.chainId)) {
     return <AppStateBoundary state={{ kind: 'wrong-network' }} />;
   }
 
@@ -146,8 +152,7 @@ const MrnGrant = () => {
     <Panel title="Get MRN">
       <div className="flex flex-col gap-4">
         <p className="text-small text-cloud/70">
-          Request {dripAmountLabel} MRN from the project faucet, which redistributes
-          from the reservoir pre-funded by the pool owner at deployment. One request
+          Request {dripAmountLabel} MRN from the project faucet. One request
           every {intervalHours} h per address.
         </p>
 
@@ -196,7 +201,7 @@ const MrnGrant = () => {
 
         {error && (
           <p className="text-small text-danger" role="alert">
-            {error.message}
+            {describeTxError(error)}
           </p>
         )}
       </div>

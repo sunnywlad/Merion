@@ -1,5 +1,5 @@
-import { useReadContracts } from 'wagmi';
-import { deployedAuction, deployedPool } from '@/constants/addresses';
+import { useMerionReadContracts } from '@/hooks/useMerionReadContracts';
+import { useDeployedChainId } from '@/hooks/useDeployedChainId';
 import { auctionAbi, poolAbi } from '@/constants/abi';
 
 // I.5 — Les scalaires qui ne bougent jamais : trois immuables de l'enchère,
@@ -12,18 +12,19 @@ import { auctionAbi, poolAbi } from '@/constants/abi';
 // à la construction précisément pour que les deux horloges ne puissent pas
 // dériver, ce qui rend la lecture côté Pool exacte, pas approchée.
 export function useAuctionConstants() {
-  const { data, isLoading, error } = useReadContracts({
+  const { auction, pool } = useDeployedChainId();
+  const { data, isLoading, error } = useMerionReadContracts({
     contracts: [
-      { address: deployedAuction ?? undefined, abi: auctionAbi, functionName: 'minOpeningBid', args: [] },
-      { address: deployedAuction ?? undefined, abi: auctionAbi, functionName: 'bidSilence', args: [] },
-      { address: deployedAuction ?? undefined, abi: auctionAbi, functionName: 'HIGH_BID_BPS', args: [] },
-      { address: deployedAuction ?? undefined, abi: auctionAbi, functionName: 'BPS_DEN', args: [] },
-      { address: deployedPool, abi: poolAbi, functionName: 'GENESIS', args: [] },
-      { address: deployedPool, abi: poolAbi, functionName: 'EPOCH_DURATION', args: [] },
-      { address: deployedPool, abi: poolAbi, functionName: 'PRIORITY_WINDOW', args: [] }
+      { address: auction ?? undefined, abi: auctionAbi, functionName: 'minOpeningBid', args: [] },
+      { address: auction ?? undefined, abi: auctionAbi, functionName: 'bidSilence', args: [] },
+      { address: auction ?? undefined, abi: auctionAbi, functionName: 'HIGH_BID_BPS', args: [] },
+      { address: auction ?? undefined, abi: auctionAbi, functionName: 'BPS_DEN', args: [] },
+      { address: pool, abi: poolAbi, functionName: 'GENESIS', args: [] },
+      { address: pool, abi: poolAbi, functionName: 'EPOCH_DURATION', args: [] },
+      { address: pool, abi: poolAbi, functionName: 'PRIORITY_WINDOW', args: [] }
     ] as const,
     query: {
-      enabled: deployedAuction !== null,
+      enabled: auction !== null,
       staleTime: Infinity
     }
   });

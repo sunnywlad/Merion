@@ -52,7 +52,10 @@ export default function AmountLine({
     content = 'Loading…';
     contentClass = 'text-cloud/60';
   } else if (error) {
-    content = error.message;
+    // Deliberately not the error message: this cell is a narrow tabular
+    // figure column, a sentence would wreck the alignment. The full wording
+    // is carried by `ReadErrorBoundary` where the space allows it.
+    content = 'Read failed';
     contentClass = 'text-danger';
   } else if (value === undefined) {
     content = '—';
