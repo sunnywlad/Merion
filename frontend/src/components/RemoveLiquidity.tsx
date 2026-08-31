@@ -9,6 +9,7 @@ import { formatUnits } from "viem";
 import { useDeployedChainId } from "@/hooks/useDeployedChainId";
 import {poolAbi} from '@/constants/abi';
 import {useWriteContract, useConnection, usePublicClient} from 'wagmi';
+import { simulateContract } from 'viem/actions';
 import { getQuote } from "@/lib/quoteRemoveLiquidity";
 import { describeTxError } from "@/lib/txError";
 import { Button } from "@/components/ui/Button";
@@ -19,6 +20,16 @@ import { ReadErrorBoundary } from "@/components/ui/ReadErrorBoundary";
 import { isSupportedChain } from '@/constants/addresses';
 import { Panel } from "@/components/Panel";
 import { INPUT_CLASS_MONO } from "@/components/ui/formClasses";
+
+// V.5 — même plafond par transaction que `Swap` / `AddLiquidity` (cf. le
+// commentaire dans `AddLiquidity.tsx` et `Swap.tsx`). `removeLiquidity`
+// avait été oublié : sans `gas` explicite, la repli gaz du wallet sur
+// Base / Base Sepolia peut dépasser le cap 2^24 et la tx échoue avec
+// « exceeds max transaction gas limit » au lieu du vrai revert — d'où
+// l'absence de remise à jour des réserves observée côté UI. Le
+// `simulateContract` ci-dessous expose le revert réel (slippage, solde)
+// avant de passer la main au wallet, comme pour les deux autres flux.
+const TX_GAS_LIMIT = 5_000_000n;
 
 // II.2d — chaîne id du pool, miroir de constants/addresses.
 // `INPUT_CLASS_MONO` vit dans `ui/formClasses.ts` depuis R3/C.1.
@@ -111,11 +122,27 @@ const RemoveLiquidity = () => {
       }
       const freshQuote = freshQuoteResult.quote;
 
+      // V.5/bug-base-gas-cap — `simulateContract` en pre-vol attrape le vrai
+      // revert (slippage, solde, etc.) AVANT de passer la main au wallet.
+      // Sans ça, un appel qui reverte tombe dans le gaz de repli du wallet,
+      // au-delà du cap Base (2^24), et l'utilisateur voit « exceeds max
+      // transaction gas limit » au lieu de la vraie raison. Même pattern que
+      // `Swap.tsx` / `AddLiquidity.tsx`. `gas: TX_GAS_LIMIT` (sous le cap)
+      // garantit aussi que le fallback du wallet ne dépasse jamais 2^24.
+      await simulateContract(publicClient, {
+        address: deployedPool,
+        abi: poolAbi,
+        functionName: "removeLiquidity",
+        args: [freshQuote.shares, freshQuote.minExpected],
+        account: userAddress,
+        gas: TX_GAS_LIMIT,
+      });
       const hash = await mutateAsync({
         address: deployedPool,
         abi: poolAbi,
         functionName: "removeLiquidity",
-        args: [freshQuote.shares, freshQuote.minExpected]
+        args: [freshQuote.shares, freshQuote.minExpected],
+        gas: TX_GAS_LIMIT,
       })
       // V.5/bug-swap-silent-revert — `waitForTransactionReceipt` rend le
       // receipt avec `status: 'reverted'` SANS throw quand la tx reverte
