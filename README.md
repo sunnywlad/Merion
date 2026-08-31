@@ -4,10 +4,10 @@ DEX Bitcoin sans oracle sur Base, adossé à une enchère de mandat.
 
 Merion échange trois wrappers de BTC à cibles égales, WBTC, cbBTC et LBTC, sur
 une courbe à produit constant. Le pool ne lit jamais de prix externe : il price
-par ses réserves. Ce que le protocole vend, c'est le flux de frais : toutes les
+par ses réserves. A pool équilibré, le protocole vend le flux de frais : toutes les
 4 heures, le droit de fixer le tarif de swap du mandat suivant est vendu au plus
-offrant, payé d'avance dans le token natif MRN. Les fournisseurs de liquidité
-cèdent un flux de frais stochastique contre un paiement certain reçu ex ante.
+offrant, payé d'avance dans le token natif MRN. A protocole déséquilibré, il vend le 
+droit d'arbitrage.
 30 % du produit de l'enchère sont brûlés, 70 % leur sont reversés sous forme de
 loyer streamé sur le mandat.
 
