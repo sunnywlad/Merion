@@ -56,7 +56,7 @@ export default function AuctionPanel() {
   const [pending, setPending] = useState<'bid' | 'refund' | 'settle' | 'setFee' | null>(null);
   // Une erreur par action, scopée à sa section : une réversion sur `placeBid`
   // ne s'affiche PAS sous le panneau `setFee`, et inversement. Une seule
-  // variable partagée traînait sous tous les blocs (cf. capture 2026-08-28).
+  // variable partagée traînait sous tous les blocs (cf. capture).
   const [errors, setErrors] = useState<{
     bid: string | null; refund: string | null; settle: string | null; setFee: string | null;
   }>({ bid: null, refund: null, settle: null, setFee: null });
@@ -178,6 +178,13 @@ export default function AuctionPanel() {
       : false;
   const canPlaceBid = windowOpen === true || firstBidWindowOpen;
 
+  // `settle()` reverte `WindowStillOpen(closes)` tant que la fenêtre
+  // d'enchère n'est pas écoulée (`Auction.sol:396`). On masque la ligne
+  // « Settle for X MRN » et on grise le bouton tant que `canPlaceBid` est
+  // vrai, pour éviter une transaction vouée au revert et le message d'erreur
+  // RPC trompeur qui suit (« The node could not be reached »).
+  const canSettle = !canPlaceBid && hasBidToSettle;
+
   // Le mandat mis en vente est toujours `currentEpoch + 1`, qu'une mise ait
   // déjà ouvert le créneau (`sellingEpoch == currentEpoch + 1`) ou non
   // (`sellingEpoch` encore à zéro, une mise le rouvrira). Utiliser
@@ -228,12 +235,12 @@ export default function AuctionPanel() {
         functionName: 'approve',
         args: [deployedAuction!, amount]
       });
-      // V.5/bug-approve-silent-revert — `waitForTransactionReceipt` rend
+      // `waitForTransactionReceipt` rend
       // le receipt avec `status: 'reverted'` SANS throw. Sans ce check,
-      // le `placeBid` qui suit tape allowance == 0 et surfait « Allowance
-      // too low », message qui designe la mise comme coupable alors que
-      // l'approve a deja foire en amont. Meme garde que dans Swap/
-      // AddLiquidity/RemoveLiquidity (commit bec3db8).
+      // le `placeBid` qui suit tape allowance == 0 et surfaçe « Allowance
+      // too low », message qui désigne la mise comme coupable alors que
+      // l'approve a déjà foiré en amont. Meme garde que dans Swap/
+      // AddLiquidity/RemoveLiquidity.
       const receiptApprove = await publicClient.waitForTransactionReceipt({ hash: hashApprove });
       if (receiptApprove.status !== 'success') {
         throw new Error('Approve transaction reverted on-chain. Check your wallet for details.');
@@ -245,10 +252,10 @@ export default function AuctionPanel() {
         functionName: 'placeBid',
         args: [amount]
       });
-      // V.5/bug-swap-silent-revert — Meme garde pour le write : un
+      // Meme garde pour le write : un
       // `placeBid` reverte silencieusement (bond trop court, auction
-      // fermee en coulisses, etc.) sinon l'invalidation tournait sur du
-      // faux etat et l'UI restait sur l'enchere pre-write.
+      // fermée en coulisses, etc.) sinon l'invalidation tourne sur du
+      // faux état et l'UI reste sur l'enchère pre-write.
       const receiptBid = await publicClient.waitForTransactionReceipt({ hash: hashBid });
       if (receiptBid.status !== 'success') {
         throw new Error('placeBid transaction reverted on-chain. Check your wallet for details.');
@@ -276,10 +283,10 @@ export default function AuctionPanel() {
         functionName: 'withdrawRefund',
         args: []
       });
-      // V.5/bug-swap-silent-revert — Meme garde que pour les autres
+      // Meme garde que pour les autres
       // writes : un `withdrawRefund` reverte silencieusement (no refund
       // owed sur une race) sinon le `refund.refetch()` qui suit tourne
-      // sur du faux etat et l'UI laisse le montant affiche.
+      // sur du faux état et l'UI laisse le montant affiché.
       const receipt = await publicClient.waitForTransactionReceipt({ hash });
       if (receipt.status !== 'success') {
         throw new Error('withdrawRefund transaction reverted on-chain. Check your wallet for details.');
@@ -303,10 +310,10 @@ export default function AuctionPanel() {
         functionName: 'settle',
         args: []
       });
-      // V.5/bug-swap-silent-revert — Meme garde : `settle` peut reverter
+      // Meme garde : `settle` peut reverter
       // silencieusement (NoBidToSettle sur race epoch). Sans ce check,
-      // les trois refetch qui suivent tournent sur du faux etat (mandat
-      // pas transitionne, refunds non credites) et l'UI s'aligne sur le
+      // les trois refetch qui suivent tournent sur du faux état (mandat
+      // pas transitionné, refunds non crédités) et l'UI s'aligne sur le
       // mensonge.
       const receipt = await publicClient.waitForTransactionReceipt({ hash });
       if (receipt.status !== 'success') {
@@ -340,9 +347,9 @@ export default function AuctionPanel() {
         functionName: 'setFee',
         args: [feeNum]
       });
-      // V.5/bug-swap-silent-revert — Meme garde : `setFee` peut reverter
-      // silencieusement (priority window expiree en coulisses entre
-      // l'activation UI et l'envoi, fee deja posee cette epoch, etc.).
+      // Meme garde : `setFee` peut reverter
+      // silencieusement (priority window expirée en coulisses entre
+      // l'activation UI et l'envoi, fee déjà posée cette epoch, etc.).
       // Sans ce check, l'invalidation `effectiveFeeNum` qui suit
       // survole le mensonge et Swap/MandatePanel affichent l'ancien
       // tarif comme encore en vigueur.
@@ -386,10 +393,12 @@ export default function AuctionPanel() {
     void handlePlaceBid();
   };
 
-  const settleSoftDisabled = !user || wrongNetwork || !hasBidToSettle;
+  const settleSoftDisabled = !user || wrongNetwork || !canSettle;
   const onSettleClick = () => {
     if (!user) return setActionError('settle', 'Connect your wallet to settle.');
     if (wrongNetwork) return setActionError('settle', wrongNetMsg);
+    if (canPlaceBid)
+      return setActionError('settle', 'Auction still open — wait for the window to close before settling.');
     if (!hasBidToSettle)
       return setActionError('settle', 'Nothing to settle right now: no winning bid is awaiting nomination.');
     void handleSettle();
@@ -474,7 +483,7 @@ export default function AuctionPanel() {
       )}
       {errors.bid && <p className='text-xs pt-1 text-danger'>{errors.bid}</p>}
 
-      {hasBidToSettle && settleReward > 0n && (
+      {canSettle && settleReward > 0n && (
         <div className='pt-2 text-xs'>
           Settle for <Num>{mrn(settleReward)} MRN</Num>
         </div>
