@@ -228,7 +228,16 @@ export default function AuctionPanel() {
         functionName: 'approve',
         args: [deployedAuction!, amount]
       });
-      await publicClient.waitForTransactionReceipt({ hash: hashApprove });
+      // V.5/bug-approve-silent-revert — `waitForTransactionReceipt` rend
+      // le receipt avec `status: 'reverted'` SANS throw. Sans ce check,
+      // le `placeBid` qui suit tape allowance == 0 et surfait « Allowance
+      // too low », message qui designe la mise comme coupable alors que
+      // l'approve a deja foire en amont. Meme garde que dans Swap/
+      // AddLiquidity/RemoveLiquidity (commit bec3db8).
+      const receiptApprove = await publicClient.waitForTransactionReceipt({ hash: hashApprove });
+      if (receiptApprove.status !== 'success') {
+        throw new Error('Approve transaction reverted on-chain. Check your wallet for details.');
+      }
 
       const hashBid = await mutateAsync({
         address: deployedAuction!,
@@ -236,7 +245,14 @@ export default function AuctionPanel() {
         functionName: 'placeBid',
         args: [amount]
       });
-      await publicClient.waitForTransactionReceipt({ hash: hashBid });
+      // V.5/bug-swap-silent-revert — Meme garde pour le write : un
+      // `placeBid` reverte silencieusement (bond trop court, auction
+      // fermee en coulisses, etc.) sinon l'invalidation tournait sur du
+      // faux etat et l'UI restait sur l'enchere pre-write.
+      const receiptBid = await publicClient.waitForTransactionReceipt({ hash: hashBid });
+      if (receiptBid.status !== 'success') {
+        throw new Error('placeBid transaction reverted on-chain. Check your wallet for details.');
+      }
       // Perf G — invalidation ciblée de l'enchère seulement
       // (`currentBid`, `highBidder`, `pendingEpoch`, `pendingAmount`,
       // `windowOpen`, `closesAt`) ; `useConstants`/`useAuctionConstants`
@@ -260,7 +276,14 @@ export default function AuctionPanel() {
         functionName: 'withdrawRefund',
         args: []
       });
-      await publicClient.waitForTransactionReceipt({ hash });
+      // V.5/bug-swap-silent-revert — Meme garde que pour les autres
+      // writes : un `withdrawRefund` reverte silencieusement (no refund
+      // owed sur une race) sinon le `refund.refetch()` qui suit tourne
+      // sur du faux etat et l'UI laisse le montant affiche.
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      if (receipt.status !== 'success') {
+        throw new Error('withdrawRefund transaction reverted on-chain. Check your wallet for details.');
+      }
       // Perf G — `withdrawRefund` ne touche que le `refunds(user)` du
       // caller ; le reste de la chaîne n'a pas bougé.
       await refund.refetch();
@@ -280,7 +303,15 @@ export default function AuctionPanel() {
         functionName: 'settle',
         args: []
       });
-      await publicClient.waitForTransactionReceipt({ hash });
+      // V.5/bug-swap-silent-revert — Meme garde : `settle` peut reverter
+      // silencieusement (NoBidToSettle sur race epoch). Sans ce check,
+      // les trois refetch qui suivent tournent sur du faux etat (mandat
+      // pas transitionne, refunds non credites) et l'UI s'aligne sur le
+      // mensonge.
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      if (receipt.status !== 'success') {
+        throw new Error('settle transaction reverted on-chain. Check your wallet for details.');
+      }
       // Perf G — `settle` transitionne le mandat : l'enchère passe à
       // l'epoch suivante, un nouveau gestionnaire est nommé, et les
       // bidders perdants sont crédités. Trois refetch ciblés.
@@ -309,7 +340,16 @@ export default function AuctionPanel() {
         functionName: 'setFee',
         args: [feeNum]
       });
-      await publicClient.waitForTransactionReceipt({ hash });
+      // V.5/bug-swap-silent-revert — Meme garde : `setFee` peut reverter
+      // silencieusement (priority window expiree en coulisses entre
+      // l'activation UI et l'envoi, fee deja posee cette epoch, etc.).
+      // Sans ce check, l'invalidation `effectiveFeeNum` qui suit
+      // survole le mensonge et Swap/MandatePanel affichent l'ancien
+      // tarif comme encore en vigueur.
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      if (receipt.status !== 'success') {
+        throw new Error('setFee transaction reverted on-chain. Check your wallet for details.');
+      }
       // Perf G — `setFee` ne change que `feeNum` et `lastSetFeeEpoch` :
       // on réveille le multicall `effectiveFeeNum` (consommé ailleurs
       // par Swap/AuctionBar/MandatePanel) et la lecture locale

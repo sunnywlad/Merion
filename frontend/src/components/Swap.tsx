@@ -13,6 +13,7 @@ import {useWriteContract, useConnection, usePublicClient} from 'wagmi';
 import { simulateContract } from 'viem/actions';
 import { getQuote } from "@/lib/quoteSwap";
 import { shareBps } from "@/lib/quote";
+import { FEE_PAIRS } from "@/hooks/useEffectiveFees";
 import { describeTxError } from "@/lib/txError";
 import { breachedBand, reservesAfterSwap, type FeeRouting } from "@/lib/bands";
 import Panel from '@/components/Panel';
@@ -75,7 +76,7 @@ const Swap = () => {
   const balanceIn = balanceInData?.result;
 
   const {error: errorReserves, reserves, entries, refetch: refetchReserves} = useReserves();
-  const {error: errorFees, feeFor, errorFor} = useEffectiveFees();
+  const {error: errorFees, feeFor, errorFor, refetch: refetchFees} = useEffectiveFees();
   const effectiveFeeNum = feeFor(indexIn, indexOut);
   const {error: errorConstants, feeDen: feeDenData, floorBps: floorEntry, ceilingBps: ceilingEntry} = useConstants();
   const feeDen = feeDenData?.result;
@@ -135,6 +136,7 @@ const Swap = () => {
           publicClient={publicClient}
           refetchBalances={refetchBalances}
           refetchReserves={refetchReserves}
+          refetchFees={refetchFees}
           tokensInfo={tokensInfo}
           reserves={reserves}
           effectiveFeeNum={effectiveFeeNum}
@@ -171,6 +173,7 @@ type SwapFormProps = {
   publicClient: ReturnType<typeof usePublicClient>;
   refetchBalances: () => Promise<unknown>;
   refetchReserves: () => Promise<unknown>;
+  refetchFees: () => Promise<unknown>;
   tokensInfo: ReturnType<typeof useDeployedChainId>['tokens'];
   reserves: [bigint, bigint, bigint];
   effectiveFeeNum: bigint;
@@ -188,7 +191,7 @@ function SwapForm(props: SwapFormProps) {
     indexIn, indexOut, setIndexIn, setIndexOut, side, setSide,
     typedAmount, setTypedAmount, tolerance, setTolerance,
     isPending, setIsPending, error, setError, userAddress, balanceInData,
-    balanceIn, deployedPool, publicClient, refetchBalances, refetchReserves,
+    balanceIn, deployedPool, publicClient, refetchBalances, refetchReserves, refetchFees,
     tokensInfo, reserves, effectiveFeeNum, feeDen, paused, floorBps, ceilingBps, routing
   } = props;
   const { mutateAsync } = useWriteContract();
@@ -220,11 +223,53 @@ function SwapForm(props: SwapFormProps) {
     setError(null);
     try {
       setIsPending(true);
+      // V.5/bug-stale-quote — Entre le rendu du devis et le clic, les reserves
+      // et les frais effectifs peuvent avoir bouge : autre trade mempoole,
+      // bascule d'epoch, depot d'un autre user. `useReserves` /
+      // `useEffectiveFees` ont `staleTime: 5_000` et wagmi v2 ne re-lit pas
+      // sur nouveau bloc : le `quote` capture dans la closure de `handleSwap`
+      // reflete l'etat a T-5s.
+      //
+      // Le refetch doit preceder l'approve, pas le suivre : approve et swap
+      // doivent porter le MEME montant. C'est tout l'enjeu du sens
+      // `side='out'`, ou `amountIn` est DERIVE des reserves et du fee
+      // effectif (`quoteSwap.ts`) et non saisi par l'utilisateur. Approuver
+      // le montant perime puis echanger le montant frais donnait un
+      // `ERC20InsufficientAllowance` des que la pool avait bouge de ~1 % :
+      // la panne glissait de "Slippage exceeded" vers "Allowance too low",
+      // message plus trompeur encore. En `side='in'` les deux montants sont
+      // identiques (`parseAmount(typedAmount)`), d'ou l'invisibilite du bug.
+      const freshPairIndex = FEE_PAIRS.findIndex(([i, j]) => i === indexIn && j === indexOut);
+      const [freshReservesResult, freshFeesResult] = await Promise.all([
+        refetchReserves(),
+        refetchFees(),
+      ]);
+      const freshReservesData = (freshReservesResult as { data?: ReadonlyArray<{ status: string; result?: bigint }> }).data;
+      const freshFeesData = (freshFeesResult as { data?: ReadonlyArray<{ status: string; result?: bigint }> }).data;
+      const freshR0 = freshReservesData?.[0]?.status === 'success' ? freshReservesData[0].result : undefined;
+      const freshR1 = freshReservesData?.[1]?.status === 'success' ? freshReservesData[1].result : undefined;
+      const freshR2 = freshReservesData?.[2]?.status === 'success' ? freshReservesData[2].result : undefined;
+      const freshEffective = freshFeesData?.[freshPairIndex];
+      const freshEffectiveNum = freshEffective?.status === 'success' ? freshEffective.result : undefined;
+      if (freshR0 === undefined || freshR1 === undefined || freshR2 === undefined || freshEffectiveNum === undefined) {
+        throw new Error('Pool state changed during swap — refresh and retry.');
+      }
+      const freshQuoteResult = getQuote({
+        userAsk: {side, typedAmount, indexIn, indexOut, toleranceInput: tolerance},
+        poolState: {reserves: [freshR0, freshR1, freshR2], effectiveFeeNum: freshEffectiveNum, feeDen},
+      });
+      if (!freshQuoteResult.quote) {
+        throw new Error('Pool state changed during swap — refresh and retry.');
+      }
+      const freshQuote = freshQuoteResult.quote;
+      // A partir d'ici `freshQuote` est la seule reference : approve, pre-vol
+      // et echange lisent le meme `tokenIn.amount`.
+
       const hashApprove = await mutateAsync({
         address: tokensInfo[indexIn].address,
         abi: mockWrappedBTCAbi,
         functionName: "approve",
-        args: [deployedPool, quote.tokenIn.amount],
+        args: [deployedPool, freshQuote.tokenIn.amount],
         gas: TX_GAS_LIMIT,
       })
       // V.5/bug-approve-silent-revert — `waitForTransactionReceipt` rend le
@@ -248,7 +293,7 @@ function SwapForm(props: SwapFormProps) {
         address: deployedPool,
         abi: poolAbi,
         functionName: "swap",
-        args: [BigInt(quote.tokenIn.index), quote.tokenIn.amount, BigInt(quote.tokenOut.index), quote.tokenOut.minAmount],
+        args: [BigInt(freshQuote.tokenIn.index), freshQuote.tokenIn.amount, BigInt(freshQuote.tokenOut.index), freshQuote.tokenOut.minAmount],
         account: userAddress,
         gas: TX_GAS_LIMIT,
       });
@@ -257,7 +302,7 @@ function SwapForm(props: SwapFormProps) {
         address: deployedPool,
         abi: poolAbi,
         functionName: "swap",
-        args: [BigInt(quote.tokenIn.index), quote.tokenIn.amount, BigInt(quote.tokenOut.index), quote.tokenOut.minAmount],
+        args: [BigInt(freshQuote.tokenIn.index), freshQuote.tokenIn.amount, BigInt(freshQuote.tokenOut.index), freshQuote.tokenOut.minAmount],
         gas: TX_GAS_LIMIT,
       })
       // V.5/bug-swap-silent-revert — meme garde que pour l'approve : on
@@ -271,10 +316,12 @@ function SwapForm(props: SwapFormProps) {
       // V.4/bug-race — `invalidateQueries` marque stale sans refetch ;
       // le user balance / reserves reste sur l'ancienne valeur jusqu'au
       // prochain poll, et la quote suivante est calculée sur du faux.
-      // Refetch ciblé sur les deux queries qui bougent réellement (soldes
-      // de l'appelant + réserves du pool) ; le reste (constants, fees,
-      // auction state) n'a aucune raison d'être re-lu.
-      await Promise.all([refetchBalances(), refetchReserves()]);
+      // Refetch ciblé sur les queries qui bougent réellement : soldes de
+      // l'appelant, réserves du pool, et frais effectifs — la surcharge
+      // directionnelle (5 ↔ 10) dépend des réserves, elle a donc pu basculer
+      // sur ce swap. Le reste (constants, auction state) n'a aucune raison
+      // d'être re-lu.
+      await Promise.all([refetchBalances(), refetchReserves(), refetchFees()]);
       setTypedAmount("");
       setSide(null);
       // V.5/bug-tolerance-clear — La tolerance est une preference

@@ -94,6 +94,40 @@ const AddLiquidity = () => {
     if (paused || !userAddress || anchor === null || !quote || !publicClient || balanceError !== null) return;
     setError(null);
     try {
+      // V.5/bug-stale-quote-addliquidity — Refetch des reserves AVANT
+      // l'approve : le contrat preleve `ceilDiv(_amount * r[i], r[anchor])`
+      // sur les reserves FRAICHES, pas sur celles capturees dans le
+      // `quote` du rendu (staleTime: 5_000, wagmi v2 ne re-lit pas sur
+      // nouveau bloc). Si les reserves ont bouge entre le rendu et le
+      // clic, `quote.computed[i]` sous-estime ce que le contrat tire,
+      // `safeTransferFrom` revert sur ERC20InsufficientAllowance, et
+      // l'utilisateur voit « Allowance too low » designant le depot.
+      // Meme chemin que `Swap.tsx` V.5/bug-stale-quote.
+      const freshReservesResult = await refetchReserves();
+      const freshReservesData = (freshReservesResult as { data?: ReadonlyArray<{ status: string; result?: bigint }> }).data;
+      const freshR0 = freshReservesData?.[0]?.status === 'success' ? freshReservesData[0].result : undefined;
+      const freshR1 = freshReservesData?.[1]?.status === 'success' ? freshReservesData[1].result : undefined;
+      const freshR2 = freshReservesData?.[2]?.status === 'success' ? freshReservesData[2].result : undefined;
+      if (freshR0 === undefined || freshR1 === undefined || freshR2 === undefined) {
+        throw new Error('Pool state changed during deposit — refresh and retry.');
+      }
+      const freshSupplyEntry = (freshReservesResult as { data?: ReadonlyArray<{ status: string; result?: bigint }> }).data?.[3];
+      const freshSupply = freshSupplyEntry?.status === 'success' && freshSupplyEntry.result !== undefined
+        ? freshSupplyEntry.result
+        : (supply ?? 0n);
+      const freshQuoteResult = getQuote({
+        anchor,
+        typedAmount,
+        toleranceInput: freshSupply === 0n ? "" : tolerance,
+        reserves: [freshR0, freshR1, freshR2],
+        supply: freshSupply,
+        minLiq,
+      });
+      if (!freshQuoteResult.quote) {
+        throw new Error('Pool state changed during deposit — refresh and retry.');
+      }
+      const freshQuote = freshQuoteResult.quote;
+
       for (let i = 0 ; i < 3 ; i++) {
         setStep(i);
         const token = tokensInfo.find((t) => Number(t.index) === i);
@@ -102,10 +136,21 @@ const AddLiquidity = () => {
           address: token.address,
           abi: mockWrappedBTCAbi,
           functionName: "approve",
-          args: [deployedPool, quote.computed[i]],
+          args: [deployedPool, freshQuote.computed[i]],
           gas: TX_GAS_LIMIT,
         })
-        await publicClient.waitForTransactionReceipt({hash})
+        // V.5/bug-approve-silent-revert — `waitForTransactionReceipt` rend
+        // le receipt avec `status: 'reverted'` SANS throw quand la tx reverte
+        // on-chain (gas cap Base, allowance pre-existante mal calibree, etc.).
+        // Avant ce check, le code enchainait `simulateContract(addLiquidity)`
+        // qui tapait allowance == 0 et surfait "Allowance too low", message
+        // qui designait le depot comme coupable alors que l'approve avait
+        // deja foire en amont. Meme garde que `Swap.tsx` (commit bec3db8),
+        // portee ici sur les trois jambes.
+        const receiptApprove = await publicClient.waitForTransactionReceipt({hash});
+        if (receiptApprove.status !== 'success') {
+          throw new Error(`Approve of ${token.name} reverted on-chain. Check your wallet for details.`);
+        }
       }
       setStep(3);
       // V.5/bug-base-gas-cap — `simulateContract` en pre-vol attrape le vrai revert (allowance,
@@ -117,7 +162,7 @@ const AddLiquidity = () => {
         address: deployedPool,
         abi: poolAbi,
         functionName: "addLiquidity",
-        args: [BigInt(anchor), quote.computed[anchor], quote.minExpected],
+        args: [BigInt(anchor), freshQuote.computed[anchor], freshQuote.minExpected],
         account: userAddress,
         gas: TX_GAS_LIMIT,
       });
@@ -125,10 +170,17 @@ const AddLiquidity = () => {
         address: deployedPool,
         abi: poolAbi,
         functionName: "addLiquidity",
-        args: [BigInt(anchor), quote.computed[anchor], quote.minExpected],
+        args: [BigInt(anchor), freshQuote.computed[anchor], freshQuote.minExpected],
         gas: TX_GAS_LIMIT,
       })
-      await publicClient.waitForTransactionReceipt({hash});
+      // V.5/bug-swap-silent-revert — Symetrique du guard d'approve ci-dessus
+      // : si `addLiquidity` reverte silencieusement (gas cap, breche de
+      // bande post-quote, etc.), le refetch cible tourne sur du faux etat
+      // et la quote suivante est calculee sur des reserves d'avant depot.
+      const receiptAdd = await publicClient.waitForTransactionReceipt({hash});
+      if (receiptAdd.status !== 'success') {
+        throw new Error('AddLiquidity transaction reverted on-chain. Check your wallet for details.');
+      }
       // V.4/bug-race — refetch ciblé des réserves APRÈS settle pour
       // que la prochaine quote voie le bon état du pool. Le supply
       // (totalSupply) est inclus dans le même useReadContracts que

@@ -73,21 +73,38 @@ export function formatAmount(
 }
 
 /**
- * V.5/bug-balances-fake-zero — Formateur BTC adaptatif pour Reserves /
- * Balances. Sous le seuil de 0,0001 BTC (= 10 000 satoshis), le 4-décimales
- * affiche `0.0000` indistinguishable d'un vrai zéro ; on bascule alors à
- * 8 décimales pour exposer la poussière. Au-dessus, on garde le 4-décimales
- * pour la lisibilité des soldes normaux.
+ * V.5/bug-balances-fake-zero — Socle commun des formateurs adaptatifs en
+ * 8 decimales (BTC wrappe et parts LP).
  *
- * Le seuil est volontairement aligné sur l'unité d'affichage 4-décimales
- * (0,0001 BTC) : tout ce qui aurait été tronqué à `0.0000` déclenche le
- * repli en 8 décimales, tout ce qui aurait montré au moins un chiffre
- * significatif reste en 4 décimales.
+ * Sous le seuil de 0,0001 (= 10 000 unites brutes), le 4-decimales
+ * affiche `0.0000`, indistinguishable d'un vrai zero ; on bascule alors a
+ * la precision on-chain complete (8 decimales) pour exposer la poussiere.
+ * Au-dessus, on garde 4 decimales pour la lisibilite.
+ *
+ * Le seuil est aligne sur l'unite d'affichage 4-decimales : tout ce qui
+ * aurait ete tronque a `0.0000` declenche le repli en 8 decimales.
  */
-export function smartBtcAmount(value: bigint | undefined): string {
+function smartEightDecimals(value: bigint | undefined): string {
   if (value === undefined) return '—';
-  if (value < 10000n) {
-    return formatAmount(value, { displayDecimals: 8, tokenDecimals: 8 });
-  }
-  return formatAmount(value, { displayDecimals: 4, tokenDecimals: 8 });
+  return value < 10000n
+    ? formatAmount(value, { displayDecimals: 8, tokenDecimals: 8 })
+    : formatAmount(value, { displayDecimals: 4, tokenDecimals: 8 });
+}
+
+/** Formateur BTC wrappe (8 decimales on-chain) pour Reserves / Balances. */
+export function smartBtcAmount(value: bigint | undefined): string {
+  return smartEightDecimals(value);
+}
+
+/**
+ * Formateur des parts LP pour Balances.
+ *
+ * V.6/bug-lp-shares-zero — Les parts LP sont en 8 decimales, pas 18 :
+ * `Pool.decimals()` rend 8 (fixe « to match the basket tokens »). Les
+ * lire en 18 les affichait 10^10 fois trop petites, donc `0.0000` pour
+ * tout detenteur. Meme repli adaptatif que le BTC : sous 0,0001 LP on
+ * passe a 8 decimales pour qu'un solde de 0,00001 LP reste lisible.
+ */
+export function smartLpAmount(value: bigint | undefined): string {
+  return smartEightDecimals(value);
 }

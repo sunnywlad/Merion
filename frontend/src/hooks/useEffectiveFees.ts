@@ -26,7 +26,7 @@ const pairIndex = (indexIn: number, indexOut: number) =>
 
 export function useEffectiveFees() {
   const { pool } = useDeployedChainId();
-  const { data, isLoading, error, queryKey } = useMerionReadContracts({
+  const { data, isLoading, error, queryKey, refetch } = useMerionReadContracts({
     contracts: FEE_PAIRS.map(([i, j]) => ({
       address: pool,
       abi: poolAbi,
@@ -90,6 +90,13 @@ export function useEffectiveFees() {
     surcharged,
     isLoading,
     error,
+    // V.5/bug-stale-quote — expose refetch pour que `Swap.handleSwap`
+    // puisse forcer la lecture des frais effectifs entre la frappe du
+    // devis et le `simulateContract`. `staleTime: 5_000` couvre
+    // l'onglet, pas le cliquage immediat : wagmi v2 ne re-lit pas sur
+    // nouveau bloc, et un autre trade mempoole peut invalider le devis
+    // sans que la cache s'en apercoive.
+    refetch,
     queryKey
   };
 }

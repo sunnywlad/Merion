@@ -78,13 +78,54 @@ const RemoveLiquidity = () => {
     setError(null);
     try {
       setIsPending(true);
+      // V.5/bug-stale-quote-removeliquidity — Refetch des reserves AVANT
+      // le write : `quote.shares` et `quote.minExpected` sont derives des
+      // reserves (et du supply) caches au rendu, staleTime 5_000, wagmi v2
+      // ne re-lit pas sur nouveau bloc. Si les reserves ont bouge entre
+      // le rendu et le clic, `minExpected` peut sous-estimer ce que le
+      // contrat sort, et `removeLiquidity` revert sur `BadSlippage`
+      // (le contrat exige `amounts[i] >= minOut[i]`). Meme chemin que
+      // `Swap.tsx` et `AddLiquidity.tsx`.
+      const freshReservesResult = await refetchReserves();
+      const freshReservesData = (freshReservesResult as { data?: ReadonlyArray<{ status: string; result?: bigint }> }).data;
+      const freshR0 = freshReservesData?.[0]?.status === 'success' ? freshReservesData[0].result : undefined;
+      const freshR1 = freshReservesData?.[1]?.status === 'success' ? freshReservesData[1].result : undefined;
+      const freshR2 = freshReservesData?.[2]?.status === 'success' ? freshReservesData[2].result : undefined;
+      if (freshR0 === undefined || freshR1 === undefined || freshR2 === undefined) {
+        throw new Error('Pool state changed during withdrawal — refresh and retry.');
+      }
+      const freshSupplyEntry = freshReservesData?.[3];
+      const freshSupply = freshSupplyEntry?.status === 'success' && freshSupplyEntry.result !== undefined
+        ? freshSupplyEntry.result
+        : (supply ?? 0n);
+      const freshQuoteResult = getQuote({
+        anchor,
+        typedAmount,
+        toleranceInput: tolerance,
+        reserves: [freshR0, freshR1, freshR2],
+        supply: freshSupply,
+        maxShares,
+      });
+      if (!freshQuoteResult.quote) {
+        throw new Error('Pool state changed during withdrawal — refresh and retry.');
+      }
+      const freshQuote = freshQuoteResult.quote;
+
       const hash = await mutateAsync({
         address: deployedPool,
         abi: poolAbi,
         functionName: "removeLiquidity",
-        args: [quote.shares, quote.minExpected]
+        args: [freshQuote.shares, freshQuote.minExpected]
       })
-      await publicClient.waitForTransactionReceipt({hash});
+      // V.5/bug-swap-silent-revert — `waitForTransactionReceipt` rend le
+      // receipt avec `status: 'reverted'` SANS throw quand la tx reverte
+      // on-chain. Meme garde que dans Swap/AddLiquidity : on throw
+      // explicite, le `catch` route par `describeTxError`, l'utilisateur
+      // voit la vraie raison au lieu du faux etat post-fail.
+      const receiptRem = await publicClient.waitForTransactionReceipt({hash});
+      if (receiptRem.status !== 'success') {
+        throw new Error('RemoveLiquidity transaction reverted on-chain. Check your wallet for details.');
+      }
       // V.4/bug-race — refetch ciblé des réserves ET du solde LP APRÈS
       // settle : les deux bougent sur un removeLiquidity, et la quote
       // suivante doit voir le nouvel état sans attendre le poll.

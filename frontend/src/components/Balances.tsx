@@ -8,7 +8,7 @@ import { useLpBalance } from '@/hooks/useLpBalance';
 import { useClaimableRent } from '@/hooks/useClaimableRent';
 import { useDeployedChainId } from '@/hooks/useDeployedChainId';
 import { MRN_DECIMALS } from '@/constants/addresses';
-import { formatAmount, smartBtcAmount } from '@/components/ui/formatAmount';
+import { formatAmount, smartBtcAmount, smartLpAmount } from '@/components/ui/formatAmount';
 import { ReadErrorBoundary } from '@/components/ui/ReadErrorBoundary';
 
 /**
@@ -28,7 +28,7 @@ import { ReadErrorBoundary } from '@/components/ui/ReadErrorBoundary';
  * Les chiffres suivent la note §4 :
  *   - BTC wrappé : 4 décimales, troncature, sans grouping
  *   - ETH natif : 4 décimales (même logique mono que le BTC)
- *   - LP shares : 4 décimales (analogie BTC)
+ *   - LP shares : 4 décimales, 8 sous 0,0001 (échelle on-chain : 8)
  */
 export default function Balances() {
   const { status, address: userAddress } = useConnection();
@@ -101,8 +101,7 @@ export default function Balances() {
           isLoading={isLoadingLp}
           error={errorLp}
           value={dataLp}
-          displayDecimals={4}
-          tokenDecimals={18}
+          format={smartLpAmount}
         />
 
         <PositionRow
