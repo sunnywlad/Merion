@@ -5,8 +5,8 @@ import Link from 'next/link';
  *
  * Le jury doit comprendre en dix secondes de quoi il s'agit : un DEX BTC sans
  * oracle, sur actifs wrappés (cbBTC / LBTC / WBTC), avec une enchère de mandat
- * qui gère le rééquilibrage. Proposition de valeur reprise du brand book §5
- * (institutionnel, sobre, lisible ; pas l'imagerie crypto habituelle).
+ * qui gère le rééquilibrage, dans une posture institutionnelle, sobre, lisible
+ * (pas l'imagerie crypto habituelle).
  *
  * Les couleurs viennent des tokens posés par II.1 — aucun hex en dur.
  *

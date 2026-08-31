@@ -8,11 +8,10 @@ import {
 } from '@/components/_mandateStatus';
 
 // I.5/B.1 — Timeline du mandat courant, partagée entre `AuctionBar`
-// (résumé dépliable) et `MandatePanel` (détail). Avant cette tâche, les
-// deux calculaient la même chaîne `currentEpoch → startTime → endTime →
-// totalDuration → lateWindow → timelineStatus` inline, avec un commentaire
-// qui justifiait la duplication par « souci de clarté ». C'est l'inverse
-// : la duplication est un risque de drift, pas un gain de lisibilité.
+// (résumé dépliable) et `MandatePanel` (détail). Source unique de la
+// chaîne `currentEpoch → startTime → endTime → totalDuration →
+// lateWindow → timelineStatus` ; sa dérive serait silencieuse entre
+// les deux sites.
 //
 // Le préfixe `use*` suit la convention wagmi (hook applicatif). La
 // consommation des 3 hooks `useAuctionState` / `useAuctionConstants` /
@@ -44,7 +43,7 @@ export function useMandateTimeline() {
       ? Number(endTime - startTime)
       : undefined;
   const lateWindow = computeLateWindow(totalDuration);
-  // Source unique du `timelineStatus` (note §11, tâche 5) — la
+  // Source unique du `timelineStatus` — la
   // formule est partagée via `_mandateStatus.ts`.
   const timelineStatus: MandateTimelineStatus = computeMandateStatus({
     now,

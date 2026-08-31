@@ -7,10 +7,9 @@ import MandatePanel from '@/components/MandatePanel';
 /**
  * Page `/auction` — Merion.
  *
- * Le bloc AuctionBar (autrefois repliable au-dessus du pli sur `/pool` et
- * `/tools`) devient sa propre route applicative : la barre résumée reste
- * affichée en tête, puis les panneaux Auction + Mandate en pleine lecture
- * (plus de `Disclosure` à déplier). Cf. plan UI §11.
+ * Le bloc AuctionBar devient sa propre route applicative : la barre résumée
+ * reste affichée en tête, puis les panneaux Auction + Mandate en pleine
+ * lecture.
  *
  * `MandatePanel` traite lui-même le cas « enchère non déployée » (rend un
  * message statique plutôt que de se mettre en erreur de lecture), donc on

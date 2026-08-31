@@ -4,7 +4,7 @@ import Panel from '@/components/Panel';
  * Etat « pool en pause » — le flag `paused` du pool est actif, swaps et operations de
  * liquidite sont temporairement suspendus.
  *
- * Ton : warning (brand book §2), signale par une bordure gauche warning, meme si une pause est
+ * Ton : warning, signale par une bordure gauche warning, meme si une pause est
  * un etat operationnel normal, pas un echec. Reserves et enchere restent visibles.
  */
 export function PoolPausedState() {

@@ -5,7 +5,7 @@ import { useReadContract, useConnection } from 'wagmi';
 export function useLpBalance() {
   const { pool } = useDeployedChainId();
   const address = useConnection().address;
-  // V.4/bug-race — `refetch` est exposé pour qu'AddLiquidity et
+  // `refetch` est exposé pour qu'AddLiquidity et
   // RemoveLiquidity puissent re-lire le solde LP APRÈS settle, sans
   // tirer toutes les autres queries via `refetchQueries()` global.
   return useReadContract({
@@ -13,7 +13,7 @@ export function useLpBalance() {
     abi: poolAbi,
     functionName: 'balanceOf',
     args: [address!],
-    // lisse les allers-retours onglet, plan §6 RPC
+    // lisse les allers-retours onglet
     query: { enabled: Boolean(address), staleTime: 5_000 }
   })
 }

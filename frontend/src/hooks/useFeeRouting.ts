@@ -34,7 +34,7 @@ export function useFeeRouting(): {
     splitDen: splitEntry
   } = useConstants();
 
-  // lu par mandat, plan §4 RPC
+  // lu par mandat
   const auction = useAuctionState();
   const epoch = auction.currentEpoch?.status === 'success'
     ? auction.currentEpoch.result

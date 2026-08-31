@@ -1,7 +1,7 @@
 import { formatUnits } from 'viem';
 
 /**
- * Formatteurs de nombres cote affichage pour Merion (note d'inspiration §4).
+ * Formatteurs de nombres cote affichage pour Merion.
  *
  * Regles :
  *   - BTC wrappes (wBTC, cbBTC, LBTC) — 4 decimales, tronquees, sans groupement.
@@ -73,16 +73,16 @@ export function formatAmount(
 }
 
 /**
- * V.5/bug-balances-fake-zero — Socle commun des formateurs adaptatifs en
+ * Socle commun des formateurs adaptatifs en
  * 8 decimales (BTC wrappe et parts LP).
  *
- * Sous le seuil de 0,0001 (= 10 000 unites brutes), le 4-decimales
- * affiche `0.0000`, indistinguishable d'un vrai zero ; on bascule alors a
- * la precision on-chain complete (8 decimales) pour exposer la poussiere.
- * Au-dessus, on garde 4 decimales pour la lisibilite.
+ * Sous le seuil de 0,0001 (= 10 000 unités brutes), le 4-decimales
+ * affiche `0.0000`, indiscernable d'un vrai zéro ; on bascule alors à
+ * la precision on-chain complete (8 decimales) pour exposer la poussière.
+ * Au-dessus, on garde 4 decimales pour la lisibilité.
  *
- * Le seuil est aligne sur l'unite d'affichage 4-decimales : tout ce qui
- * aurait ete tronque a `0.0000` declenche le repli en 8 decimales.
+ * Le seuil est aligné sur l'unité d'affichage 4-decimales : tout ce qui
+ * tombe à `0.0000` au 4-decimales déclenche le repli en 8 decimales.
  */
 function smartEightDecimals(value: bigint | undefined): string {
   if (value === undefined) return '—';
@@ -99,11 +99,11 @@ export function smartBtcAmount(value: bigint | undefined): string {
 /**
  * Formateur des parts LP pour Balances.
  *
- * V.6/bug-lp-shares-zero — Les parts LP sont en 8 decimales, pas 18 :
+ * Les parts LP sont en 8 décimales, pas 18 :
  * `Pool.decimals()` rend 8 (fixe « to match the basket tokens »). Les
- * lire en 18 les affichait 10^10 fois trop petites, donc `0.0000` pour
- * tout detenteur. Meme repli adaptatif que le BTC : sous 0,0001 LP on
- * passe a 8 decimales pour qu'un solde de 0,00001 LP reste lisible.
+ * lire en 18 les afficherait 10^10 fois trop petites, donc `0.0000` pour
+ * tout détenteur. Meme repli adaptatif que le BTC : sous 0,0001 LP on
+ * passe à 8 décimales pour qu'un solde de 0,00001 LP reste lisible.
  */
 export function smartLpAmount(value: bigint | undefined): string {
   return smartEightDecimals(value);

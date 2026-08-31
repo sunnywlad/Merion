@@ -11,7 +11,7 @@ type LoadingStateProps = {
  * Etat de chargement Merion — placeholder uniforme pendant qu'une lecture est en vol.
  *
  * Meme surface que les autres etats du lot (Panel Slate, titre H4, description body). Icone de
- * contour optionnelle a gauche ; geometrie simple (brand book §8).
+ * contour optionnelle a gauche ; geometrie simple.
  *
  * `LoadingState` est un placeholder pour les lectures en vol, pas pour des donnees vides :
  * un tableau de reserves vide n'est pas un etat de chargement.

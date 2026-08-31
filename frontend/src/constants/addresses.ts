@@ -1,13 +1,11 @@
 // V.4 — câblage bi-réseau (Hardhat 31337 + Base Sepolia 84532).
 //
-// Avant (V.3), le front était verrouillé sur 84532 par une constante de
-// module, optimisé pour le push Vercel. Le défaut a été remis à 84532
-// (Base Sepolia) pour le SSR et toute chaîne non supportée, mais les
-// addresses sont maintenant lues dynamiquement par le hook
+// Le défaut est 84532 (Base Sepolia) pour le SSR et toute chaîne non
+// supportée, mais les addresses sont lues dynamiquement par le hook
 // `src/hooks/useAddresses.ts` à partir de la chaîne connectée.
 //
-// Les exports nommés `deployedPool`, `deployedMrn`, etc. ont été
-// supprimés : leur valeur figée au chargement du module ne pouvait pas
+// Les exports nommés `deployedPool`, `deployedMrn`, etc. sont
+// indisponibles : leur valeur figée au chargement du module ne peut pas
 // suivre un changement de wallet. Voir le hook pour la version
 // réactive. Seuls `MRN_DECIMALS` (constant dans MRN.sol) et le helper
 // `getAddressesForChain` restent en export statique.
@@ -30,11 +28,9 @@ const addresses = {
     faucet: "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9" as `0x${string}` | null,
     mrn: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512" as `0x${string}`
   },
-  // Entree Base Sepolia (chainId 84532), redeployee le 2026-08-30 par
-  // `npx hardhat ignition deploy ignition/modules/merion.ts --network
-  // baseSepolia --reset` apres passage de `PRIORITY_WINDOW` a 240 s.
-  // Sept adresses neuves, une par contrat, plus la transaction
-  // `Pool.setAuction` du batch final.
+  // Entrée Base Sepolia (chainId 84532) avec `PRIORITY_WINDOW` à 240 s.
+  // Sept adresses, une par contrat, plus la transaction `Pool.setAuction`
+  // du batch de déploiement.
   84532: {
     tokens: [
       { name: "wBTC", address: "0x7A03f5560d04743194bBfD303D8345f8dAad4c72", index: 0n },
@@ -63,9 +59,8 @@ export const CHAIN_NAMES: Record<SupportedChainId, string> = {
 /**
  * Le wallet est-il sur une chaine ou le pool existe reellement.
  *
- * Le test unique qui garde chaque ecriture. Il a remplace un `chainId !== 84532` code en dur
- * qui contredisait la table ci-dessus : les adresses etaient deja resolues par chaine, donc
- * un wallet Hardhat resolvait les bonnes adresses et etait quand meme refuse a chaque bouton.
+ * Le test unique qui garde chaque ecriture. Il vérifie la présence dans
+ * la table `addresses` ci-dessus, qui résout les adresses par chaîne.
  */
 export function isSupportedChain(chainId: number | undefined): chainId is SupportedChainId {
   return chainId !== undefined && chainId in addresses;

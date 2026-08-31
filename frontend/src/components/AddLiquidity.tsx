@@ -33,9 +33,9 @@ const TX_GAS_LIMIT = 5_000_000n;
 // II.2d — chaîne id du pool, miroir de constants/addresses.
 // `INPUT_CLASS_MONO` vit dans `ui/formClasses.ts` depuis R3/C.1.
 
-/** V.5/bug-form-precision — BTC wrappé à 8 décimales affichées (précision
+/** BTC wrappé à 8 décimales affichées (précision
  *  on-chain). Tous les montants des formulaires à 8 décimales, cf. la
- *  décision dans `Swap.tsx` : le 4-décimales masquait les fees sub-display. */
+ *  décision dans `Swap.tsx` : le 4-décimales masquerait les fees sub-display. */
 const btcAmount = (v: bigint) =>
   formatAmount(v, { displayDecimals: 8, tokenDecimals: 8 });
 
@@ -94,15 +94,15 @@ const AddLiquidity = () => {
     if (paused || !userAddress || anchor === null || !quote || !publicClient || balanceError !== null) return;
     setError(null);
     try {
-      // V.5/bug-stale-quote-addliquidity — Refetch des reserves AVANT
+      // Refetch des reserves AVANT
       // l'approve : le contrat preleve `ceilDiv(_amount * r[i], r[anchor])`
       // sur les reserves FRAICHES, pas sur celles capturees dans le
       // `quote` du rendu (staleTime: 5_000, wagmi v2 ne re-lit pas sur
-      // nouveau bloc). Si les reserves ont bouge entre le rendu et le
+      // nouveau bloc). Si les reserves ont bougé entre le rendu et le
       // clic, `quote.computed[i]` sous-estime ce que le contrat tire,
       // `safeTransferFrom` revert sur ERC20InsufficientAllowance, et
       // l'utilisateur voit « Allowance too low » designant le depot.
-      // Meme chemin que `Swap.tsx` V.5/bug-stale-quote.
+      // Meme chemin que `Swap.tsx`.
       const freshReservesResult = await refetchReserves();
       const freshReservesData = (freshReservesResult as { data?: ReadonlyArray<{ status: string; result?: bigint }> }).data;
       const freshR0 = freshReservesData?.[0]?.status === 'success' ? freshReservesData[0].result : undefined;
@@ -139,21 +139,21 @@ const AddLiquidity = () => {
           args: [deployedPool, freshQuote.computed[i]],
           gas: TX_GAS_LIMIT,
         })
-        // V.5/bug-approve-silent-revert — `waitForTransactionReceipt` rend
+        // `waitForTransactionReceipt` rend
         // le receipt avec `status: 'reverted'` SANS throw quand la tx reverte
-        // on-chain (gas cap Base, allowance pre-existante mal calibree, etc.).
-        // Avant ce check, le code enchainait `simulateContract(addLiquidity)`
-        // qui tapait allowance == 0 et surfait "Allowance too low", message
-        // qui designait le depot comme coupable alors que l'approve avait
-        // deja foire en amont. Meme garde que `Swap.tsx` (commit bec3db8),
-        // portee ici sur les trois jambes.
+        // on-chain (gas cap Base, allowance pré-existante mal calibrée, etc.).
+        // Sans ce check, la `simulateContract(addLiquidity)` qui suit
+        // taperait allowance == 0 et surfacerait "Allowance too low", message
+        // qui désignerait le dépôt comme coupable alors que l'approve aurait
+        // déjà foiré en amont. Meme garde que `Swap.tsx`, portée ici sur
+        // les trois jambes.
         const receiptApprove = await publicClient.waitForTransactionReceipt({hash});
         if (receiptApprove.status !== 'success') {
           throw new Error(`Approve of ${token.name} reverted on-chain. Check your wallet for details.`);
         }
       }
       setStep(3);
-      // V.5/bug-base-gas-cap — `simulateContract` en pre-vol attrape le vrai revert (allowance,
+      // `simulateContract` en pre-vol attrape le vrai revert (allowance,
       // solde, slippage) AVANT de passer la main au wallet. Sans ça, un appel qui reverte tombe
       // dans le gas de repli du wallet, au-dessus du cap Base (2^24), et l'utilisateur voit
       // « exceeds max transaction gas limit » au lieu de la vraie raison. On expose le revert
@@ -173,25 +173,25 @@ const AddLiquidity = () => {
         args: [BigInt(anchor), freshQuote.computed[anchor], freshQuote.minExpected],
         gas: TX_GAS_LIMIT,
       })
-      // V.5/bug-swap-silent-revert — Symetrique du guard d'approve ci-dessus
-      // : si `addLiquidity` reverte silencieusement (gas cap, breche de
-      // bande post-quote, etc.), le refetch cible tourne sur du faux etat
-      // et la quote suivante est calculee sur des reserves d'avant depot.
+      // Symétrique du garde d'approve ci-dessus
+      // : si `addLiquidity` reverte silencieusement (gas cap, brèche de
+      // bande post-quote, etc.), le refetch ciblé tourne sur du faux état
+      // et la quote suivante est calculée sur des réserves d'avant dépôt.
       const receiptAdd = await publicClient.waitForTransactionReceipt({hash});
       if (receiptAdd.status !== 'success') {
         throw new Error('AddLiquidity transaction reverted on-chain. Check your wallet for details.');
       }
-      // V.4/bug-race — refetch ciblé des réserves APRÈS settle pour
+      // refetch ciblé des réserves APRÈS settle pour
       // que la prochaine quote voie le bon état du pool. Le supply
       // (totalSupply) est inclus dans le même useReadContracts que
       // les réserves, donc un seul appel RPC suffit.
       //
-      // V.5/bug-cache-addliquidity — Trois queries bougent sur un
+      // Trois queries bougent sur un
       // dépôt : réserves du pool (useReserves), soldes BTC de l'user
       // (useUserBalances — il vient de dépenser 3 legs), et son solde
-      // LP (useLpBalance — il vient de recevoir des parts). Avant ce
-      // fix seul `refetchReserves()` tournait, donc le rail « Your
-      // balances » affichait `LP Shares 0.0000` jusqu'au prochain
+      // LP (useLpBalance — il vient de recevoir des parts). Sans ce
+      // refetch, le rail « Your
+      // balances » resterait sur `LP Shares 0.0000` jusqu'au prochain
       // poll staleTime.
       await Promise.all([refetchReserves(), refetchBalances(), refetchLpBalance()]);
       setTypedAmount("");

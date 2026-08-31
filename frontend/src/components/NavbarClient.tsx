@@ -15,7 +15,7 @@ const NAV_LINKS = [
  *
  * Détachée de la coque server (`Navbar.tsx`) pour qu'aucun JS client
  * ne soit bundlé sur la landing marketing (`app/(marketing)/`), où ce
- * composant n'est jamais monté. Cf. plan perf-frontend §3, Étape C.
+ * composant n'est jamais monté.
  *
  * Responsabilité client unique : `usePathname()` pour souligner
  * l'onglet actif en Merion Blue. Le bouton AppKit est rendu par

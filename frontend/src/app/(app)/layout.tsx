@@ -10,9 +10,9 @@ import { ChainNowProvider } from '@/hooks/useChainNow';
  * C'est ici que vit le web3 : `Providers` (wagmi + react-query + AppKit)
  * enveloppe tout le sous-arbre applicatif. La landing, en
  * `app/(landing)/`, est en dehors de ce groupe et ne charge donc rien
- * de tout ça — cf. plan perf-frontend §3, Étape C.
+ * de tout ça.
  *
- * Structure — note d'inspiration §1 :
+ * Structure :
  *   [Navbar]                          ← h-16, fixe en haut
  *   [Rail | Colonne principale]        ← outer flex
  *     Rail : 320 px (20 rem), bg-slate, padding interne, scrolle si jamais
@@ -23,14 +23,14 @@ import { ChainNowProvider } from '@/hooks/useChainNow';
  * Marges extérieures : 32 px (2 rem) en haut, en bas, à droite. Le rail
  * colle au bord gauche (0 px) — sa propre marge interne fait le travail.
  *
- * La contrainte dure (note §6) : `scrollHeight ≤ innerHeight` à 1440×900
+ * La contrainte dure : `scrollHeight ≤ innerHeight` à 1440×900
  * portefeuille connecté et données chargées, sur `/swap`, `/pool`, `/tools`.
  * Le `main` n'a pas de `overflow-y-auto` : la page ne scrolle pas quand
  * AuctionBar est repliée. Quand AuctionBar est dépliée, le défilement
  * est acceptable (ce n'est plus l'état par défaut).
  *
  * Typage manuel : `LayoutProps<"/">` n'est pas garanti pour un groupe
- * `(app)` (cf. etat.md, pièges vérifiés). On type à la main.
+ * `(app)`. On type à la main.
  */
 export default function AppLayout({
   children,

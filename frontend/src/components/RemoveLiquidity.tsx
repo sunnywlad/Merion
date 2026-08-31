@@ -22,28 +22,25 @@ import { Panel } from "@/components/Panel";
 import { INPUT_CLASS_MONO } from "@/components/ui/formClasses";
 
 // V.5 — même plafond par transaction que `Swap` / `AddLiquidity` (cf. le
-// commentaire dans `AddLiquidity.tsx` et `Swap.tsx`). `removeLiquidity`
-// avait été oublié : sans `gas` explicite, la repli gaz du wallet sur
-// Base / Base Sepolia peut dépasser le cap 2^24 et la tx échoue avec
-// « exceeds max transaction gas limit » au lieu du vrai revert — d'où
-// l'absence de remise à jour des réserves observée côté UI. Le
-// `simulateContract` ci-dessous expose le revert réel (slippage, solde)
-// avant de passer la main au wallet, comme pour les deux autres flux.
+// commentaire dans `AddLiquidity.tsx` et `Swap.tsx`). Sans `gas` explicite,
+// le repli gaz du wallet sur Base / Base Sepolia peut dépasser le cap 2^24
+// et la tx échoue avec « exceeds max transaction gas limit » au lieu du
+// vrai revert. Le `simulateContract` ci-dessous expose le revert réel
+// (slippage, solde) avant de passer la main au wallet, comme pour les
+// deux autres flux.
 const TX_GAS_LIMIT = 5_000_000n;
 
 // II.2d — chaîne id du pool, miroir de constants/addresses.
-// `INPUT_CLASS_MONO` vit dans `ui/formClasses.ts` depuis R3/C.1.
-// `font-mono num-tabular` était précédemment ajouté au site d'appel
-// (`${inputClass} font-mono num-tabular`) — la divergence avec Swap et
-// AddLiquidity est résorbée : les deux classes sont désormais dans
-// `INPUT_CLASS_MONO`.
+// `INPUT_CLASS_MONO` vit dans `ui/formClasses.ts` (R3/C.1) et combine
+// `font-mono` + `num-tabular`. Les trois formulaires (Swap, AddLiquidity,
+// RemoveLiquidity) l'utilisent tel quel.
 
 /**
- * Merion remove liquidity — note d'inspiration §6 + §8.
+ * Merion remove liquidity.
  *
  * Replié par défaut : `/pool` ne peut pas tenir en viewport 1440×900 si
  * les deux formulaires sont ouverts en même temps. L'en-tête de carte
- * est cliquable en entier (note §8), avec un chevron 12 px Neutral
+ * est cliquable en entier, avec un chevron 12 px Neutral
  * pivotant à 180°. L'action la plus fréquente étant l'ajout, on garde
  * `Add Liquidity` ouvert et on replie `Remove Liquidity`.
  */
@@ -89,10 +86,10 @@ const RemoveLiquidity = () => {
     setError(null);
     try {
       setIsPending(true);
-      // V.5/bug-stale-quote-removeliquidity — Refetch des reserves AVANT
-      // le write : `quote.shares` et `quote.minExpected` sont derives des
-      // reserves (et du supply) caches au rendu, staleTime 5_000, wagmi v2
-      // ne re-lit pas sur nouveau bloc. Si les reserves ont bouge entre
+      // Refetch des reserves AVANT
+      // le write : `quote.shares` et `quote.minExpected` sont dérivés des
+      // reserves (et du supply) cachés au rendu, staleTime 5_000, wagmi v2
+      // ne re-lit pas sur nouveau bloc. Si les reserves ont bougé entre
       // le rendu et le clic, `minExpected` peut sous-estimer ce que le
       // contrat sort, et `removeLiquidity` revert sur `BadSlippage`
       // (le contrat exige `amounts[i] >= minOut[i]`). Meme chemin que
@@ -122,7 +119,7 @@ const RemoveLiquidity = () => {
       }
       const freshQuote = freshQuoteResult.quote;
 
-      // V.5/bug-base-gas-cap — `simulateContract` en pre-vol attrape le vrai
+      // `simulateContract` en pre-vol attrape le vrai
       // revert (slippage, solde, etc.) AVANT de passer la main au wallet.
       // Sans ça, un appel qui reverte tombe dans le gaz de repli du wallet,
       // au-delà du cap Base (2^24), et l'utilisateur voit « exceeds max
@@ -144,22 +141,22 @@ const RemoveLiquidity = () => {
         args: [freshQuote.shares, freshQuote.minExpected],
         gas: TX_GAS_LIMIT,
       })
-      // V.5/bug-swap-silent-revert — `waitForTransactionReceipt` rend le
+      // `waitForTransactionReceipt` rend le
       // receipt avec `status: 'reverted'` SANS throw quand la tx reverte
       // on-chain. Meme garde que dans Swap/AddLiquidity : on throw
       // explicite, le `catch` route par `describeTxError`, l'utilisateur
-      // voit la vraie raison au lieu du faux etat post-fail.
+      // voit la vraie raison au lieu du faux état post-fail.
       const receiptRem = await publicClient.waitForTransactionReceipt({hash});
       if (receiptRem.status !== 'success') {
         throw new Error('RemoveLiquidity transaction reverted on-chain. Check your wallet for details.');
       }
-      // V.4/bug-race — refetch ciblé des réserves ET du solde LP APRÈS
+      // refetch ciblé des réserves ET du solde LP APRÈS
       // settle : les deux bougent sur un removeLiquidity, et la quote
       // suivante doit voir le nouvel état sans attendre le poll.
       //
-      // V.5/bug-cache-removeliquidity — Symetrique du fix AddLiquidity :
-      // un retrait credite les 3 BTCs de l'user, donc `useUserBalances`
-      // doit aussi refetcher. Sans ca, le rail « Your balances » reste
+      // Symétrique du fix AddLiquidity :
+      // un retrait crédite les 3 BTCs de l'user, donc `useUserBalances`
+      // doit aussi refetcher. Sans ça, le rail « Your balances » resterait
       // sur les soldes d'avant le retrait.
       await Promise.all([refetchReserves(), refetchLpBalance(), refetchBalances()]);
       setTypedAmount("");
@@ -212,7 +209,7 @@ const RemoveLiquidity = () => {
                 {tokensInfo.map((token) => {
                   const i = Number(token.index) as 0 | 1 | 2;
                   const full = displayAmount(i);
-                  // Tronque l'affichage à 4 décimales (note §4) ; la valeur reste
+                  // Tronque l'affichage à 4 décimales ; la valeur reste
                   // saisie en interne, l'arrondi ne sert qu'à l'écran.
                   const shown = full === '' ? '' : (Number(full).toFixed(4).replace(/\.?0+$/, '') || '0');
                   return (
@@ -278,9 +275,9 @@ const RemoveLiquidity = () => {
               {minDisplay && (
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   {minDisplay.map((amount, i) => {
-                    // V.5/bug-form-precision — 8 décimales (cf. Swap/AddLiquidity),
-                    // precision on-chain, pas de troncature a 4 qui masquait les
-                    // minime subtokens.
+                    // 8 décimales (cf. Swap/AddLiquidity),
+                    // precision on-chain, pas de troncature à 4 qui masquerait les
+                    // minimes subtokens.
                     const trimmed = Number(amount).toFixed(8).replace(/\.?0+$/, '') || '0';
                     return (
                       <KpiCard

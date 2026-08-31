@@ -72,7 +72,7 @@ function Sparkline({ values }: { values: number[] }) {
 }
 
 /**
- * Merion KPI card — planche 06 du brand book. Fond Slate, valeur en grand,
+ * Merion KPI card — fond Slate, valeur en grand,
  * delta coloré, mention de la période, micro-graphique optionnel.
  */
 export function KpiCard({

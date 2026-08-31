@@ -17,9 +17,9 @@ const VARIANT_CLASS: Record<BadgeVariant, string> = {
 };
 
 /**
- * Merion badge — planche 06 du brand book. Pilule contournée, cinq variantes.
+ * Merion badge — pilule contournée, cinq variantes.
  *
- * Variantes prévues par le brand book : New, Active, Beta, Deprecated.
+ * Variantes : New, Active, Beta, Deprecated.
  * `neutral` est un fallback pour les usages non encore listés.
  */
 export function Badge({

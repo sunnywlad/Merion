@@ -8,10 +8,8 @@ import { MandateTimeline } from '@/components/MandateTimeline';
 
 /**
  * Frise d'enchère isolée, montée juste sous `AuctionSummary` sur la page
- * `/auction`. Extraite de `MandatePanel`, où elle ouvrait la section
- * « Current mandate » : l'animation de progression du mandat est désormais
- * la première chose visible sous le résumé, avant les panneaux d'enchère
- * et de mandat.
+ * `/auction`. L'animation de progression du mandat est la première chose
+ * visible sous le résumé, avant les panneaux d'enchère et de mandat.
  *
  * Composant « dumb » côté rendu : toute la dérivation temporelle vient des
  * hooks, `MandateTimeline` ne reçoit que des nombres. Rend `null` tant que

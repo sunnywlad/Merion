@@ -12,25 +12,25 @@ type AmountLineProps = {
   /** Style de groupement. Defaut 'none'. 'fr' pour les montants MRN. */
   grouping?: Grouping;
   /**
-   * Unite affichee apres la valeur. Note d'inspiration §4 :
+   * Unite affichee apres la valeur.
    *   - `wBTC`, `MRN`, `h` : rendu en `<span>` séparé, Code Small Neutral,
    *     avec espace insécable (NARROW NO-BREAK SPACE) devant — l'unité NE
    *     fait PAS partie de la colonne de chiffres alignée.
    *   - `%` : rendu en ligne dans le bloc mono, collé sans espace, parce
-   *     que la note §4 distingue `%` intra-mono (`39,61%`) du `%` hors
+   *     que la convention distingue `%` intra-mono (`39,61%`) du `%` hors
    *     mono (rail Small : `39,61 %`).
    */
   unit?: string;
 };
 
 /**
- * Ligne de montant Merion — note d'inspiration §4.
+ * Ligne de montant Merion.
  *
  * `font-variant-numeric: tabular-nums` aligne la colonne de chiffres (balances du rail,
  * reserves, pourcentages). L'unite est hors de cette colonne, sauf `%`, que la spec colle au bloc mono.
  *
  * Les quatre etats sont evalues dans l'ordre : pendant le chargement, `value` est aussi
- * undefined, et la troisieme branche volerait l'affichage a la premiere. Brand book §2 : une
+ * undefined, et la troisieme branche volerait l'affichage a la premiere — une
  * valeur numerique ne porte pas de couleur semantique par defaut.
  */
 export default function AmountLine({
@@ -66,7 +66,7 @@ export default function AmountLine({
     contentClass = 'text-cloud';
   }
 
-  // §4 : `%` reste colle dans le bloc mono ; toute autre unite a son propre span precede
+  // `%` reste colle dans le bloc mono ; toute autre unite a son propre span precede
   // d'une espace fine insecable, pour garder la colonne de chiffres alignee verticalement.
   const inlineUnit = unit === '%';
 

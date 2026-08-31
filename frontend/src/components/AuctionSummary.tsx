@@ -9,14 +9,11 @@ import { secondsLeft, formatCountdown } from '@/lib/readMandateWindow';
 /**
  * Merion `AuctionSummary` — entête de la page `/auction`.
  *
- * Avant : c'était le `trigger` du `Disclosure` dans `AuctionBar.tsx`, rendu
- * replié par défaut au-dessus de `/pool` et `/tools`.
- * Maintenant : route dédiée, plus de repli — la barre résumée reste
- * affichée en tête de page, et les panneaux `AuctionPanel` + `MandatePanel`
- * sont montés en pleine lecture juste en dessous.
+ * La barre résumée reste affichée en tête de page, et les panneaux
+ * `AuctionPanel` + `MandatePanel` sont montés en pleine lecture juste en
+ * dessous.
  *
- * Contenu inchangé par rapport à l'ancien trigger : index du mandat,
- * statut, frais de base, temps restant.
+ * Contenu : index du mandat, statut, frais de base, temps restant.
  */
 export function AuctionSummary() {
   const fees = useEffectiveFees();

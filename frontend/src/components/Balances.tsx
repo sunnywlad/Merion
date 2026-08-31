@@ -12,20 +12,18 @@ import { formatAmount, smartBtcAmount, smartLpAmount } from '@/components/ui/for
 import { ReadErrorBoundary } from '@/components/ui/ReadErrorBoundary';
 
 /**
- * Merion « Your position » — note d'inspiration §7, tâche 3.
+ * Merion « Your position ».
  *
- * Version allégée : la fenêtre ne sert plus que les balances on-chain —
- * les BTC wrappés (wBTC / cbBTC / LBTC), l'ETH natif du réseau, et les
- * parts LP (cf. demande : ajout de « LP Shares »). Le MRN et les claims
- * ont été retirés pour garder la page swap simple. Le solde ETH natif
- * vient de `useBalance` (sans `token` : balance native de la chaîne
- * courante) ; les parts LP de `useLpBalance`.
+ * La fenêtre affiche les balances on-chain — les BTC wrappés
+ * (wBTC / cbBTC / LBTC), l'ETH natif du réseau, et les parts LP. Le
+ * solde ETH natif vient de `useBalance` (sans `token` : balance native
+ * de la chaîne courante) ; les parts LP de `useLpBalance`.
  *
  * Affichage minimal : à gauche le symbole, à droite le montant, sans
  * phrase « Your … balance » ni en-tête de groupe. Tailles de police
- * alignées sur le rail gauche « Pool » (cf. demande).
+ * alignées sur le rail gauche « Pool ».
  *
- * Les chiffres suivent la note §4 :
+ * Les chiffres suivent les règles d'affichage :
  *   - BTC wrappé : 4 décimales, troncature, sans grouping
  *   - ETH natif : 4 décimales (même logique mono que le BTC)
  *   - LP shares : 4 décimales, 8 sous 0,0001 (échelle on-chain : 8)
@@ -87,10 +85,10 @@ export default function Balances() {
               value={
                 entry?.status === 'success' ? entry.result : undefined
               }
-              // V.5/bug-balances-fake-zero — Pour les BTC wrappes on
+              // Pour les BTC wrappes on
               // utilise `smartBtcAmount` (< 0.0001 BTC -> 8 decimales),
-              // au lieu du `formatAmount` 4-decimales qui masquait la
-              // poussiere (cf. Reserves, meme logique).
+              // au lieu du `formatAmount` 4-decimales qui masquerait la
+              // poussière (cf. Reserves, même logique).
               format={smartBtcAmount}
             />
           );

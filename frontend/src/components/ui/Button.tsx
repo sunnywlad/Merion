@@ -9,13 +9,13 @@ type ButtonProps = {
 } & Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children'>;
 
 /**
- * Merion button — planche 06 du brand book, trois niveaux, quatre états.
+ * Merion button — trois niveaux, quatre états.
  *
  * États : default / hover / active / disabled.
  * La flèche `→` apparaît en fin de libellé, sauf pour le Tertiaire qui n'a pas
  * de libellé d'action. Le contrôleur passe `showArrow` pour la forcer.
  *
- * Focus visible : bordure Merion Blue de 2 px (cf. brand book §7).
+ * Focus visible : bordure Merion Blue de 2 px.
  */
 export function Button({
   level = 'primary',

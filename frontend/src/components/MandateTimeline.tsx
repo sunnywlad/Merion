@@ -30,8 +30,7 @@ const STATUS_LABEL: Record<MandateTimelineStatus, string> = {
 };
 
 /**
- * Merion mandate timeline — note d'inspiration §11, différenciateur du
- * produit. La frise encode deux zones contiguës (bid / body), le
+ * Merion mandate timeline, différenciateur du produit. La frise encode deux zones contiguës (bid / body), le
  * curseur du présent qui glisse le long de la timeline, et un badge
  * de statut en haut à droite.
  *

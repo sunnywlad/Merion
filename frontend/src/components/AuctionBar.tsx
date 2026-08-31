@@ -13,13 +13,13 @@ import Disclosure from '@/components/ui/Disclosure';
 import { Badge, type BadgeVariant } from '@/components/ui/Badge';
 
 /**
- * Merion AuctionBar — note d'inspiration §7 + §11.
+ * Merion AuctionBar.
  *
  * Barre d'enchère permanente au-dessus du pli, sur les trois routes
  * applicatives. C'est le différenciateur du produit : sa présence
  * constante signale que Merion n'est ni un swap pur ni un lend pur.
  *
- * Note §11 — toujours visible, même repliée. La barre résumée montre
+ * Toujours visible, même replié. La barre résumée montre
  * en permanence :
  *   - l'index du mandat (gauche),
  *   - le statut (`ACTIVE`, `NEXT MANDATE`, `LATE WINDOW`, `CLOSED`),
@@ -28,9 +28,8 @@ import { Badge, type BadgeVariant } from '@/components/ui/Badge';
  *
  * Jamais un simple lien « Show details » sans contenu. Le dépliage
  * montre le panneau d'enchère (saisie d'enchère, refund, settle, setFee)
- * et le détail du mandat (timeline, surcharge, loyer à réclamer), en
- * supprimant la duplication observée entre la barre et l'ancien bloc
- * « Mandate » du rail — le mandat quitte le rail (cf. §7).
+ * et le détail du mandat (timeline, surcharge, loyer à réclamer) ; le
+ * mandat quitte le rail.
  */
 export default function AuctionBar() {
   const fees = useEffectiveFees();
@@ -60,7 +59,7 @@ export default function AuctionBar() {
       ? secondsLeft(endTime, now)
       : null;
 
-  // — Frais de base en vigueur, format français (note §4).
+  // — Frais de base en vigueur, format français.
   const feeDenEntry = poolConstants.feeDen;
   const feeDen =
     feeDenEntry?.status === 'success' ? feeDenEntry.result : undefined;
@@ -68,7 +67,7 @@ export default function AuctionBar() {
     fees.base !== undefined && feeDen
       ? Number((fees.base * 10000n) / feeDen) / 100
       : undefined;
-  // Pourcentages en mono : `%` collé sans espace (note §4 « à l'intérieur
+  // Pourcentages en mono : `%` collé sans espace (« à l'intérieur
   // du nombre mono »). On convertit avec `.replace('.', ',')` pour le
   // séparateur décimal français ; grouping milliers non pertinent sur
   // ces valeurs (jamais au-delà de 99,99 %).

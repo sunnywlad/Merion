@@ -11,7 +11,7 @@ import ReservesBar from '@/components/ReservesBar';
  * Merion pool reserves — sous-section du rail « Pool » (cf. PoolRail).
  *
  * Lecture sur les mêmes hooks que la page `/pool`. La détection d'erreur
- * suit le motif de la voie C (§II.2d) : un échec global court-circuite
+ * suit le motif : un échec global court-circuite
  * vers la borne d'état ; les erreurs par entrée restent visibles en
  * ligne via la ligne de montant de chaque token, où elles ont leur
  * place.
@@ -106,9 +106,9 @@ function TokenAmountRow({ isLoading, error, value, unit }: TokenAmountRowProps) 
     content = '—';
     contentClass = 'text-cloud/60';
   } else {
-    // V.5/bug-balances-fake-zero — Formateur adaptatif : < 0.0001 BTC
+    // Formateur adaptatif : < 0.0001 BTC
     // passe en 8 decimales (cf. `smartBtcAmount` dans `formatAmount.ts`),
-    // sinon 4-decimales pour la lisibilite.
+    // sinon 4-decimales pour la lisibilité.
     content = smartBtcAmount(value);
     contentClass = 'text-cloud';
   }

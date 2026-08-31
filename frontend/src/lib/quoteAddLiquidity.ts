@@ -45,11 +45,11 @@ export const getQuote = ({
   }
 
   const anchorReserve = reserves[anchor];
-  // V.5/bug-addliquidity-rounding — reproduire le Math.ceilDiv du contrat sur les trois montants
-  // preleves. La division au plancher rendait ici, pour tout token non-ancre, un montant 1 unite
-  // trop court des que `amount * reserves[i]` n'etait pas divisible par `anchorReserve` ; le
-  // safeTransferFrom revertait alors avec ERC20InsufficientAllowance. Le bootstrap est exact
-  // (3 depots egaux) et traite separement ci-dessus.
+  // Reproduire le Math.ceilDiv du contrat sur les trois montants
+  // prélevés. La division au plancher rendrait ici, pour tout token non-ancre, un montant 1 unité
+  // trop court dès que `amount * reserves[i]` n'est pas divisible par `anchorReserve` ; le
+  // safeTransferFrom reverterait alors avec ERC20InsufficientAllowance. Le bootstrap est exact
+  // (3 depots egaux) et traité separement ci-dessus.
   const computed: [bigint, bigint, bigint] = [
     ceilDiv(amount * reserves[0], anchorReserve),
     ceilDiv(amount * reserves[1], anchorReserve),

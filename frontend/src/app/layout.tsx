@@ -26,8 +26,7 @@ export const metadata: Metadata = {
  * Les `Providers` (wagmi + react-query + AppKit) et le `Navbar` (qui monte
  * `<appkit-button>`) sont wrappés par `app/(app)/layout.tsx`, pas ici.
  * Conséquence : la landing `app/(landing)/page.tsx` ne charge ni wagmi,
- * ni AppKit, ni react-query — cf. plan perf-frontend §3, Étape C
- * (gain cible : ~127 KB gzip sur `/`).
+ * ni AppKit, ni react-query (gain cible : ~127 KB gzip sur `/`).
  */
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (

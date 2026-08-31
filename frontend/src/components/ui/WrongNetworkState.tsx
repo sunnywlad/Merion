@@ -7,7 +7,7 @@ import { SUPPORTED_CHAINS_LABEL } from './deployment';
  * La chaine attendue vit dans `./deployment` (source de verite unique). Le CTA reutilise le
  * web component `appkit-button` ; la bascule de reseau n'est pas encore cablee cote app (note OUVERT).
  *
- * Ton : warning (brand book §2), bordure gauche warning.
+ * Ton : warning, bordure gauche warning.
  */
 export function WrongNetworkState() {
   return (

@@ -55,7 +55,7 @@ export function useUserBalances() {
         args: [userAddress!]
       }
     ] as const,
-    // lisse les allers-retours onglet, plan §6 RPC
+    // lisse les allers-retours onglet
     query: { enabled: Boolean(userAddress), staleTime: 5_000 }
   });
 
@@ -75,7 +75,7 @@ export function useUserBalances() {
     mrnBalance,
     refundBalance,
     isLoading,
-    // V.4/bug-race — refetch exposé pour que les flows multi-tx (Swap)
+    // refetch exposé pour que les flows multi-tx (Swap)
     // puissent forcer un re-read ciblé des soldes APRÈS settle, au lieu
     // de `refetchQueries()` global qui tire aussi les constants, fees,
     // auction, etc.

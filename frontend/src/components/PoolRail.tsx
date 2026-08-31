@@ -3,10 +3,10 @@
 import Reserves from '@/components/Reserves';
 
 /**
- * Merion rail « Pool » — note d'inspiration §7 + §8.
+ * Merion rail « Pool ».
  *
- * Toujours déplié (cf. demande) : le titre « Pool » + le panneau de
- * réserves complet affiché en permanence juste en dessous.
+ * Toujours déplié : le titre « Pool » + le panneau de réserves complet
+ * affiché en permanence juste en dessous.
  */
 export default function PoolRail() {
   return (

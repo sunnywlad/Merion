@@ -30,7 +30,7 @@ export default function MandatePanel() {
   const constants = useAuctionConstants();
   const fees = useEffectiveFees();
   const { feeDen: feeDenEntry, error: errorPoolConstants } = useConstants();
-  // La frise de progression du mandat vit désormais dans `AuctionProgress`,
+  // La frise de progression du mandat vit dans `AuctionProgress`,
   // monté directement sous `AuctionSummary` sur la page `/auction`. Ce
   // panneau ne garde que l'index et l'échéance du mandat courant.
   const { currentEpoch, endTime } = useMandateTimeline();

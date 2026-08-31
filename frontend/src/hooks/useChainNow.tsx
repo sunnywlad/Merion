@@ -24,11 +24,7 @@ import { useBlockNumber, usePublicClient } from 'wagmi';
 // lit la valeur : lire `Date.now()` dans le corps du rendu est un appel impur
 // (react-hooks/purity), la translation se fait donc depuis cet état.
 //
-// Étape 5 (plan §7) — Source unique. Avant, `useChainNow` était monté 5 fois
-// par page `(app)` (AuctionBar direct, AuctionPanel, MandatePanel direct,
-// MandatePanel via `useMandateTimeline`, AuctionBar via `useMandateTimeline`).
-// En pratique, viem déduplique la promesse `getBlock` en vol, mais cette
-// coalescence est timing-dépendante. Le `ChainNowProvider` posé dans
+// Source unique. Le `ChainNowProvider` posé dans
 // `app/(app)/layout.tsx` garantit par construction qu'il n'y a qu'un seul
 // `getBlock` par tick de bloc, indépendamment du nombre de composants
 // montés. Le public `useChainNow()` reste un consumer de contexte, donc

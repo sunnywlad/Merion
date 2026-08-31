@@ -5,9 +5,7 @@ import { MANDATE_POLL_MS } from '@/hooks/_constants';
 
 // I.4 — Vue on-chain `claimable(address)` du Pool (Pool.sol:985). Le
 // commentaire de tête à Pool.sol:977-981 l'annonçait comme la source
-// front du loyer réclamable : un seul `useReadContract` la lit, là
-// où le code précédent faisait un multicall de huit scalaires et un
-// calcul hors-chaîne.
+// front du loyer réclamable : un seul `useReadContract` la lit.
 //
 // Fragment ABI local : la vue existe sur le contrat depuis I.4 mais
 // `constants/abi.ts` (sortie Hardhat) n'a pas été régénéré. Le mini-

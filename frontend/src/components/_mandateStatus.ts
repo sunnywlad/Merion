@@ -1,7 +1,7 @@
 /**
  * Statut temporel du mandat, partagé entre `AuctionBar` (résumé) et
- * `MandatePanel` (détail). Avant cette tâche, les deux calculaient la
- * même formule inline — un risque de dérive que la passe ferme ici.
+ * `MandatePanel` (détail). Une seule formule inline évite la dérive
+ * entre les deux sites.
  *
  * Le préfixe `_` sur le nom du fichier signale « interne au dossier
  * `components/`, pas un export public ». Aucun composant applicatif
@@ -11,7 +11,7 @@
 export type MandateTimelineStatus = 'new' | 'active' | 'late' | 'closed';
 
 /**
- * Fenêtre tardive = 15 % de la durée totale du mandat (note §11, proxy
+ * Fenêtre tardive = 15 % de la durée totale du mandat (proxy
  * jusqu'à ce que le contrat expose une constante dédiée). Constante
  * exportée pour qu'un éventuel changement soit isolé à un seul endroit.
  */

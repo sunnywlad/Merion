@@ -10,8 +10,7 @@ import AppkitButton from './AppkitButton';
  * page du header) vit ici. Les bits dynamiques (lien actif +
  * `appkit-button`) sont délégués aux feuilles client `NavbarClient`
  * (nav centrale) et `AppkitButton` (bouton à droite). Le split évite
- * que la landing marketing (`app/(marketing)/`) ne charge AppKit —
- * cf. plan perf-frontend §3, Étape C.
+ * que la landing marketing (`app/(marketing)/`) ne charge AppKit.
  *
  * Mise en page : grille à 3 colonnes `1fr | auto | 1fr`. Le logo
  * occupe la colonne gauche, les liens applicatifs la colonne

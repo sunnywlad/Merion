@@ -17,7 +17,7 @@ const TONE_BG: Record<StatusTone, string> = {
 };
 
 /**
- * Merion status dot — planche 06 du brand book. Pastille pleine, 12 px, cinq tons.
+ * Merion status dot. Pastille pleine, 12 px, cinq tons.
  *
  * `label` est exposé en sr-only quand fourni, pour nommer la pastille sans
  * perturber la composition visuelle.

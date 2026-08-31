@@ -31,14 +31,14 @@
      sur fond Midnight. */
   --color-turquoise: #2DD4BF;
 
-  /* Palette sémantique — §2 */
+  /* Palette sémantique */
   --color-success: #16A34A;
   --color-warning: #F59E0B;
   --color-danger: #EF4444;
   --color-info: #2563EB;
   --color-neutral: #6B7280;
 
-  /* Échelle typographique — §4.
+  /* Échelle typographique.
      Chaque token expose taille, interlignage, interlettrage, graisse.
      Les utilitaires text-h1, text-body, text-code, ... sont générés. */
   --text-h1: 4rem;

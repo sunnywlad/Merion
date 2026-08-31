@@ -15,10 +15,9 @@ import { isSupportedChain } from '@/constants/addresses';
 import { AppStateBoundary } from '@/components/ui/AppStateBoundary';
 import { formatAmount } from '@/components/ui/formatAmount';
 
-// V.0 — Un seul bouton : `drip()` sur le faucet. Plus de « envoyer à mon
-// adresse », qui ne fonctionnait que depuis l'owner et restait silencieusement
-// cassé pour quiconque. Le faucet redistribue depuis un réservoir pré-financé,
-// sans mint (cf. `MrnFaucet.sol` commentaire d'en-tête).
+// V.0 — Un seul bouton : `drip()` sur le faucet. Le faucet redistribue depuis
+// un réservoir pré-financé, sans mint (cf. `MrnFaucet.sol` commentaire
+// d'en-tête).
 const MrnGrant = () => {
   const { mutate, isPending, error, data: hash } = useWriteContract();
   const { isLoading, isSuccess } = useWaitForTransactionReceipt({ hash });

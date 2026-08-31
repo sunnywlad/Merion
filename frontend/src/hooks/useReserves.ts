@@ -20,7 +20,7 @@ export function useReserves() {
         args: []
       }
     ] as const,
-    // lisse les allers-retours onglet, plan §6 RPC
+    // lisse les allers-retours onglet
     query: { staleTime: 5_000 }
   })
   // R3/B.2 — Aplatissement typé en tuple `[r0, r1, r2] | undefined` :
@@ -52,7 +52,7 @@ export function useReserves() {
     supply: data?.[3],
     isLoading,
     error,
-    // V.4/bug-race — refetch exposé pour que les flows multi-tx (Swap,
+    // refetch exposé pour que les flows multi-tx (Swap,
     // AddLiquidity, RemoveLiquidity) puissent forcer un re-read ciblé
     // des réserves APRÈS settle, au lieu de `refetchQueries()` global.
     refetch,

@@ -9,9 +9,9 @@ type ChevronProps = {
 };
 
 /**
- * Merion chevron — note d'inspiration §8.
+ * Merion chevron.
  *
- * Glyphe Neutral 12 px (`▾`), rotation de 200 ms sur `transform` seulement (note §9). Le
+ * Glyphe Neutral 12 px (`▾`), rotation de 200 ms sur `transform` seulement. Le
  * killswitch `prefers-reduced-motion` de `globals.css` annule la transition globalement.
  */
 export function Chevron({

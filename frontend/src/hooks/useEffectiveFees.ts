@@ -12,8 +12,8 @@ import { poolAbi } from '@/constants/abi';
 // la base et signale les directions surchargées ; le formulaire de swap lit le
 // couple qu'il utilise.
 //
-// C'est aussi la fin de la migration commencée en I.1 : plus rien ne se lit
-// depuis `feeNum`, et le tarif affiché est celui qu'un swap paie vraiment.
+// Plus rien ne se lit depuis `feeNum` : le tarif affiché est celui qu'un
+// swap paie vraiment.
 
 // Les couples ordonnés (i, j), i ≠ j. L'ordre est figé pour que l'index dans
 // le multicall soit dérivable sans chercher.
@@ -33,7 +33,7 @@ export function useEffectiveFees() {
       functionName: 'effectiveFeeNum',
       args: [BigInt(i), BigInt(j)]
     } as const)),
-    // lisse les allers-retours onglet, plan §6 RPC
+    // lisse les allers-retours onglet
     query: { staleTime: 5_000 }
   });
 
@@ -90,7 +90,7 @@ export function useEffectiveFees() {
     surcharged,
     isLoading,
     error,
-    // V.5/bug-stale-quote — expose refetch pour que `Swap.handleSwap`
+    // Expose refetch pour que `Swap.handleSwap`
     // puisse forcer la lecture des frais effectifs entre la frappe du
     // devis et le `simulateContract`. `staleTime: 5_000` couvre
     // l'onglet, pas le cliquage immediat : wagmi v2 ne re-lit pas sur

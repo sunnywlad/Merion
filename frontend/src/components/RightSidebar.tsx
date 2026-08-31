@@ -5,12 +5,11 @@ import Balances from '@/components/Balances';
 /**
  * Merion sidebar droite — « Your position ».
  *
- * Le bouton de connexion AppKit (« appkit-button ») est repassé dans la
- * navbar (cf. demande) ; ce rail ne sert plus que la famille
- * « Your position » (Balances : BTC wrappés + ETH + LP). Le rail colle au
- * bord droit (0 px) ; sa marge interne fait le travail. Padding réduit à
- * `p-4` pour aligner le titre « Your position » sur ceux de « Pool » et
- * « Swap ».
+ * Ce rail héberge la famille « Your position » (Balances : BTC wrappés +
+ * ETH + LP). Le bouton de connexion AppKit (« appkit-button ») vit dans la
+ * navbar. Le rail colle au bord droit (0 px) ; sa marge interne fait le
+ * travail. Padding réduit à `p-4` pour aligner le titre « Your position »
+ * sur ceux de « Pool » et « Swap ».
  */
 export default function RightSidebar({
   className = '',
