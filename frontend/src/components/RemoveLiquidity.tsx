@@ -2,6 +2,7 @@
 
 import { useReserves } from "@/hooks/useReserves";
 import { useLpBalance } from "@/hooks/useLpBalance";
+import { useUserBalances } from "@/hooks/useUserBalances";
 import { usePoolPaused } from "@/hooks/usePoolPaused";
 import { useState } from "react";
 import { formatUnits } from "viem";
@@ -49,6 +50,7 @@ const RemoveLiquidity = () => {
   const { reserves, entries, supply: supplyEntry, error: errorReserves, refetch: refetchReserves } = useReserves();
   const supply = supplyEntry?.status === 'success' ? supplyEntry.result : undefined;
   const { data: maxShares, error: errorLpBalance, refetch: refetchLpBalance } = useLpBalance();
+  const { refetch: refetchBalances } = useUserBalances();
   const { data: paused, error: errorPaused } = usePoolPaused();
 
   const connection = useConnection();
@@ -86,7 +88,12 @@ const RemoveLiquidity = () => {
       // V.4/bug-race — refetch ciblé des réserves ET du solde LP APRÈS
       // settle : les deux bougent sur un removeLiquidity, et la quote
       // suivante doit voir le nouvel état sans attendre le poll.
-      await Promise.all([refetchReserves(), refetchLpBalance()]);
+      //
+      // V.5/bug-cache-removeliquidity — Symetrique du fix AddLiquidity :
+      // un retrait credite les 3 BTCs de l'user, donc `useUserBalances`
+      // doit aussi refetcher. Sans ca, le rail « Your balances » reste
+      // sur les soldes d'avant le retrait.
+      await Promise.all([refetchReserves(), refetchLpBalance(), refetchBalances()]);
       setTypedAmount("");
       setAnchor(null);
       setTolerance("");

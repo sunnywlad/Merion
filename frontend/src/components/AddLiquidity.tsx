@@ -3,6 +3,7 @@
 import { useReserves } from "@/hooks/useReserves";
 import { useMinimumLiquidity } from "@/hooks/useMinimumLiquidity";
 import { useUserBalances } from "@/hooks/useUserBalances";
+import { useLpBalance } from "@/hooks/useLpBalance";
 import { usePoolPaused } from "@/hooks/usePoolPaused";
 import { useState } from "react";
 import { useDeployedChainId } from "@/hooks/useDeployedChainId";
@@ -52,7 +53,8 @@ const AddLiquidity = () => {
   const { reserves, entries, supply: supplyEntry, error: errorReserves, refetch: refetchReserves } = useReserves();
   const supply = supplyEntry?.status === 'success' ? supplyEntry.result : undefined;
   const { data: minLiq, error: errorMinLiq } = useMinimumLiquidity(supply === 0n);
-  const { btcBalances } = useUserBalances();
+  const { btcBalances, refetch: refetchBalances } = useUserBalances();
+  const { refetch: refetchLpBalance } = useLpBalance();
   const { data: paused, error: errorPaused } = usePoolPaused();
 
   const connection = useConnection();
@@ -131,7 +133,15 @@ const AddLiquidity = () => {
       // que la prochaine quote voie le bon état du pool. Le supply
       // (totalSupply) est inclus dans le même useReadContracts que
       // les réserves, donc un seul appel RPC suffit.
-      await refetchReserves();
+      //
+      // V.5/bug-cache-addliquidity — Trois queries bougent sur un
+      // dépôt : réserves du pool (useReserves), soldes BTC de l'user
+      // (useUserBalances — il vient de dépenser 3 legs), et son solde
+      // LP (useLpBalance — il vient de recevoir des parts). Avant ce
+      // fix seul `refetchReserves()` tournait, donc le rail « Your
+      // balances » affichait `LP Shares 0.0000` jusqu'au prochain
+      // poll staleTime.
+      await Promise.all([refetchReserves(), refetchBalances(), refetchLpBalance()]);
       setTypedAmount("");
       setAnchor(null);
       setTolerance("");
