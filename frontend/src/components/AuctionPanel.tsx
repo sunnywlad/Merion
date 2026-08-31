@@ -81,6 +81,11 @@ export default function AuctionPanel() {
   const pendingAmount = auction.pendingAmount?.status === 'success' ? auction.pendingAmount.result : undefined;
 
   const managerNow = useManagerOf(currentEpoch);
+  // Le gestionnaire nommé pour le mandat mis en vente (`currentEpoch + 1`).
+  // C'est LA source de vérité sur le gagnant après un `settle()` : ce dernier
+  // remet à zéro `highBidder`/`currentBid`/`pendingEpoch`/`pendingAmount`, donc
+  // le vainqueur ne survit que dans `pool.managerOf(soldMandate)`.
+  const managerSold = useManagerOf(currentEpoch !== undefined ? currentEpoch + 1n : undefined);
   const refund = useRefund(user);
 
   // `lastSetFeeEpoch` n'a pas besoin du rythme d'enchère : il ne bouge qu'au
@@ -194,6 +199,32 @@ export default function AuctionPanel() {
   const hasManagerNow = managerInOffice !== undefined && managerInOffice !== ZERO_ADDRESS;
   const refundOwed = refund.data;
   const hasRefund = refundOwed !== undefined && refundOwed > 0n;
+
+  // Après `settle()`, les slots vivants sont à zéro : le seul survivant du
+  // gagnant est `pool.managerOf(soldMandate)`. On lit ce gestionnaire pour
+  // récupérer le vainqueur une fois les slots effacés, et on retombe sur le
+  // `highBidder` vivant tant que l'enchère bat encore.
+  const settledWinner = managerSold.data !== undefined && managerSold.data !== ZERO_ADDRESS
+    ? managerSold.data
+    : undefined;
+  const liveTopBidder = highBidder !== undefined && highBidder !== ZERO_ADDRESS
+    ? highBidder
+    : undefined;
+  const winningBidder = liveTopBidder ?? settledWinner;
+  const isSettledWinner = !liveTopBidder && settledWinner !== undefined;
+  const youWon = user !== undefined && winningBidder !== undefined && winningBidder === user;
+
+  // « Vous avez gagné mais personne n'a réglé » : le reset de slot a capturé
+  // un `pendingBidder` non nul (état en attente), OU le meneur vivant est vous
+  // et la fenêtre est déjà fermée (le `settle()` est la prochaine étape).
+  const pendingWinnerIsYou =
+    auction.pendingBidder?.status === 'success'
+    && auction.pendingBidder.result !== undefined
+    && auction.pendingBidder.result !== ZERO_ADDRESS
+    && user !== undefined
+    && auction.pendingBidder.result === user;
+  const liveWinnerIsYou = liveTopBidder !== undefined && user !== undefined && liveTopBidder === user;
+  const youWonUnsettled = pendingWinnerIsYou || (liveWinnerIsYou && !canPlaceBid);
 
   // Trois conditions pour que le bouton `setFee` devienne actif : connecté,
   // gestionnaire du mandat courant, et dans les `priorityWindow` premières
@@ -325,6 +356,7 @@ export default function AuctionPanel() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: auction.queryKey }),
         managerNow.refetch(),
+        managerSold.refetch(),
         refund.refetch()
       ]);
     } catch (e) {
@@ -398,7 +430,7 @@ export default function AuctionPanel() {
     if (!user) return setActionError('settle', 'Connect your wallet to settle.');
     if (wrongNetwork) return setActionError('settle', wrongNetMsg);
     if (canPlaceBid)
-      return setActionError('settle', 'Auction still open — wait for the window to close before settling.');
+      return setActionError('settle', 'Auction still open, wait for the window to close before settling.');
     if (!hasBidToSettle)
       return setActionError('settle', 'Nothing to settle right now: no winning bid is awaiting nomination.');
     void handleSettle();
@@ -426,6 +458,7 @@ export default function AuctionPanel() {
         { message: 'Failed to read the auction state', error: auction.error },
         { message: 'Failed to read the auction constants', error: constants.error },
         { message: 'Failed to read the current manager', error: managerNow.error },
+        { message: 'Failed to read the sold mandate manager', error: managerSold.error },
         { message: 'Failed to read the refund', error: refund.error }
       ]}
     >
@@ -436,7 +469,7 @@ export default function AuctionPanel() {
 
       {wrongNetwork && (
         <p className='text-small text-danger pb-3' role='alert'>
-          Wrong network — switch to {SUPPORTED_CHAINS_LABEL} to bid, settle or claim.
+          Wrong network, switch to {SUPPORTED_CHAINS_LABEL} to bid, settle or claim.
         </p>
       )}
 
@@ -444,16 +477,32 @@ export default function AuctionPanel() {
       {windowOpen && closesAt !== undefined && (
         <div>Closes in <Num>{formatCountdown(timeLeft)}</Num></div>
       )}
-      <div>High bid: {currentBid === undefined || currentBid === 0n ? '—' : <Num>{mrn(currentBid)} MRN</Num>}</div>
-      <div>Top bidder: {highBidder && highBidder !== ZERO_ADDRESS ? highBidder : '—'}</div>
+      <div>High bid: {currentBid === undefined || currentBid === 0n
+        ? (isSettledWinner ? 'settled' : '—')
+        : <Num>{mrn(currentBid)} MRN</Num>}</div>
+      <div>Won by: {winningBidder === undefined
+        ? '—'
+        : (youWon
+            ? <span className='text-success'>you</span>
+            : <span className='font-mono text-code num-tabular'>{winningBidder}</span>)}</div>
       <div>Next minimum bid: {minNextBid === undefined ? '—' : <Num>{mrn(minNextBid)} MRN</Num>}</div>
       {/* Une epoch gagnée lors d'un cycle précédent mais pas encore réglée
           (`settle` non appelé, gestionnaire pas encore nommé). Ligne
           masquée quand il n'y a rien en attente. */}
       {pendingEpoch !== undefined && pendingEpoch > 0n && (
         <div>
-          Won, awaiting settlement: #{String(pendingEpoch)} (<Num>{mrn(pendingAmount ?? 0n)} MRN</Num>)
+          Won{pendingWinnerIsYou ? ' by you' : ''}, awaiting settlement: #{String(pendingEpoch)} (<Num>{mrn(pendingAmount ?? 0n)} MRN</Num>)
         </div>
+      )}
+      {isSettledWinner && (
+        <div>
+          Settled, {youWon ? 'you won this epoch' : 'a manager has been nominated'}.
+        </div>
+      )}
+      {youWonUnsettled && (
+        <p className='pt-2 text-xs text-success'>
+          You won the auction, settle to become the next manager (and claim the settlement reward).
+        </p>
       )}
 
       <div className='flex flex-wrap gap-4 items-center pt-4'>
@@ -478,7 +527,7 @@ export default function AuctionPanel() {
       </div>
       {firstBidWindowOpen && (
         <p className='text-xs pt-1'>
-          Window open, no bid yet this cycle — place the first one.
+          Window open, no bid yet this cycle, place the first one.
         </p>
       )}
       {errors.bid && <p className='text-xs pt-1 text-danger'>{errors.bid}</p>}

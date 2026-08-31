@@ -1930,6 +1930,19 @@ export const auctionAbi = [
   },
   {
     "inputs": [],
+    "name": "pendingBidder",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
     "name": "maxExtension",
     "outputs": [
       {

@@ -31,7 +31,12 @@ export function useAuctionState() {
       // ensemble quand le slot est vide (`settle()` viendrait de reverter
       // `NoBidToSettle`) : c'est un état nominal, pas une erreur de lecture.
       { address: auction ?? undefined, abi: auctionAbi, functionName: 'pendingEpoch', args: [] },
-      { address: auction ?? undefined, abi: auctionAbi, functionName: 'pendingAmount', args: [] }
+      { address: auction ?? undefined, abi: auctionAbi, functionName: 'pendingAmount', args: [] },
+      // I.6 — Le dernier enchérisseur capturé par le reset de slot ou le
+      // `settle()` : non nul seulement entre la capture et la fin de
+      // `_settle()`. Sert à détecter « vous avez gagné mais personne n'a
+      // réglé » avant que les slots ne soient remis à zéro.
+      { address: auction ?? undefined, abi: auctionAbi, functionName: 'pendingBidder', args: [] }
     ] as const,
     query: {
       enabled: auction !== null,
@@ -48,6 +53,7 @@ export function useAuctionState() {
     closesAt: data?.[5],
     pendingEpoch: data?.[6],
     pendingAmount: data?.[7],
+    pendingBidder: data?.[8],
     isLoading,
     error,
     queryKey
