@@ -395,8 +395,15 @@ export default function AuctionPanel() {
       // `lastSetFeeEpoch`. Les immuables (`useConstants`,
       // `useAuctionConstants`) ont `staleTime:Infinity` et n'ont rien
       // à faire ici.
+      //
+      // `invalidateQueries` marquait la query stale sans forcément la
+      // ré-exécuter (react-query attendait un consommateur ou la fin du
+      // `staleTime`) : le panel et le bouton restaient sur l'état
+      // d'avant. `refetch()` force la lecture tout de suite et résout
+      // une promesse avec les données fraîches — c'est ce qui remet
+      // `Base fee` à 0,20 % et grise le bouton dans la foulée.
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: fees.queryKey }),
+        fees.refetch(),
         lastSetFee.refetch()
       ]);
       setFeeInput('');
