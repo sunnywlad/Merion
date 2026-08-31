@@ -462,11 +462,7 @@ export default function AuctionPanel() {
         { message: 'Failed to read the refund', error: refund.error }
       ]}
     >
-      <Panel>
-      <p className='font-semibold pb-2'>
-        Auction for epoch {soldMandate === undefined ? '#—' : `#${String(soldMandate)}`}
-      </p>
-
+      <Panel title={`Auction for epoch ${soldMandate === undefined ? '#—' : `#${String(soldMandate)}`}`}>
       {wrongNetwork && (
         <p className='text-small text-danger pb-3' role='alert'>
           Wrong network, switch to {SUPPORTED_CHAINS_LABEL} to bid, settle or claim.
@@ -485,7 +481,14 @@ export default function AuctionPanel() {
         : (youWon
             ? <span className='text-success'>you</span>
             : <span className='font-mono text-code num-tabular'>{winningBidder}</span>)}</div>
-      <div>Next minimum bid: {minNextBid === undefined ? '—' : <Num>{mrn(minNextBid)} MRN</Num>}</div>
+      {/* Le minimum à surenchérir n'a de sens que tant qu'on peut enchérir.
+          Fenêtre fermée, la ligne sort : elle annoncerait un plancher pour un
+          appel qui revertera de toute façon (`WindowClosed`). Même dérivation
+          que la ligne « Window » ci-dessus — `canPlaceBid` couvre aussi le cas
+          de la première mise du cycle (`firstBidWindowOpen`). */}
+      {canPlaceBid && (
+        <div>Next minimum bid: {minNextBid === undefined ? '—' : <Num>{mrn(minNextBid)} MRN</Num>}</div>
+      )}
       {/* Une epoch gagnée lors d'un cycle précédent mais pas encore réglée
           (`settle` non appelé, gestionnaire pas encore nommé). Ligne
           masquée quand il n'y a rien en attente. */}

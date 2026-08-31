@@ -41,8 +41,8 @@ export default function MandatePanel() {
   // afficher six lignes en échec ne dirait rien. Le pool, lui, tourne.
   if (deployedAuction === null) {
     return (
-      <Panel title="Current epoch">
-        <p className='text-body'>
+      <Panel title={<span className="text-white">Current epoch</span>}>
+        <p className='text-white'>
           Auction not deployed on this chain: the pool trades at the base fee,
           no epoch is sold.
         </p>
@@ -77,8 +77,10 @@ export default function MandatePanel() {
         { message: 'Failed to read the current manager', error: managerNow.error }
       ]}
     >
-      <Panel title={`Current epoch ${currentEpoch === undefined ? '#—' : `#${String(currentEpoch)}`}`}>
-        <ul className='text-body'>
+      <Panel title={
+        <span className="text-white">{`Current epoch ${currentEpoch === undefined ? '#—' : `#${String(currentEpoch)}`}`}</span>
+      }>
+        <ul className='text-white'>
 
           {/* Le gestionnaire courant. Son absence se lit comme un état de la
               mécanique : l'epoch n'a trouvé aucun enchérisseur, le pool
@@ -89,7 +91,7 @@ export default function MandatePanel() {
           <li className='flex items-baseline justify-between gap-4 py-1'>
             {hasManagerNow
               ? <>
-                  <span className='text-cloud/80'>Manager</span>
+                  <span className='text-white'>Manager</span>
                   <span className='font-mono num-tabular'>
                     {short(managerInOffice)}
                     {user !== undefined && managerInOffice === user && (
@@ -99,7 +101,7 @@ export default function MandatePanel() {
                     )}
                   </span>
                 </>
-              : <span className='text-cloud/80'>Epoch unsold, pool at base fee</span>}
+              : <span className='text-white'>Epoch unsold, pool at base fee</span>}
           </li>
 
           <AmountLine
@@ -126,7 +128,7 @@ export default function MandatePanel() {
                 unit="%"
               />
               <li className='flex items-baseline justify-between gap-4 py-1'>
-                <span className='text-cloud/80'>Surcharge active on</span>
+                <span className='text-white'>Surcharge active on</span>
                 <span>{fees.surcharged.map(([i, j]) => `${tokensInfo.find((t) => t.index === BigInt(i))?.name ?? i} → ${tokensInfo.find((t) => t.index === BigInt(j))?.name ?? j}`).join(', ')}</span>
               </li>
             </>
@@ -134,7 +136,7 @@ export default function MandatePanel() {
 
           {timeToEnd !== null && (
             <li className='flex items-baseline justify-between gap-4 py-1'>
-              <span className='text-cloud/80'>Epoch ends in</span>
+              <span className='text-white'>Epoch ends in</span>
               <span className='font-mono num-tabular'>{formatCountdown(timeToEnd)}</span>
             </li>
           )}
