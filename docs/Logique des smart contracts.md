@@ -31,8 +31,7 @@ créer du MRN ».
 à 21 M (un plafond par mock, pas partagé, chaque wrapper étant une prétention
 sur le même Bitcoin). Le plafond ferme la brèche de donation/inflation LP.
 
-**`MrnFaucet.sol`** — réservoir pré-financé de 10 M MRN, `drip()` à cadence
-limitée par adresse. Démo et consultants, pas production.
+**`MrnFaucet.sol`** — réservoir pré-financé de 1 M MRN par `scripts/seed-faucet.ts`, `drip()` de 5 000 MRN, cadence 8 h par adresse. Démo et consultants, pas production.
 
 **Raison d'être :** Merion est un DEX BTC multi-wrappers sur Base. Le
 différenciateur est un seul couple — LBTC plus l'enchère, jamais l'enchère
@@ -199,8 +198,8 @@ consultants. Pas de mint, pas d'inflation.
 
 **Choix structurants :**
 
-- **Pré-alloué au déploiement, pas `mint()`.** L'owner transfère 10 M
-  MRN depuis son solde via un script de seed. La supply reste celle
+- **Pré-alloué au déploiement, pas `mint()`.** L'owner transfère 1 M
+  MRN depuis son solde via `scripts/seed-faucet.ts`. La supply reste celle
   créditée au déployeur de MRN. Motif : les faucets BTC du début de la
   blockchain — un réservoir pré-financé, pas une création de monnaie.
 - **Pas de `dripTo()`.** Pas de liste blanche de jurés. Le rate-limit

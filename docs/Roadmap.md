@@ -155,7 +155,7 @@ Progression en trois étapes, dans cet ordre :
 - **Lecture sans oracle** : le pool price par ses réserves et ne consomme jamais le prix révélé ; l'enchère recapture le LVR. **Ne jamais dire « l'enchère EST l'oracle ».**
 - **Garde owner's power** : il pause swaps et dépôts, et c'est tout — il ne peut pas bouger le fee, toucher les réserves, bouger une bande, rediriger la part protocole (trésorerie immuable).
 - **Pause** : `whenNotPaused` sur `swap` et `addLiquidity`, **rien sur `removeLiquidity`**. Les retraits proportionnels changent la TAILLE du pool, jamais sa COMPOSITION — les LPs restants ne sont pas lésés par ceux qui sortent. C'est ce qui rend « retraits toujours ouverts, même en pause » tenable.
-- **Audit C6** : >80 % de couverture mesurée, déjà cleared à 98,44 % sur le périmètre contrats.
+- **Audit C6** : >80 % de couverture mesurée, déjà cleared à 98,73 % lignes / 98,46 % instructions sur Pool et 97,78 % / 97,85 % sur Auction (mesure 2026-08-31).
 
 ---
 
