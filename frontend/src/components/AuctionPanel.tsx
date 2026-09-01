@@ -16,6 +16,7 @@ import { useRefund } from '@/hooks/useRefund';
 import { useChainNow } from '@/hooks/useChainNow';
 import { nextMinimumBid, secondsLeft, formatCountdown } from '@/lib/readMandateWindow';
 import { parseAmount } from '@/lib/parseAmount';
+import { short } from '@/lib/formatAddress';
 import { formatAmount } from '@/components/ui/formatAmount';
 import { describeTxError } from '@/lib/txError';
 import { useIsWrongNetwork } from '@/hooks/useIsWrongNetwork';
@@ -486,8 +487,8 @@ export default function AuctionPanel() {
       <div>Won by: {winningBidder === undefined
         ? '—'
         : (youWon
-            ? <span className='text-success'>you</span>
-            : <span className='font-mono text-code num-tabular'>{winningBidder}</span>)}</div>
+            ? <span className='ml-2 px-2 py-0.5 text-xs bg-emerald-100 text-emerald-800 rounded'>You</span>
+            : <span className='font-mono text-code num-tabular'>{short(winningBidder)}</span>)}</div>
       {/* Le minimum à surenchérir n'a de sens que tant qu'on peut enchérir.
           Fenêtre fermée, la ligne sort : elle annoncerait un plancher pour un
           appel qui revertera de toute façon (`WindowClosed`). Même dérivation
