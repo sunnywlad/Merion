@@ -13,7 +13,6 @@ import { useConstants } from '@/hooks/useConstants';
 import { useEffectiveFees } from '@/hooks/useEffectiveFees';
 import { useManagerOf } from '@/hooks/useManagerOf';
 import { useRefund } from '@/hooks/useRefund';
-import { useManagerFees } from '@/hooks/useManagerFees';
 import { useChainNow } from '@/hooks/useChainNow';
 import { nextMinimumBid, secondsLeft, formatCountdown } from '@/lib/readMandateWindow';
 import { parseAmount } from '@/lib/parseAmount';
@@ -54,14 +53,14 @@ export default function AuctionPanel() {
 
   const [bidInput, setBidInput] = useState('');
   const [feeInput, setFeeInput] = useState('');
-  const [pending, setPending] = useState<'bid' | 'refund' | 'settle' | 'setFee' | 'fees' | null>(null);
+  const [pending, setPending] = useState<'bid' | 'refund' | 'settle' | 'setFee' | null>(null);
   // Une erreur par action, scopée à sa section : une réversion sur `placeBid`
   // ne s'affiche PAS sous le panneau `setFee`, et inversement. Une seule
   // variable partagée traînait sous tous les blocs (cf. capture).
   const [errors, setErrors] = useState<{
-    bid: string | null; refund: string | null; settle: string | null; setFee: string | null; fees: string | null;
-  }>({ bid: null, refund: null, settle: null, setFee: null, fees: null });
-  const setActionError = (action: 'bid' | 'refund' | 'settle' | 'setFee' | 'fees', message: string | null) =>
+    bid: string | null; refund: string | null; settle: string | null; setFee: string | null;
+  }>({ bid: null, refund: null, settle: null, setFee: null });
+  const setActionError = (action: 'bid' | 'refund' | 'settle' | 'setFee', message: string | null) =>
     setErrors((prev) => ({ ...prev, [action]: message }));
 
   const auction = useAuctionState();
@@ -88,11 +87,6 @@ export default function AuctionPanel() {
   // le vainqueur ne survit que dans `pool.managerOf(soldMandate)`.
   const managerSold = useManagerOf(currentEpoch !== undefined ? currentEpoch + 1n : undefined);
   const refund = useRefund(user);
-  // Fees de gestionnaire dues au connecté (`feesOwed[user][tokenIndex]`),
-  // lues sur les trois tokens panier. Miroir de `refund` : seul le
-  // connecté peut réclamer ses propres fees (`claimManagerFees` est
-  // indexé sur `msg.sender`).
-  const managerFees = useManagerFees(user);
 
   // `lastSetFeeEpoch` n'a pas besoin du rythme d'enchère : il ne bouge qu'au
   // moment d'un `setFee`, et l'invalidation posée après l'écriture suffit.
@@ -168,10 +162,6 @@ export default function AuctionPanel() {
   // décimales tronquées). `formatAmount` rend '—' pour `undefined`.
   const mrn = (v: bigint | undefined) =>
     formatAmount(v, { displayDecimals: 2, tokenDecimals: MRN_DECIMALS, grouping: 'fr' });
-  // Fees de gestionnaire en tokens panier (8 décimales, ~1:1 BTC) : même
-  // rendu mono/groupement français que `mrn`, mais en unités BTC.
-  const btc = (v: bigint | undefined) =>
-    formatAmount(v, { displayDecimals: 8, tokenDecimals: 8, grouping: 'fr' });
 
   const timeLeft = now !== null && closesAt !== undefined ? secondsLeft(closesAt, now) : null;
 
@@ -209,9 +199,6 @@ export default function AuctionPanel() {
   const hasManagerNow = managerInOffice !== undefined && managerInOffice !== ZERO_ADDRESS;
   const refundOwed = refund.data;
   const hasRefund = refundOwed !== undefined && refundOwed > 0n;
-
-  const feesOwed = managerFees.total;
-  const hasFees = feesOwed !== undefined && feesOwed > 0n;
 
   // Après `settle()`, les slots vivants sont à zéro : le seul survivant du
   // gagnant est `pool.managerOf(soldMandate)`. On lit ce gestionnaire pour
@@ -340,36 +327,6 @@ export default function AuctionPanel() {
       await refund.refetch();
     } catch (e) {
       setActionError('refund', describeTxError(e));
-    } finally { setPending(null); }
-  };
-
-  // Réclame les fees de gestionnaire dues au connecté. `feesOwed` est
-  // scindé par token panier (index 0/1/2) et `claimManagerFees` ne prend
-  // qu'un token à la fois → on balaye les trois et on ne tire que les
-  // tokens non vides (le contrat reverte `ZeroFeesOwed` sinon). Une seule
-  // lecture `refetch` à la fin rafraîchit l'ensemble.
-  const handleCollectFees = async () => {
-    if (!user || !publicClient || wrongNetwork) return;
-    setActionError('fees', null);
-    try {
-      setPending('fees');
-      for (let i = 0; i < managerFees.perToken.length; i++) {
-        if (managerFees.perToken[i] > 0n) {
-          const hash = await mutateAsync({
-            address: deployedPool!,
-            abi: poolAbi,
-            functionName: 'claimManagerFees',
-            args: [BigInt(i)]
-          });
-          const receipt = await publicClient.waitForTransactionReceipt({ hash });
-          if (receipt.status !== 'success') {
-            throw new Error(`claimManagerFees(${i}) reverted on-chain. Check your wallet for details.`);
-          }
-        }
-      }
-      await managerFees.refetch();
-    } catch (e) {
-      setActionError('fees', describeTxError(e));
     } finally { setPending(null); }
   };
 
@@ -509,8 +466,7 @@ export default function AuctionPanel() {
         { message: 'Failed to read the auction constants', error: constants.error },
         { message: 'Failed to read the current manager', error: managerNow.error },
         { message: 'Failed to read the sold mandate manager', error: managerSold.error },
-        { message: 'Failed to read the refund', error: refund.error },
-        { message: 'Failed to read the manager fees', error: managerFees.error }
+        { message: 'Failed to read the refund', error: refund.error }
       ]}
     >
       <Panel title={`Auction for epoch ${soldMandate === undefined ? '#—' : `#${String(soldMandate)}`}`}>
@@ -656,25 +612,7 @@ export default function AuctionPanel() {
             {pending === 'refund' ? 'Withdrawal in progress' : 'Withdraw my refund'}
           </Button>
         </div>
-        {/* Ligne miroir de « Refund to claim » : les fees de gestionnaire
-            dues au connecté (`feesOwed[user][*]`), réclamées en une passe
-            par `claimManagerFees` sur chaque token panier non vide. */}
-        <div className='pt-2 flex items-center justify-between gap-4'>
-          <div>
-            Fees collected: {user
-              ? (feesOwed === undefined ? '—' : <Num>{btc(feesOwed)} BTC</Num>)
-              : 'connect to read'}
-          </div>
-          <Button
-            level="primary"
-            onClick={handleCollectFees}
-            aria-busy={pending === 'fees' || undefined}
-            disabled={!user || pending !== null || wrongNetwork || !hasFees}>
-            {pending === 'fees' ? 'Collection in progress' : 'Collect fees'}
-          </Button>
-        </div>
         {errors.refund && <p className='text-xs pt-1 text-danger'>{errors.refund}</p>}
-        {errors.fees && <p className='text-xs pt-1 text-danger'>{errors.fees}</p>}
       </div>
     </Panel>
     </ReadErrorBoundary>
